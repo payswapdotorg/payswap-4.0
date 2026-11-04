@@ -24,7 +24,11 @@ Nothing about New Task changes until the user opts in. With PaySwap active:
    actually controlled: the host execution authority refuses every money-affecting
    operation without a valid, single-use, expiry-bound, tuple-bound Authorization
    Grant that only a host-verified human approval event can create. Yolo mode can
-   silence prompts; it cannot mint grants. Negative E2E rows N1–N12 (addendum §1.6)
+   silence prompts; it cannot mint grants. The approval origin itself is
+   specified in addendum §1.6: host-controlled approval surface, one-time
+   host-generated challenge, transaction-digest binding, renderer/window
+   ownership verification, and structural exclusion of plugin-webview and
+   model-originated approvals. Negative E2E rows N1–N24 (addendum §1.7)
    are the proof.
 3. **Additive cards, not new pages.** Financial context renders through the existing
    generative-UI/plugin surface contract (`ui.surfaces[]` + `ui://` resources in
@@ -64,13 +68,29 @@ The four-state model replaces the earlier on/off zero-diff wording:
 - **S0** (plugin absent/disabled): identical to upstream `a9fe401` — the
   zero-difference proof compares this state against upstream.
 - **S1** (enabled, not opted in): rendered interface identical to S0. Tools may
-  register and are inert (`not_connected` typed refusal). No cards, no toggle.
+  register and are inert (`not_opted_in` typed refusal — distinct from
+  `not_connected`, addendum §2.1). No cards, no toggle.
 - **S2** (opted in): only surfaces declared in the `ui.surfaces[]` registry may
   render — the registry is the complete, closed definition of what PaySwap adds.
 - **S3** (invariant): composer, model selector, Browser/Terminal/Computer-Use
   controls, theme, navigation, layout unchanged in every state. Local-workspace
   bridge capability limitation preserved (Web/remote surfaces that do not declare
   the plugin-UI capability render no PaySwap cards).
+
+**The exact opt-in path (addendum §2.1):** the plugin's boolean `userConfig`
+option `financialWorkspace` (default `false`), rendered by the **existing**
+plugin settings surface (`packages/ui/src/settings/PluginConfigControls.tsx` —
+already renders `userConfig` options with a `Switch`). Opt-in is the user
+flipping that switch; no new settings page, no composer control, no navigation
+change. State refusals are three distinct codes — `financial_mode_disabled` /
+`not_opted_in` / `not_connected` — never conflated.
+
+**Transition acceptance tests (P1, addendum §2.2):** T1 enable (S0→S1,
+zero-diff), T2 opt-in (S1→S2, declared surfaces only, code `not_opted_in` →
+`not_connected`), T3 opt-out (S2→S1, surfaces disappear), T4 disable (→S0,
+tools unregistered), T5 uninstall (→S0, credentials revoked, ledger evidence
+retained per retention rules or exported by explicit operator choice), T6
+settings page unchanged beyond the plugin's own declared options.
 
 ## 4. The acceptance look
 

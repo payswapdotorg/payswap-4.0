@@ -249,19 +249,25 @@ The model gets **zero** direct provider tools. It sees the narrow common-layer M
 Every tool is a thin, typed proxy. The MCP server process (stdio child of the host)
 holds no financial state, no credentials, and no ledger access; tool calls reach the
 host financial services **only** through the authenticated broker bridge (addendum
-§3, normative): `Model → payswap_* MCP tool → authenticated host-owned broker
-(loopback socket/named pipe, trusted-snapshot credential injection, host-verified
-plugin authority per the CUA precedent) → financial service → provider adapter`.
-The broker's dispatch table is closed — exactly these six operations, not general
-`ServiceChannels` access (ServiceChannels is the renderer↔host fabric; it is not an
-API for an external MCP process). Tool registration rides the agent runtime's
-`ToolRegistry` (`apps/zcode-cli/packages/core/src/tool/registry.ts`); invocation
-permission rides the existing permission protocol
+§3, normative): `Model → payswap_* MCP tool → authenticated host-owned broker →
+financial service → provider adapter`. The broker authenticates the **calling
+process** — per-process-instance credentials, OS peer verification against the
+host-registered plugin instance, socket/pipe filesystem restrictions, endpoint
+replacement protection (addendum §3.5) — a plugin identity claim alone is never
+sufficient. The broker's dispatch table is closed — exactly these six operations,
+no general `ServiceChannels` access (ServiceChannels is the renderer↔host fabric;
+it is not an API for an external MCP process). Tool registration rides the agent
+runtime's `ToolRegistry` (`apps/zcode-cli/packages/core/src/tool/registry.ts`);
+invocation permission rides the existing permission protocol
 (`packages/shared/src/zcode-protocol/index.ts`) with money movement
 `riskLevel: "critical"` — and **no money operation executes without a valid,
 single-use Authorization Grant** (addendum §1.3: host-minted, tuple-bound,
 expiry-bound; the permission layer governs invocation noise, the grant governs
-money). Negative E2E rows N1–N12 (addendum §1.6) prove the bypass resistance.
+money). State refusals are three distinct typed codes, never conflated:
+`financial_mode_disabled` / `not_opted_in` / `not_connected` (addendum §2.1).
+Negative E2E rows N1–N24 (addendum §1.7) prove the bypass resistance, the
+approval-origin boundary, the broker boundary, and the ledger single-writer
+boundary.
 
 ## 10. Persistence & state rules for adapters
 

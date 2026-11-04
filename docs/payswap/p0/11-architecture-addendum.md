@@ -1,12 +1,18 @@
 # PaySwap P0 — Architecture Addendum (response to the P0 architect review)
 
-**Owner:** TL · **Status:** normative for P1+ · **Reviewed against:** worktree `a9fe401`
-(v3.17.2) · **Responds to:** the architect review of PR #2 (changes-requested before merge).
+**Owner:** TL · **Status:** normative for P1+ · **Revision:** 2 — incorporates the
+architect's R1–R4 final-revision round (trusted approval origin, broker process
+authentication, opt-in transitions, ledger concurrency boundary) · **Reviewed
+against:** worktree `a9fe401` (v3.17.2) · **Responds to:** the architect reviews
+of PR #2 (changes-requested before merge).
 
-This addendum resolves the five gaps the architect identified. Each section states the
-decision, the source evidence at `a9fe401`, and the acceptance criteria that make it
-enforceable. Where it amends an earlier deliverable, the amendment is listed in §6 and
-applied to that document in this same PR.
+This addendum resolves the gaps the architect identified across two review
+rounds. Each section states the decision, the source evidence at `a9fe401`,
+and the acceptance criteria that make it enforceable. **Every security mechanism
+is labeled** as either an *upstream precedent* (already shipped in ZCode — PaySwap
+reuses it) or a *new PaySwap requirement* (ours to build and prove). Where it
+amends an earlier deliverable, the amendment is listed in §6 and applied to that
+document in this same PR.
 
 ---
 
@@ -130,7 +136,49 @@ PaySwap's broker applies the same rule: only the PaySwap plugin registered by th
 official-plugin mechanism gets the broker credential; a same-named impostor plugin or
 a hand-copied MCP server config does not.
 
-### 1.6 Negative E2E test matrix (required before any write operation ships)
+### 1.6 Trusted approval origin (R1 — the approval surface and its proof chain)
+
+§1.3 says grants are created "exclusively by a host-verified renderer approval
+event." This section specifies what makes an event host-verified. The approval
+surface is **host-controlled**: the authorization card renders in the trusted
+application renderer — the same UI that renders permission prompts — never
+inside a plugin webview, never in model-generated content.
+
+**Upstream precedents (verified at `a9fe401` — reused, not reinvented):**
+
+| Mechanism | Source |
+|---|---|
+| Window/sender ownership verification on security-sensitive IPC | `packages/desktop/src/main/webRemoteControlRendererReconnect.ts:34` — rejects when `event.sender.id !== win.webContents.id`; sender-id + frame-URL discipline at `packages/desktop/src/main/index.ts:381-382` |
+| Plugin webviews cannot reach host services or credentials | `packages/ui/src/plugin-ui/CONTRACT.md:11` — plugin UI receives only capability handles (`sandboxId`/`initId`) via `IPluginUiBridgeService`, bound to Agent `runtimeId/generation/token/appIdentity`; the UI never touches plugin HTML, databases, or connection credentials |
+| Stale-handle replay protection | `packages/ui/src/plugin-ui/app/pluginUiHostTeardown.ts` — teardown releases registrations by the *captured* `sandboxId`/`initId` and cannot affect pages created by newer credentials |
+| Renderer↔host RPC fabric isolation | `ServiceChannels` (`packages/shared/src/channels.ts:97`) is reachable only from the trusted renderer via the desktop preload bridge — sandboxed plugin frames have no transport to it |
+
+**New PaySwap requirements (no upstream equivalent — ours to build and prove):**
+
+1. **One-time host-generated approval challenge.** When the authorization-request
+   card is created, the host generates a 256-bit cryptographically random
+   challenge and issues it to that card instance only. The approval event must
+   present the challenge. Challenges are single-use, bound to one pending grant
+   proposal, and expire with it. Challenges never enter model context — they
+   live in the host↔renderer layer only.
+2. **Transaction-digest binding.** The challenge binds a SHA-256 digest of the
+   exact authorization tuple (§1.3). At approval time the host **recomputes the
+   digest from its own state** — never from anything the card, the plugin, or
+   the model supplied — and rejects on mismatch. This is the anti-tamper proof
+   for the card content: a card that displayed different values than the tuple
+   the host will record cannot produce a valid approval.
+3. **Sender verification.** Desktop: the approval event must arrive from the
+   expected window's webContents (the `event.sender.id !== win.webContents.id`
+   precedent applied to the approval channel); events from any other frame,
+   guest webview, or process are rejected. Server deployments: the event must
+   arrive over the authenticated operator session (§4.5).
+4. **Plugin-webview and model-originated approvals are impossible by
+   construction — and tested anyway.** Plugin webviews have no ServiceChannels
+   transport and never receive challenges; model output is not an event. The
+   negative tests below assert the boundary holds end-to-end rather than
+   trusting the construction.
+
+### 1.7 Negative E2E test matrix (required before any write operation ships)
 
 Every row is a P1/P7 gate; the matrix is machine-enforced (deliverable 08 harness
 extension). "Refuses" means the typed refusal is returned and **no provider write
@@ -150,9 +198,25 @@ API call is attempted** (asserted at the adapter boundary, not the UI):
 | N10 | valid grant | operation with any tuple deviation (amount +1 minor unit; different recipient; extra leg) | refuse `authorization_mismatch` |
 | N11 | valid grant | second execution attempt with same grant | refuse — single-use |
 | N12 | valid grant | execution after expiry | refuse |
+| N13 | forged renderer approval event (wrong webContents/sender, or non-expected frame) | approval rejected; no grant created (§1.6) |
+| N14 | approval-card tampering — card presents amount/recipient/legs differing from the host-side tuple | digest mismatch → approval rejected (§1.6.2) |
+| N15 | replayed approval challenge (already consumed, expired, or belonging to another proposal) | rejected; no grant (§1.6.1) |
+| N16 | approval event originating from a plugin webview | cannot reach the approval channel (no ServiceChannels transport, no challenge); asserted refused end-to-end (§1.6.4) |
+| N17 | model-generated text claiming the user approved | not an event; no grant path exists; assertion: no grant record after model text (§1.6.4) |
+| N18 | stale capability handle replayed after card/instance teardown | handle rejected (upstream `pluginUiHostTeardown` discipline); no effect on newer pages (§1.6) |
+| N19 | impostor MCP config with copied PaySwap names/commands/env but not the official plugin registration | no broker credential; cannot connect; tools unreachable (§1.5/§3.3) |
+| N20 | second PaySwap MCP server instance presenting the first instance's token | per-instance credential mismatch → connection refused (§3.5.1) |
+| N21 | broker request naming an operation outside the six `payswap_*` operations | closed dispatch table → refused, no host-service reach (§3.3/§3.5) |
+| N22 | connection to a stale/pre-planted socket path after host restart | endpoint replacement protection: fresh per-boot path, unknown peer → dropped (§3.5.6/§3.5.2) |
+| N23 | second host process opened against the same SQLite ledger DB | single-writer lock: refuses to start financial services, never a second writer (§4.6) |
+| N24 | non-authoritative process (read-only replica) attempting a ledger write | rejected at the repository, not by convention (§4.6) |
 
 N10–N12 run in P7 when execution lands; N1–N9 are executable against the refusal
 path as soon as P1's tool surface exists (the refusal logic is present from day one).
+N13–N18 gate P1 (approval-origin boundary) together with the tool surface;
+N19–N22 gate the P1 broker bridge; N23–N24 gate the P7 ledger. Every "refuse"
+means the typed refusal is returned and, for money rows, **no provider write API
+call is attempted** (asserted at the adapter boundary, not the UI).
 
 ---
 
@@ -165,7 +229,7 @@ unchanged with the plugin on vs. off." The corrected, normative criteria:
 | State | Definition | Requirement |
 |---|---|---|
 | **S0** | PaySwap plugin not installed or disabled | Original ZCode New Task experience, **identical** to upstream `a9fe401` — the zero-difference proof compares this against upstream |
-| **S1** | plugin enabled, user has **not** opted in | Original interface **unchanged** — same rendered surface set as S0. The `payswap_*` tools may be registered (standard plugin lifecycle) but are inert: without a connected account every tool returns the typed `not_connected` refusal. No cards, no toggle, no visual delta. |
+| **S1** | plugin enabled, user has **not** opted in | Original interface **unchanged** — same rendered surface set as S0. The `payswap_*` tools may be registered (standard plugin lifecycle) but are inert: every tool returns the typed `not_opted_in` refusal (§2.1 taxonomy — distinct from `not_connected`). No cards, no toggle, no visual delta. |
 | **S2** | user **opted in** (financial workspace toggle on) | PaySwap may render **only** surfaces declared in its `ui.surfaces[]` registry (deliverable 03 §6): account-connection cards, route-plan cards, authorization-request cards, evidence cards, the financial workspace panel. |
 | **S3** | invariant across S0–S2 | Composer, model selector, Browser / Terminal / Computer-Use controls, theme, navigation, layout, responsive and remote behaviour are **unchanged in every state**. |
 
@@ -177,6 +241,46 @@ PaySwap may add. The plugin-UI-bridge capability limitation the architect cited 
 preserved verbatim: local workspace Agents support the bridge; Web/remote surfaces
 that do not declare the capability do not render PaySwap cards (deliverable 03 §6
 already records this — it stays normative).
+
+### 2.1 The exact opt-in path (R3)
+
+**Upstream mechanism, used unmodified:** the PaySwap plugin declares a boolean
+`userConfig` option — `financialWorkspace`, default `false` (the `PluginUserConfigOption`
+contract, `apps/zcode-cli/packages/contracts/src/plugins/index.ts`, already in
+deliverable 05 §1's evidence table). The existing plugin settings surface renders
+it: `packages/ui/src/settings/PluginConfigControls.tsx` already renders
+`plugin.userConfig` options with a `Switch`, mounted inside the existing plugin
+settings pages (`packages/ui/src/settings/InstalledPluginManagement.tsx`,
+`PluginsSection.tsx`). **Opt-in is the user flipping that switch in the existing
+settings page.** No new settings page, no composer control, no navigation change,
+no PaySwap-specific settings chrome.
+
+**State machine:** S0 (not installed or disabled) → S1 (enabled,
+`financialWorkspace=false`) → S2 (enabled, `financialWorkspace=true`). The five
+transitions: **enable** (S0→S1), **opt-in** (S1→S2), **opt-out** (S2→S1),
+**disable** (S1→S0 or S2→S0), **uninstall** (any → S0).
+
+**Refusal taxonomy (three distinct typed codes, never conflated):**
+
+| Code | State it names |
+|---|---|
+| `financial_mode_disabled` | plugin disabled or uninstalled |
+| `not_opted_in` | S1 — enabled, `financialWorkspace=false` |
+| `not_connected` | S2 — opted in, but no account connected |
+
+Every `payswap_*` tool returns exactly the code matching the current state before
+any operation is attempted.
+
+### 2.2 Transition acceptance tests (P1)
+
+| T# | Transition | Must |
+|---|---|---|
+| T1 | enable (S0→S1) | rendered-surface zero-diff vs S0; tools registered and inert |
+| T2 | opt-in (S1→S2) | only `ui.surfaces[]`-declared surfaces appear; refusal code changes `not_opted_in` → `not_connected` |
+| T3 | opt-out (S2→S1) | surfaces disappear; interface returns to S1-identical; code reverts to `not_opted_in` |
+| T4 | disable (→S0) | interface identical to S0; tools unregistered; code `financial_mode_disabled` |
+| T5 | uninstall (→S0) | interface identical to S0; plugin config removed; connection credentials deleted via the revocation flow (deliverable 05 §5); **ledger evidence retained** per its own retention rules — financial audit records are never destroyed by a UI uninstall — or exported-then-deleted by explicit operator choice |
+| T6 | settings page | the existing plugin settings surface renders the PaySwap entry exactly like any other plugin — zero settings-page modification beyond the plugin's own declared options |
 
 Deliverables 07 §3 and 10 (P1/P5 acceptance) are amended accordingly in this PR.
 
@@ -251,6 +355,67 @@ broader host services; the broker's dispatch table is closed by construction.
 - **P0/P1 first implementation:** desktop only, read-only operations, so the bridge
   is proven on the simplest topology before the server variant is exercised.
 
+### 3.5 Broker process authentication (R2 — hardening beyond the shipped pattern)
+
+The architect's rule, adopted verbatim: **a plugin identity claim alone is not
+process authentication — the broker must verify the actual calling process against
+the host-registered plugin instance.** The shipped node-repl browser broker already
+implements part of this; PaySwap adds the rest. Labeled honestly:
+
+**Upstream precedents (verified at `a9fe401`):**
+
+| Mechanism | Source |
+|---|---|
+| Per-boot 256-bit random broker token, timing-safe comparison | `apps/zcode-cli/packages/bootstrap/src/app/node-repl-browser-broker.ts:155-168` (`authorizeRequest`: `randomBytes(32)` token, `timingSafeEqual`) — proves the caller received the token via the host's trusted config injection |
+| Strict request schema, size cap, one-request-per-connection line protocol | `nodeReplBrowserBrokerRequestSchema.parse`, `MAX_REQUEST_BYTES` (same file) |
+| Downstream authoritative session resolution | `requireSession` resolves sessionIds only for child sessions the parent runtime registered (`forChildSession`); unregistered ones are rejected (comment at `node-repl-browser-broker.ts:163-168`) — the session claim is never trusted from the wire |
+| Host-side pid→plugin tracking | `McpTrackedProcess` maps MCP child pids to their owning plugin (`apps/zcode-cli/packages/adapters/src/mcp/telemetry.ts:30-37`; process tree in `adapters/src/mcp/process-tree.ts`) — the host already knows which pid belongs to which plugin's server |
+| Random per-boot socket/pipe path | `createSocketPath` — UUID-suffixed path (`node-repl-browser-broker.ts:86-90`); no fixed path to squat; `close()` removes the socket |
+
+**New PaySwap requirements (not in upstream — ours to build and prove):**
+
+1. **Per-process-instance credentials.** Each PaySwap MCP server *instance*
+   receives its own broker token at spawn; token lifetime = process instance
+   lifetime. One instance's token never validates another (upstream's
+   single-server design doesn't need this; our plugin surface does). N20.
+2. **OS peer verification.** Unix: `socket.getPeerCredentials()` (SO_PEERCRED) on
+   connect — the broker reads the caller's pid/uid and verifies the pid against
+   the host-registered instance table (the `McpTrackedProcess` pid→plugin mapping,
+   extended to the broker). Windows: named-pipe client process id. The peer check
+   happens **before any payload parsing**; unknown pids are dropped. A plugin
+   identity claim on the wire is never sufficient by itself.
+3. **Socket filesystem permissions.** Unix: socket directory `0700` and socket
+   `0600` under the host's private runtime directory. (Upstream's broker uses
+   world-traversable `tmpdir()` — acceptable for its single-child threat model;
+   hardened for ours because our broker surface is financial.)
+4. **Windows named-pipe ACLs.** Pipe DACL restricted to the current user's SID —
+   no NULL DACL, no broader grants. (Upstream ships named pipes — e.g.
+   `packages/services/src/cua-permission-broker/windowsCuaDevHelperHost.ts` — but
+   explicit ACL restriction for the financial broker is ours to add.)
+5. **Process/plugin/session binding.** A broker connection is bound to
+   (verified pid → host-registered plugin instance → session scope). The session
+   scope is re-resolved authoritatively downstream (`requireSession` pattern) —
+   never taken from the request payload.
+6. **Endpoint replacement protection.** Per-boot random path (upstream) **plus**:
+   the host generates a fresh path every boot, removes or refuses an existing
+   file at that path, and delivers the path only via trusted config injection.
+   An attacker cannot pre-plant a socket at the path the host will use (UUID
+   entropy), cannot replace the host's listening socket while the host holds it,
+   and a stale socket from a crashed host dies with the private directory
+   lifecycle. Because the MCP child only *connects*, a token-harvesting fake
+   broker would have to guess a fresh random path before the host binds it —
+   the private-directory permission makes the plant impossible for another OS
+   user and the per-boot randomness makes it infeasible in time. N22.
+7. **Replay resistance.** Timing-safe token comparison (upstream) **plus** a
+   per-request unique id with dedupe inside the connection lifetime: a replayed
+   request id is rejected. N21 covers the closed dispatch table; N19 the
+   impostor config; N20 the cross-instance token.
+
+**The dispatch table stays closed:** exactly the six `payswap_*` operations of
+deliverable 05 §9 — no general `ServiceChannels` access, no arbitrary
+host-service invocation, no reflection, no passthrough. This restates §3.3(4)
+because R2 makes it explicit.
+
 ---
 
 ## §4. Ledger authority, deployment topology, and principal identity
@@ -302,6 +467,41 @@ writes ledger tables — on any deployment.
 | Server-hosted workspace | authenticated operator identity | server-side authentication; **client-provided operator IDs are never identity** (mission mandate, unchanged). Role enforcement server-side. |
 | Hosted multi-user | authenticated operators + roles | prerequisite for that topology; not claimed before it exists. |
 | Webhook ingress | none (it is an event, not a principal) | provider signature verification (deliverable 05 §6.5) — webhooks are *evidence about operations*, never authorization for anything. |
+
+### 4.6 Single-writer enforcement and the multi-instance prohibition (R4)
+
+**Prohibition, explicit:** the SQLite ledger **must never be opened for writing
+by more than one process.** Horizontal or multi-instance deployments pointing
+multiple hosts at one SQLite ledger file are prohibited. This is stated plainly
+because the upstream precedents do not provide multi-host coordination:
+`PRAGMA journal_mode = WAL` + `BEGIN IMMEDIATE`
+(`packages/services/src/session/taskIndexRepo.ts:401,570,767`) serialize writers
+*within one process*; `withFileLock` (`packages/services/src/credential/credentialService.ts:105,146,159`,
+utility in `@zcode/shared/node`) is an advisory per-file lock. Neither is a
+multi-host mechanism, and PaySwap does not pretend otherwise.
+
+**Verifiable single-writer mechanism:** the ledger repository acquires an
+**exclusive OS-level lock file held for the database's lifetime** — the
+`withFileLock` utility, held long-lived instead of per-operation (the utility's
+holding discipline is the upstream precedent; the long-lived hold is ours).
+A second process that fails to acquire the lock **refuses to start financial
+services**: fail-closed typed error at boot, surfaced in diagnostics, never a
+degraded second writer, never a silent read-only fallback unless the process
+was explicitly deployed as a replica (§4.2 — replicas have no write code path
+reachable at all, asserted by N24).
+
+**Verification is a test, not a claim:** N23 starts two host processes against
+one ledger DB and asserts the second refuses; N24 asserts the replica's write
+path is rejected at the repository, not by convention.
+
+**Deployment consequence:** the initial server deployment is
+**single-authoritative-host and single-writer** — enforced by the lock, stated
+in the deployment documentation, and asserted by N23. **Hosted multi-user or
+horizontally scaled deployments require the central PostgreSQL ledger and
+authenticated principals (§4.5) before any live financial operation in that
+topology.** This is a hard precondition of the P7 live gate, not a
+recommendation: a scaled deployment with a shared SQLite ledger is a
+configuration the software refuses, not one it tolerates.
 
 ---
 
@@ -371,6 +571,8 @@ E2E battery stays green.
 
 ## §6. Amendments applied to earlier deliverables (this PR)
 
+Revision 1 (first architect round):
+
 | Deliverable | Amendment |
 |---|---|
 | 07 §1.2 | "MCP tools are always approval-gated" **corrected** — replaced with the two-layer statement and a pointer to this addendum §1; the "can never be silenced by yolo/accept-edits" claim is restated as a property of Layer 2 (grant enforcement), not of the MCP registration |
@@ -380,6 +582,16 @@ E2E battery stays green.
 | 10 P3 | Adds: live-doc re-verification of every deliverable 04 fact with retrieval dates (already implied, now explicit acceptance text) |
 | 10 P7 | Adds: hosted-topology ledger decision point (§4.2), grant-bound negative rows N10–N12, chain-verified restore (§4.4) |
 | 05 §2 | Bridge pointer: topology-1 adapters are reachable **only** via the §3 broker sequence — the MCP server process is a typed proxy with no financial state |
+
+Revision 2 (R1–R4 round — this commit):
+
+| Deliverable | Amendment |
+|---|---|
+| 05 §9 | Refusal-code taxonomy (`financial_mode_disabled` / `not_opted_in` / `not_connected`, addendum §2.1) + per-process-instance broker credentials and OS peer verification (addendum §3.5) + N-row reference updated to §1.7 |
+| 06 §2.12 | Ledger single-writer enforcement: lifetime lock-file mechanism, multi-instance prohibition, N23/N24 (addendum §4.6) |
+| 07 §1.2/§3 | N-matrix reference updated to §1.7; opt-in path (§2.1) and transition tests T1–T6 (§2.2) added to the acceptance criteria |
+| 10 P1 | Adds transition tests T1–T6, approval-origin rows N13–N18, broker rows N19–N22, per-instance credential + peer-verification scope |
+| 10 P7 | Adds ledger rows N23–N24 and the explicit hosted/horizontal live-operation precondition |
 
 ## §7. What this addendum deliberately does not change
 
