@@ -28,7 +28,7 @@ Nothing about New Task changes until the user opts in. With PaySwap active:
    specified in addendum §1.6: host-controlled approval surface, one-time
    host-generated challenge, transaction-digest binding, renderer/window
    ownership verification, and structural exclusion of plugin-webview and
-   model-originated approvals. Negative E2E rows N1–N38 (addendum §1.7)
+   model-originated approvals. Negative E2E rows N1–N42 (addendum §1.7)
    are the proof.
 3. **Additive cards in two trust classes (addendum §1.6.0, normative).**
    Financial context renders through two distinct surfaces:
@@ -128,17 +128,28 @@ uninstall (→S0a — credentials revoked, ledger evidence retained per retentio
 rules or exported by explicit operator choice), T6 settings page unchanged
 beyond the plugin's own declared options, **T7 opt-out with live surfaces**
 (S2→S1 while an informational surface and an authorization proposal are open
-— addendum §2.3: the surface stops receiving protected account data and
-becomes non-actionable, the pending proposal and its challenge are
-invalidated so a late approval click is rejected, new sessions follow the
-updated state, and the upstream plugin lifecycle is untouched).
+— addendum §2.3, both arms asserted: the surface's data queries refuse
+`not_opted_in` **and** every instance that already rendered protected account
+data is disposed or replaced by the host — its DOM and JavaScript context no
+longer exist, the replacement instance is fresh and dataless, and the per-key
+renderer-side retention (feed snapshot, widget state) is cleared, so reopening
+the surface cannot restore stale balances; the surface is non-actionable, the
+pending proposal and its challenge are invalidated so a late approval click is
+rejected, new sessions follow the updated state, and the upstream plugin
+lifecycle is untouched).
 
 **Opt-out is host-side revocation, not a per-surface courtesy (addendum §2.3,
 normative):** the broker's live state closes the data path to open surfaces,
-the host's challenge registry invalidates pending proposals, and a PaySwap
-revocation event over the plugin-UI data path lets open surfaces render the
-disabled state — the guarantee never depends on the surface's cooperation,
-and no upstream plugin lifecycle semantics are modified.
+the host's challenge registry invalidates pending proposals, and — for
+surfaces that have already rendered protected account data — the host
+**disposes or replaces the surface instance itself**, on upstream's own
+teardown discipline (bounded `ui/resource-teardown` cleanup window, then
+`disposeSandbox` by the captured `sandboxId`/`initId`; the per-key
+renderer-side feed/widget retention cleared with it), so already-rendered
+content stops being exposed rather than merely failing to refresh. The
+guarantee never depends on the surface's cooperation, and no upstream plugin
+lifecycle semantics are modified — disposal touches only PaySwap-tracked
+instances.
 
 ## 4. The acceptance look
 

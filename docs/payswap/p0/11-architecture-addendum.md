@@ -1,28 +1,45 @@
 # PaySwap P0 — Architecture Addendum (response to the P0 architect review)
 
-**Owner:** TL · **Status:** normative for P1+ · **Revision:** 4 — incorporates the
-architect's third R1–R4 review round on top of revision 3 (server principal
-model and desktop main-frame/origin sender validation in §1.6.2–§1.6.3;
-broker-instance replay protection and the authenticated Windows helper relay
-in §3.5.7–§3.5.9; opt-out host-side revocation in §2.3; fenced-lease ledger
-authority with explicit authoritative-instance configuration in §4.6) ·
-**Reviewed against:** worktree `a9fe401` (v3.17.2) · **Responds to:** the
-architect reviews of PR #2 (changes-requested before merge).
+**Owner:** TL · **Status:** normative for P1+ · **Revision:** 5 — incorporates
+the architect's fourth R1–R4 review round on top of revision 4 (four focused
+implementation-contract corrections: disposal of already-rendered surfaces on
+opt-out in §2.3; the contiguous-watermark replay algorithm in §3.5.7; the
+two-level credential handshake, operator-credential lifecycle, and
+workspace-scoped roles in §1.6.3; the owner/nonce/generation-checked lease
+release in §4.6) · **Reviewed against:** worktree `a9fe401` (v3.17.2) ·
+**Responds to:** the architect reviews of PR #2 (changes-requested before
+merge).
 
-**What revision 4 adds (the architect's third R1–R4 round — four focused
-corrections, revision 3's architecture preserved):** §1.6.2–§1.6.3 distinguish
-server authentication from authenticated operator identity and add the stable
-server principal, server-side financial roles, expiry/revocation/cross-user
-isolation, and desktop sender validation against the expected main frame and
-the trusted application origin; §2.3 + T7 define immediate host-side
-revocation when the user opts out while surfaces are already open; §3.5.7–
-§3.5.9 define broker-instance replay protection that survives connection
-changes, the authenticated native Windows peer-verification relay, and the
-end-to-end authenticated chain; §4.6 adds a fencing generation to every lease
-acquisition, validated at the repository write boundary, with explicit
-authoritative-instance configuration for the SQLite server topology. New
-negative rows N29–N38 and transition test T7; all existing N1–N28 and T1–T6
-criteria stand unchanged.
+**What revision 5 adds (the architect's fourth R1–R4 round — one focused final
+correction per area, revision 4's architecture preserved):** §2.3 + T7 extend
+opt-out revocation from *stopping future data delivery* to **removing what was
+already rendered** — host-controlled disposal or replacement of every
+PaySwap-tracked surface instance that has rendered protected account data
+(upstream's own teardown discipline: bounded cleanup window, then
+`disposeSandbox` by captured handles), plus clearing the per-key renderer-side
+retention that would otherwise restore stale content on reopen; §3.5.7
+corrects the replay algorithm to a **contiguous watermark plus a retained set
+that keeps completed-but-uncovered sequences recorded** until the watermark
+advances past them, with a bounded maximum sequence gap; §1.6.3 items 7–9
+specify the **two-level `/ws` credential handshake** (deployment Bearer header
++ operator header or short-lived session cookie; the URL query transport
+disabled on financially-enabled deployments), the **operator-credential
+lifecycle** (format, digest-only storage, rotation with grace window,
+immediate revocation, non-exposure rules), and **workspace-scoped role
+bindings**; §4.6 preserves the upstream lock's **owner/nonce-checked release**
+(`channelRuntime.ts:220-232`) with the fencing generation added to the
+authority validation, so a stale holder cannot delete a successor's lock. New
+negative rows N39–N42; T7 strengthened to assert both arms; all existing
+N1–N38 and T1–T6 criteria stand unchanged.
+
+**The revision-4 record (kept):** revision 4 added the server principal model
+and desktop main-frame/origin sender validation (§1.6.2–§1.6.3),
+broker-instance replay protection and the authenticated Windows helper relay
+(§3.5.7–§3.5.9), opt-out host-side revocation (§2.3), and the fenced-lease
+ledger authority with explicit authoritative-instance configuration (§4.6),
+with rows N29–N38 and T7. The architect accepted it as a substantial
+improvement and requested the four focused corrections above — no
+architectural redesign.
 
 **The revision-3 finding (kept for the record):** revision 2 required that
 authorization cards never render in a plugin webview (§1.6) while
@@ -314,8 +331,9 @@ things, and **only the second may appear in a grant.**
    shared server token, never a client-chosen id. The registry is server-host
    state; credentials are verifiable server-side.
 2. **Operator sessions and the stable principal (new).** An operator session is
-   an authenticated `/ws` connection whose upgrade carried a valid operator
-   credential. The server resolves the **principal** from the credential
+   an authenticated `/ws` connection whose upgrade completed the two-level
+   credential handshake (item 7) with a valid operator credential. The server
+   resolves the **principal** from the credential
    server-side and binds it to the connection's session state for that
    connection's lifetime. The principal is a stable server-assigned identifier:
    a reconnecting operator presents the credential again and resolves to the
@@ -334,10 +352,12 @@ things, and **only the second may appear in a grant.**
    request payload is ignored — and a payload attempting to name a principal
    other than the authenticated one refuses the request (N32). There is no code
    path from payload to principal.
-5. **Server-side financial roles (new).** The proposer / approver / auditor /
+5. **Server-side financial roles (new — and workspace-scoped, item 9).** The
+   proposer / approver / auditor /
    viewer roles (deliverable 06 §4) are enforced at the service boundary before
    approval processing and before any money-affecting operation: an
-   authenticated operator without the approver role cannot mint a grant (N31).
+   authenticated operator without the approver role **for the target
+   workspace** cannot mint a grant (N31, N41).
    The check is server-side, never in the UI.
 6. **Expiry, revocation, and cross-user isolation (new).** Operator sessions
    carry a bounded, deployment-configured lifetime; revocation is a server-side
@@ -348,15 +368,102 @@ things, and **only the second may appear in a grant.**
    pending proposal **and** the issuing session's principal; one operator's
    session cannot resolve, inspect, or mint another's (N29); ledger
    authorization records name the principal, so post-hoc audit is unambiguous.
+7. **The two-level credential handshake (R1 — the credential transport,
+   specified).** How the `/ws` upgrade authenticates **both** levels,
+   concretely:
+   - **Level 1 — deployment.** The upgrade request carries the deployment's
+     shared token in the `Authorization: Bearer` header — the transport
+     upstream's middleware already implements (the `hasValidLiteToken` Bearer
+     branch, `packages/server/src/http.ts:247-252`; the middleware guards
+     `/ws` and `/api/*` with a 401, `:353-363`). PaySwap additionally
+     **disables upstream's `?token=` query branch** (`:253-258`) on
+     financially-enabled deployments: it is the one URL-borne transport, and
+     no credential of either level may appear in a URL (proxy and access
+     logs). A financially-enabled deployment without a configured token
+     already fails closed (N27).
+   - **Level 2 — operator.** Exactly two transports, both header/cookie-borne.
+     Native operator clients (the PaySwap desktop/web approval clients)
+     present the per-operator token in an `X-PaySwap-Operator-Token` request
+     header on the upgrade. Browser clients that cannot set WebSocket
+     request headers first exchange the token over an authenticated HTTPS
+     request (`Authorization: Bearer <operator token>` on the
+     operator-session endpoint), which mints a short-lived
+     (deployment-configured, default 15 min), single-purpose, **HttpOnly +
+     SameSite=Strict** session cookie — the upgrade then presents that
+     cookie. Cookie-attribute precedent: upstream's lite-token cookie is
+     already HttpOnly (`http.ts:254-258`); PaySwap tightens `SameSite=Lax` to
+     `Strict`, scopes the path to the operator-session purpose, and bounds
+     the lifetime to minutes. The cookie authenticates level 2 only; it
+     never substitutes for the level-1 Bearer token.
+   - **Order and failure semantics.** The deployment token is validated first
+     (401; the operator credential is not yet read); operator resolution is
+     second and fails with a single generic `operator_authentication_failed`
+     — unknown, expired, rotated-out, and revoked credentials are
+     indistinguishable to the caller, defeating token enumeration. On
+     success the connection is bound to (deployment, principal, role
+     bindings, session expiry) and every frame on it acts as that principal.
+8. **Operator-credential format, storage, rotation, and revocation (R1).**
+   - **Format:** `pso_<version>_<base64url>` covering 32 bytes of CSPRNG
+     output (the `randomBytes(32)` broker-token discipline,
+     `node-repl-browser-broker.ts:32`) — high-entropy by construction, so
+     the registry stores only `sha256(token)` for keyed lookup, compared
+     constant-time (the `timingSafeEqual` discipline, `:165`). The
+     plaintext is displayed exactly once, at provisioning.
+   - **Storage:** the server host's private state directory under the
+     upstream private-persistence file discipline (`0600`, atomic rename —
+     `packages/shared/src/node/privateFilePersistence.ts`) — never the
+     ledger (credentials are not financial evidence), never a repo file,
+     and never the shared token's env slot.
+   - **Rotation:** an admin- or operator-initiated rotation issues a new
+     token and marks the old one rotating with a bounded grace window
+     (default 24 h, deployment-configured). Both tokens authenticate during
+     the window; every old-token authentication emits an audit record; at
+     window end the old token is revoked, all sessions it authenticated are
+     closed server-side, and their pending challenges are invalidated
+     (item 6).
+   - **Revocation:** immediate — the token's digest record is flagged
+     revoked, the principal's active sessions are marked revoked and their
+     connections closed, and pending challenges issued to those sessions
+     are invalidated. N30 is the session-level arm (a resolution arriving on
+     an expired/revoked session); N40 is the credential-level arm (an
+     upgrade attempt with a rotated-out or revoked token refuses before any
+     session exists).
+   - **Non-exposure (the architect's rule):** operator tokens never appear in
+     URLs (item 7's transports are header/cookie only), are never logged
+     (server logs record only the token's record id, never a value), and
+     never enter model context or any MCP child / broker / plugin
+     environment — they exist solely between the operator's approval client
+     and the server's auth middleware. The env-sanitization backstop
+     (`runtimeEnv.ts:64-76`) never even needs to strip them: they are never
+     placed in any environment variable at all.
+9. **Workspace-scoped role bindings (R1 — roles attach to bindings, not to
+   operators).** The proposer / approver / auditor / viewer roles are
+   properties of the **(operator, workspace/ledger) binding**, not of the
+   operator alone. The registry stores `operatorId × ledgerId → roles`; the
+   item-5 service-boundary check evaluates the roles bound to the **target
+   workspace of the operation** — resolved server-side from the authoritative
+   session scope, never from a client-supplied workspace field. An approver in
+   workspace A holds no role in workspace B unless explicitly bound there; an
+   unbound operator's approval attempt refuses (N41). Approval events record
+   the triple (principal, workspace, role used), so post-hoc audit is
+   unambiguous across workspaces. P0–P6 deployments carry one logical ledger
+   per deployment (§4.2), but the binding-scoped schema exists from day one —
+   multi-workspace support later requires no semantics migration, and no
+   cross-workspace role inheritance ever exists to remove.
 
 **Labels:** the fail-closed server posture, the exposure policy, and the
 authenticated-channel requirement are §1.6.2 item 5 (upstream mechanisms,
-PaySwap policy). The operator registry, per-operator credentials, stable
-principals, financial roles, and expiry/revocation/isolation are **new PaySwap
-requirements with no upstream equivalent** — upstream's server has no
-operator-identity mechanism at all; the verified table above is the evidence.
-They gate P1 alongside N27/N28 (the same server boundary), before any
-server-side approval is trusted.
+PaySwap policy). The Bearer-transport and HttpOnly-cookie disciplines of the
+item-7 handshake are upstream mechanisms (`http.ts:247-262`); composing them
+into a two-level upgrade handshake, disabling the query transport on
+financially-enabled deployments, and the short-lived operator-session cookie
+are **new PaySwap requirements**. The operator registry, per-operator
+credentials, stable principals, financial roles, expiry/revocation/isolation,
+the credential lifecycle (item 8), and the workspace-scoped role bindings
+(item 9) are **new PaySwap requirements with no upstream equivalent** —
+upstream's server has no operator-identity mechanism at all; the verified
+table above is the evidence. They gate P1 alongside N27/N28 (the same server
+boundary), before any server-side approval is trusted.
 
 ### 1.7 Negative E2E test matrix (required before any write operation ships)
 
@@ -404,6 +511,10 @@ API call is attempted** (asserted at the adapter boundary, not the UI):
 | N36 | ledger authority, after takeover | the previous holder (paused past the lease TTL, takeover completed) resumes and attempts a write | refused at the repository boundary — its fencing generation is below the ledger's current generation; typed `ledger_authority_lost`; hash chain unaffected (§4.6) |
 | N37 | two host processes, one ledger DB | simultaneous lease acquisition attempts | exactly one acquisition wins (atomic-rename primitive); the loser fails closed within the boot budget (`ledger_authority_unavailable`); the generation is incremented exactly once (§4.6) |
 | N38 | any ledger write | writer presenting a stale fencing generation (any generation below the ledger's current value) | refused inside the write transaction at the repository boundary, before any record is appended (§4.6) |
+| N39 | broker, out-of-order completion | with the watermark at 10 and sequence 11 outstanding, sequence 12 is accepted, dispatched, and completes; then a replay of 12 arrives (same or new connection) **before 11** | rejected before dispatch — completed-but-not-yet-covered sequences remain recorded above the watermark until it advances past them (§3.5.7); no second dispatch |
+| N40 | server deployment | `/ws` upgrade presenting a rotated-out (past grace) or revoked operator token | refused at the handshake with the generic `operator_authentication_failed` — no session established; a session already open on a token revoked mid-flight is closed server-side and its pending challenges invalidated (§1.6.3 items 7–8) |
+| N41 | server deployment, operator bound as approver in workspace A only | approval attempt targeting workspace B (unbound) | refused at the service boundary — roles are (operator, workspace) bindings, never global (§1.6.3 item 9); no grant |
+| N42 | ledger authority, after takeover | the previous holder resumes and attempts to release or delete the successor's lock (graceful release or lock-directory removal) | release is a no-op — the ownership check (pid + instance id + nonce + fencing generation) fails against the successor's owner record; the successor's lock, lease, and subsequent writes are unaffected (§4.6) |
 
 N10–N12 run in P7 when execution lands; N1–N9 are executable against the refusal
 path as soon as P1's tool surface exists (the refusal logic is present from day one).
@@ -413,10 +524,15 @@ with the approval-origin rows** (N25 manifest validation, N26 plugin-callback
 path, N27 unauthenticated server, N28 unauthenticated client); **N29–N32 gate
 P1 with the server-principal rows** (§1.6.3: cross-user resolution,
 expired/revoked session, insufficient role, forged client operator id);
-**N33–N35 gate the P1 broker bridge alongside N19–N22** (replay on a new
-connection, after reconnect, concurrent duplicates); **N36–N38 gate the P7
+**N33–N35 + N39 gate the P1 broker bridge alongside N19–N22** (replay on a new
+connection, after reconnect, concurrent duplicates, and the out-of-order
+completed-request replay — the retained-set arm of §3.5.7);
+**N40–N41 gate P1 with the server-principal rows** (§1.6.3 items 7–9:
+credential-lifecycle refusal at the handshake, cross-workspace role use);
+**N36–N38 + N42 gate the P7
 ledger alongside N23–N24** (stale-holder write after takeover, simultaneous
-acquisition, stale-generation write). Every "refuse"
+acquisition, stale-generation write, and the stale holder's release of the
+successor's lock refused by the owner/nonce/generation check). Every "refuse"
 means the typed refusal is returned and, for money rows, **no provider write API
 call is attempted** (asserted at the adapter boundary, not the UI).
 
@@ -527,7 +643,7 @@ broker-binding revocation is what makes the code reachable and meaningful.
 | T4 | disable (→S0b) | new sessions identical to upstream's disabled state (no PaySwap runtime components); running sessions keep their frozen tool surface (upstream behavior, unchanged — PaySwap adds no teardown it doesn't own) but money operations refuse `financial_mode_disabled` via broker-binding revocation; interface otherwise upstream |
 | T5 | uninstall (→S0a) | interface identical to upstream not-installed; plugin config and userConfig removed by the existing uninstall flow (`plugins.ts:783-817`; `file-config.adapter.ts:318-325` removes both `enabledPlugins[id]` and `options[id]`); connection credentials deleted via the revocation flow (deliverable 05 §5); **ledger evidence retained** per its own retention rules — financial audit records are never destroyed by a UI uninstall — or exported-then-deleted by explicit operator choice; same residual-session semantics as T4 |
 | T6 | settings page | the existing plugin settings surface renders the PaySwap entry exactly like any other plugin — zero settings-page modification beyond the plugin's own declared options |
-| T7 | opt-out while an informational surface and an authorization proposal are already open (S2→S1, live surfaces) | **host-side revocation, immediate (§2.3):** the open Class-A surface stops receiving protected account information (its data queries refuse `not_opted_in` — the surface shows the disabled state, never stale balances); the surface is non-actionable (every action routes through the broker and refuses); the pending grant proposal and its one-time challenge are invalidated at the transition — an approval click after opt-out is rejected (no live challenge) and the authorization card dismisses; new sessions follow the updated state; the upstream plugin lifecycle is untouched (the plugin remains enabled — S1 — and no upstream-owned teardown runs) |
+| T7 | opt-out while an informational surface and an authorization proposal are already open (S2→S1, live surfaces) | **host-side revocation, immediate (§2.3) — both arms asserted:** (a) *future data delivery stops* — the surface's data queries refuse `not_opted_in`, never stale balances; and (b) *already-rendered protected content is gone* — every Class-A instance that has rendered protected account data is disposed or replaced by the host (its DOM and JavaScript context no longer exist; the replacement instance is fresh, dataless, and renders the disabled state), and its per-key renderer-side retention (feed snapshot, widget state) is cleared, so reopening the surface cannot restore stale data; the surface is non-actionable (every action routes through the broker and refuses); the pending grant proposal and its one-time challenge are invalidated at the transition — an approval click after opt-out is rejected (no live challenge) and the authorization card dismisses; new sessions follow the updated state; the upstream plugin lifecycle is untouched (the plugin remains enabled — S1 — and no upstream-owned teardown runs) |
 
 Deliverables 07 §3 and 10 (P1/P5 acceptance) are amended accordingly in this PR.
 
@@ -535,19 +651,61 @@ Deliverables 07 §3 and 10 (P1/P5 acceptance) are amended accordingly in this PR
 
 The per-session surface lifecycle (above) governs what *new* sessions render,
 but an opt-out must also be effective **immediately**, against surfaces that
-are already open. The rule: **revocation authority lives in the host, never in
-the plugin and never in the surface.**
+are already open — **including the data they have already rendered**. The
+rule: **revocation authority lives in the host, never in the plugin and never
+in the surface, and no guarantee depends on the surface's cooperation.**
 
 1. **Existing surfaces must not continue exposing protected account
-   information.** Open Class-A surfaces are fed by the plugin's MCP server →
-   broker → host services. On opt-out the broker's live state flips (§2.1), so
-   every subsequent data query refuses `not_opted_in` — the host stops serving
-   protected account data to that plugin instance's broker session. The host
-   additionally emits a PaySwap revocation event over the plugin-UI data path
-   so PaySwap's own surfaces can render an explicit disabled state; **the
-   guarantee does not depend on the surface honoring the event** — even a
-   surface that ignored it could fetch nothing, because the data path is closed
-   host-side.
+   information — and what they already rendered must stop being exposed.**
+   Two host-side mechanisms, in sequence:
+   - **Data-capability revocation (stops future delivery).** Open Class-A
+     surfaces are fed by the plugin's MCP server → broker → host services. On
+     opt-out the broker's live state flips (§2.1), so every subsequent data
+     query refuses `not_opted_in` — the host stops serving protected account
+     data to that plugin instance's broker session. This arm alone does
+     **not** erase data already delivered, which is why the second arm
+     exists.
+   - **Disposal or replacement of the surface instance — removes what was
+     already rendered (new PaySwap requirement, built on upstream
+     mechanisms).** The PaySwap host integration keeps a
+     **surface-content registry**: every Class-A surface *instance* it
+     renders is tracked by its captured sandbox lease (`sandboxId`/`initId` +
+     the plugin `appIdentity` lease triple) together with a
+     has-ever-received-protected-data mark. On opt-out, every marked
+     instance is torn down **by the host, on upstream's own teardown
+     discipline**: a bounded `ui/resource-teardown` cleanup window whose
+     expiry proceeds without the page's cooperation
+     (`pluginUiHostTeardown.ts:43-54`), then bridge/port close and
+     `disposeSandbox(sandboxId, initId)` — the platform-port contract whose
+     own documentation states the isolation guarantee
+     (`packages/shared/src/mcp-apps/contract.ts:198-203`: disposal releases
+     only the captured registration; new pages use new credentials and
+     sandboxIds, so a late old disposal cannot touch a new registration).
+     Disposal destroys the instance's DOM **and its JavaScript heap** — the
+     rendered protected content ceases to exist rather than being refreshed
+     away. Where the surface anchor must remain occupied (e.g., the
+     financial workspace pane), the host **replaces** the instance: dispose,
+     then create a fresh instance on a new lease (new `sandboxId`/`initId`)
+     with **no data capability**, rendering the S1 disabled state; the
+     fresh instance cannot inherit anything from the disposed one.
+     Hidden-but-retained instances are disposed identically — a background
+     page is a live page (the retention manager keeps up to four per window
+     with a 30-minute idle horizon, `pluginUiBackgroundRetention.ts:8-9`)
+     and holds the same rendered data; it is in the registry like any
+     other.
+   - **Renderer-side retention cleared.** Two upstream renderer stores
+     retain per-surface state beyond page close and would otherwise restore
+     it on reopen: the feed-snapshot store — whose own contract is that
+     closing and reopening a panel still yields the "最后一次成功结果"
+     (`pluginUiSurfaceFeedStore.ts:7-13`) — and the widget-state store
+     (`pluginUiWidgetStateStore.ts:1-8`). Both expose per-key clear APIs
+     (`clearPluginUiSurfaceFeed`, `pluginUiSurfaceFeedStore.ts:43`;
+     `clearPluginUiWidgetState`, `pluginUiWidgetStateStore.ts:20`), and both
+     are keyed by the workspace/session/plugin/server/resource/scope key
+     scheme — on opt-out the PaySwap host integration clears **exactly its
+     own surface keys** (its pluginId/server), touching no other plugin's
+     entries. After the clear, reopening a PaySwap surface starts from
+     empty and its data queries refuse `not_opted_in`.
 2. **Existing surfaces must become non-actionable.** Every action a Class-A
    surface offers routes through `payswap_*` tools → broker → refusal. There is
    no host-service path from a plugin surface to a financial operation that
@@ -565,10 +723,19 @@ the plugin and never in the surface.**
 5. **Upstream plugin lifecycle semantics are not modified.** Opt-out does not
    disable the plugin (it remains enabled — S1), does not tear down or restart
    its MCP server (upstream owns that lifecycle), and touches no upstream
-   surface. Everything above is host-side state the PaySwap host services own:
-   broker live-state, challenge registry, and the PaySwap revocation event.
+   surface. Disposal targets **only instances the PaySwap host integration
+   itself created and tracked** — the same capability-scoped discipline as
+   upstream's own teardown (`pluginUiHostTeardown.ts:6-9`: release by
+   captured handles; pages created by newer credentials unaffected); the
+   plugin's MCP server process, other plugins' surfaces, and upstream-owned
+   surfaces are out of scope by construction. The PaySwap revocation event
+   over the plugin-UI data path remains as **best-effort UX** for surfaces
+   that never received protected data; **no security property depends on
+   it.**
 
-T7 is the acceptance test for exactly this scenario.
+T7 is the acceptance test for exactly this scenario — **both arms**: future
+data requests fail, and already-rendered protected data is neither visible
+nor recoverable (instance disposed or replaced; retention cleared).
 
 ---
 
@@ -737,18 +904,49 @@ prove):**
      item 1) and a **monotonically increasing per-instance sequence number**
      allocated by the MCP child. The pair is unique by construction.
    - **The dedupe scope is the broker instance** — the host process's
-     financial-services lifetime — not the connection. The broker keeps, per
-     instance, a seen-record of dispatched sequence numbers (a watermark plus a
-     bounded set of in-flight sequences above it, pruned as the watermark
-     advances). Connection drops and reconnections do not clear it; a new MCP
-     server instance gets a new instanceId and credential, so requests from a
-     superseded instance fail the instance check before sequence handling
-     matters.
+     financial-services lifetime — not the connection. Connection drops and
+     reconnections do not clear it; a new MCP server instance gets a new
+     instanceId and credential, so requests from a superseded instance fail
+     the instance check before sequence handling matters. Broker restart
+     needs no seen-record persistence for the same reason: a broker restart
+     is a host restart, stdio children do not outlive the host, and every
+     instanceId of the previous incarnation is therefore superseded — its
+     requests fail the instance-credential check (N19/N20 discipline)
+     before sequence handling is reached.
+   - **The seen-record algorithm (corrected — completed sequences stay
+     recorded until covered).** Per instance, the broker keeps a
+     **watermark** `W` — the highest sequence such that *every* sequence
+     ≤ `W` has been accepted — and a **retained set** `R` of every accepted
+     sequence above `W`, **including completed requests**: a sequence
+     enters `R` when its request is accepted for dispatch and leaves only
+     when the watermark advances past it. A request is a duplicate — and is
+     rejected before dispatch — iff `seq ≤ W` or `seq ∈ R`, regardless of
+     the original request's eventual outcome (success, failure, timeout):
+     *accepted* means accepted for dispatch, and outcome reconciliation is
+     the idempotency layer's job (below). The watermark advances only when
+     `W+1` has been accepted, then contiguously through `R` (advancement is
+     bookkeeping over already-accepted sequences, pruning as it goes). This
+     closes the out-of-order gap a bare in-flight set leaves open: with
+     `W=10` and sequence 11 outstanding, sequence 12 may be accepted,
+     dispatched, and complete — 12 remains in `R` (completed but not
+     covered), so a replay of 12 before 11 arrives is rejected before
+     dispatch (N39); when 11 arrives it is accepted and the watermark
+     advances through 11 and 12 together.
+   - **A bounded sequence gap (memory bound + flood defense).** A request
+     with `seq > W + G`, where `G` is the deployment-configured maximum
+     permitted gap (default 64), is refused before dispatch with the typed
+     `sequence_gap_exceeded` — the retained set is bounded by `G`, and a
+     peer cannot balloon broker memory by skipping ahead. (The alternative
+     — strict in-order dispatch per instance — was considered and rejected:
+     it would serialize concurrent requests that legitimately ride separate
+     connections; the retained-set algorithm provides the same replay
+     guarantee without the serialization.)
    - **Duplicates are rejected before dispatch.** The dedupe check precedes any
      host-service call: a request whose (instanceId, seq) was already
      dispatched — on this connection, a new connection, or concurrently on a
      second connection — receives the typed replay refusal and nothing is
-     dispatched. N33–N35.
+     dispatched. N33–N35, and N39 for the out-of-order completed-request
+     replay.
    - **Durable operation-level idempotency for financial side effects stands
      unchanged and complementary** (deliverable 05 §6.3): executor-allocated
      per-leg idempotency keys relayed onto provider-native mechanisms, plus
@@ -938,6 +1136,27 @@ PaySwap's ledger authority lock follows that pattern, hardened for money:
   fencing-token discipline; SQLite's own locking cannot provide it (see the
   opening of this section: two authoritative hosts on one file interleave two
   hash chains — physically serialized, semantically divergent).
+- **Owner-checked release, with the generation added (preserve the upstream
+  contract — R4's implementation safeguard).** Upstream's `release()`
+  re-reads the lock's *current* owner and removes the lock directory only
+  on an exact three-field match — `currentOwner?.pid === owner.pid &&
+  currentOwner.botId === owner.botId && currentOwner.nonce ===
+  owner.nonce` (`channelRuntime.ts:220-232`, the ownership check at
+  `:223-230`) — so a former holder that resumes and shuts down cannot
+  delete a successor's lock. PaySwap preserves that exact ownership check
+  and adds the fencing generation to the authority validation: release
+  removes the lock only when the current owner record matches the
+  releaser's pid + instance id + nonce **and** the generation recorded in
+  the owner record equals the generation the releaser was granted. A stale
+  holder's release is therefore a no-op (its generation is below the
+  successor's), and the successor's lock, lease, and writes are unaffected
+  (N42) — without this check, a paused-then-resumed former holder's
+  shutdown path could delete the successor's lock and open a third
+  acquisition window. The rule covers **every** removal path — graceful
+  `release()` on shutdown, crash-recovery cleanup, and any lock-directory
+  maintenance — and mirrors the takeover arm's own discipline (takeover
+  removes only a lock whose owner pid is dead or lease has expired,
+  re-checked at `:189-203` before the stale-directory removal at `:205`).
 - **Hold:** heartbeat for the process lifetime; explicit release on shutdown.
 - **Crash recovery:** takeover only after the lease TTL expires or the owner
   pid is dead — **and the chain verifier (§4.4) must pass before the first
@@ -986,7 +1205,11 @@ assert the fencing discipline specifically: the stale holder's post-takeover
 write refuses (`ledger_authority_lost`, hash chain unaffected), simultaneous
 acquisition produces exactly one winner with the generation incremented exactly
 once, and a write presenting any generation below the ledger's current value
-refuses inside the write transaction before any record is appended.
+refuses inside the write transaction before any record is appended. N42
+asserts the release-path arm: the stale holder's attempt to release or delete
+the successor's lock is a no-op — the ownership check (pid + instance id +
+nonce + generation) fails against the successor's owner record — and the
+successor's lock, lease, and subsequent writes survive.
 
 **Deployment consequence:** the initial server deployment is
 **single-authoritative-host and single-writer** — enforced by the lease,
@@ -1112,6 +1335,18 @@ Revision 4 (third R1–R4 round):
 | 08 §4 | P1 row adds T7 and N29–N35; the P6/P7 row adds N36–N38 |
 | 10 P1 | Server operator-principal model, broker-instance replay protection, Windows helper relay, and the authenticated chain in scope; N29–N35 and T7 in acceptance |
 | 10 P7 | Fenced lease + explicit authoritative-instance configuration in scope; N36–N38 in acceptance; activation-time refusal wording |
+
+Revision 5 (fourth R1–R4 round — implementation-contract corrections, revision 4's architecture preserved):
+
+| Deliverable | Amendment |
+|---|---|
+| 05 §9 | Broker replay description corrected to the contiguous-watermark algorithm: completed-but-uncovered sequences stay recorded above the watermark until it advances past them; bounded sequence gap (`sequence_gap_exceeded`); N-row reference updated to N1–N42 |
+| 06 §2.12 | Fenced-lease release contract added: the upstream lock's owner/nonce-checked release (`channelRuntime.ts:220-232`) preserved verbatim with the fencing generation added to the authority validation — a stale holder's release of the successor's lock is a no-op; row N42 |
+| 06 §4 | Server principal model extended (§1.6.3 items 7–9): the two-level credential handshake (deployment Bearer header + operator header or short-lived session cookie; the URL query transport disabled on financially-enabled deployments), operator-credential format/storage/rotation/revocation with non-exposure rules, workspace-scoped role bindings; rows N40–N41 |
+| 07 §3 | T7 and the opt-out revocation paragraph extended to the disposal contract (§2.3): already-rendered protected content is removed by host-controlled instance disposal/replacement plus per-key renderer-retention clearing — not merely future-delivery blocking |
+| 08 §4 | P1 row adds N39 (out-of-order completed replay) and N40–N41 (credential lifecycle, cross-workspace role); the P6/P7 row adds N42 (release-path ownership); T7 wording updated to both arms |
+| 10 P1 | Broker replay scope corrected (contiguous watermark + retained completed sequences + gap bound); server-principal scope adds the handshake, credential lifecycle, and workspace-scoped roles; N39–N41 and the strengthened T7 in acceptance |
+| 10 P7 | Fenced-lease scope adds the owner-checked release contract; N42 in acceptance |
 
 ## §7. What this addendum deliberately does not change
 

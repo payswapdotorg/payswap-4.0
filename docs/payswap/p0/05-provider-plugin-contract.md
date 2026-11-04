@@ -254,8 +254,14 @@ financial service → provider adapter`. The broker authenticates the **calling
 process** — per-process-instance credentials, OS peer verification against the
 host-registered plugin instance, socket/pipe filesystem restrictions, endpoint
 replacement protection, **broker-instance replay protection** (request identity
-is (instance id, sequence number), deduped at broker-instance scope so it survives
-connection changes, duplicates rejected before dispatch, with durable
+is (instance id, sequence number); the per-instance seen-record is a
+**contiguous watermark** — the highest sequence below which every request has
+been accepted — plus a retained set of every accepted sequence above it,
+**completed requests included**, held until the watermark advances past them,
+so an out-of-order request that already completed cannot be replayed before
+the missing lower sequence arrives; a bounded maximum sequence gap refuses
+skips ahead typed; duplicates are rejected before dispatch; the record
+survives connection changes at broker-instance scope, with durable
 operation-level idempotency — §6.3 — complementary underneath), and, on Windows,
 a native spawn-verified helper that holds the pipe endpoint, verifies each
 client's pid and image path, and relays only verified requests to the host over
@@ -277,10 +283,11 @@ calls; `financial_mode_disabled` is the broker's refusal for **residual calls**
 from sessions that predate a disable/uninstall (in steady-state S0 the tools
 are not registered at all — upstream `emptyComponents` semantics — so nothing
 else could return it).
-Negative E2E rows N1–N38 (addendum §1.7) prove the bypass resistance, the
-approval-origin and server-principal boundaries, the broker boundary (including
-replay protection), and the ledger single-writer boundary (including lease
-fencing).
+Negative E2E rows N1–N42 (addendum §1.7) prove the bypass resistance, the
+approval-origin and server-principal boundaries (including the credential
+lifecycle and workspace-scoped roles), the broker boundary (including the
+out-of-order completed-request replay), and the ledger single-writer boundary
+(including lease fencing and owner-checked release).
 
 ## 10. Persistence & state rules for adapters
 

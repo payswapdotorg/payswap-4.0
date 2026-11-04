@@ -27,10 +27,14 @@ broker-instance scope surviving connection changes, reject-before-dispatch
 endpoint, relaying only verified requests over its spawn-verified,
 parent-pid-bound, token-authenticated channel (§3.5.8); the end-to-end
 authenticated chain MCP child → OS peer verifier → host broker → registered
-plugin instance → authoritative session (§3.5.9)), the server
+plugin instance → authoritative session (§3.5.9 — the replay algorithm is
+the contiguous watermark with retained completed sequences and a bounded gap,
+§3.5.7)), the server
 **operator-principal model** (addendum §1.6.3 — per-operator credentials
 distinct from the shared server token, server-resolved stable principals,
-server-side financial roles, session expiry/revocation, cross-user
+the two-level `/ws` credential handshake and operator-credential lifecycle
+(items 7–8), workspace-scoped role bindings (item 9), server-side financial
+roles, session expiry/revocation, cross-user
 isolation), the
 transaction-authorization grant mechanism with its refusal path and **trusted
 approval origin** (addendum §1.3 + §1.6 — host-rendered authorization card on the
@@ -47,17 +51,23 @@ lifecycle end-to-end (browser-verified); `payswap_*` tools register and the brok
 bridge serves read-only queries end-to-end (Model → MCP tool → broker → host service,
 addendum §3.2 sequence); **negative E2E rows N1–N9 green** (addendum §1.7 — every
 bypass context refuses money ops with no provider write attempted); **approval-origin
-and server-principal rows N13–N18 + N25–N32 green** (forged renderer events,
+and server-principal rows N13–N18 + N25–N32 + N40–N41 green** (forged renderer events,
 card-content deviation, replayed challenges, plugin-webview and model-originated
 approvals, manifest authorization-surface declarations, plugin-callback approval
 attempts, unauthenticated server/client, cross-user resolution, expired/revoked
-operator session, insufficient financial role, forged client operator id — all
-rejected); **broker rows N19–N22 + N33–N35 green** (impostor config, cross-instance
+operator session, insufficient financial role, forged client operator id,
+rotated-out/revoked operator credential at the handshake, cross-workspace role
+use — all rejected); **broker rows N19–N22 + N33–N35 + N39 green** (impostor
+config, cross-instance
 token, closed dispatch, stale endpoint, replay on a new connection, replay after
-reconnect, concurrent duplicate dispatch — all rejected before dispatch);
+reconnect, concurrent duplicate dispatch, and the replay of an out-of-order
+request that completed before the missing lower sequence arrived — all rejected
+before dispatch);
 **transition tests T1–T7 green** (addendum §2.2 — enable, opt-in, opt-out, disable,
 uninstall, settings-page-unchanged, and opt-out-with-live-surfaces host-side
-revocation (§2.3); S0a/S0b-vs-upstream proofs; **S1 delta-equivalence
+revocation (§2.3 — both arms: future data delivery blocked **and**
+already-rendered protected content disposed/replaced with renderer retention
+cleared); S0a/S0b-vs-upstream proofs; **S1 delta-equivalence
 against a control plugin** — the S1-vs-S0 delta equals the standard upstream
 enabled-plugin delta set; S2 renders only Class-A `ui.surfaces[]`-declared surfaces
 plus the host-rendered authorization card; S3 invariant intact); Gate E1 test green
@@ -123,22 +133,27 @@ ingress (additive server route); unknown outcomes never auto-retried when
 duplication is possible; append-only ledger under the addendum §4 authority model
 (one authoritative host per deployment — under the **fenced lease**, addendum
 §4.6: a fencing generation persisted in the ledger, incremented on every
-acquisition, validated at the repository write boundary, with the SQLite server
+acquisition, validated at the repository write boundary, **and an owner-checked
+release** — the upstream lock's pid + instance id + nonce ownership check
+(`channelRuntime.ts:220-232`) preserved with the fencing generation added, so a
+stale holder cannot delete a successor's lock — with the SQLite server
 topology requiring one **explicitly configured** authoritative instance per
 logical ledger/workspace; server topology moves authority to the server host;
 hosted multi-user requires the PostgreSQL-ledger + authenticated principals
 decision **at this wave's live-gate review**).
 **Acceptance:** saga/execution property tests; **negative E2E rows N10–N12 green**
 (tuple-deviation, single-use, expiry refusals — addendum §1.7); **ledger rows
-N23–N24 + N36–N38 green** (second host process against one SQLite ledger refuses
+N23–N24 + N36–N38 + N42 green** (second host process against one SQLite ledger refuses
 within the boot budget under the fenced lease-based authority lock — typed
 `ledger_authority_unavailable`, no financial services; crash arm: no takeover
 before lease TTL, and chain verification runs before the first post-takeover
 write; replica write rejected at the repository; fencing arms — the stale
 holder's post-takeover write refuses typed `ledger_authority_lost` with the hash
 chain unaffected, simultaneous acquisition produces exactly one winner with the
-generation incremented exactly once, and a write presenting a stale generation
-refuses inside the write transaction — addendum §4.6); reconciliation closes the
+generation incremented exactly once, a write presenting a stale generation
+refuses inside the write transaction, and the stale holder's attempt to release
+or delete the successor's lock is a no-op under the owner/nonce/generation
+check — addendum §4.6); reconciliation closes the
 loop against provider
 read-back; the unknown-outcome law machine-asserted; ledger hash-chain
 verification test; **chain-verified restore** (addendum §4.4 — a restored ledger

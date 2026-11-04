@@ -58,8 +58,12 @@ web-share/share-ui, Android, the retired services-layer unit coverage). Decision
   equal the standard upstream delta of a control plugin with the same component
   shape (one stdio MCP server, same tool count, no UI surfaces), with no
   PaySwap-specific delta kinds beyond it — plus the T7 opt-out-with-live-surfaces
-  test (addendum §2.3 host-side revocation) and the negative rows N29–N32
-  (server principal) and N33–N35 (broker replay) alongside their P1 row groups.
+  test (addendum §2.3 host-side revocation — both arms: future data delivery
+  blocked **and** already-rendered protected content disposed/cleared) and the
+  negative rows N29–N32 + N40–N41 (server principal, operator-credential
+  lifecycle, workspace-scoped roles) and N33–N35 + N39 (broker replay,
+  including the out-of-order completed-request arm) alongside their P1 row
+  groups.
 - **P2 (Stripe vertical):** battery + account-connection browser acceptance +
   approval-gating E2E (a money tool is refused without the bound approval) +
   the CUA fail-closed contract still green.
@@ -68,8 +72,10 @@ web-share/share-ui, Android, the retired services-layer unit coverage). Decision
 - **P6/P7 (routing/execution):** deterministic-route property tests (engineering
   Vitest) + the no-bypass battery (INV-30 carried from PaySwap 3.0: decomposition
   never changes purpose classification/eligibility) + unknown-outcome no-retry law
-  tests + the fenced-lease rows N36–N38 (addendum §4.6 — stale-holder write after
-  takeover, simultaneous acquisition, stale-generation write).
+  tests + the fenced-lease rows N36–N38 + N42 (addendum §4.6 — stale-holder
+  write after takeover, simultaneous acquisition, stale-generation write, and
+  the stale holder's release of the successor's lock refused by the
+  owner/nonce/generation check).
 - **Every upstream sync:** battery + the New Task state proofs (S0a/S0b-vs-upstream;
   the S3 invariant holds in every state).
 
