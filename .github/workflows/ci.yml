@@ -1,0 +1,69 @@
+# PaySwap 4.0 — PR/push 验证门禁（P1 架构师治理建议：本地测试结论必须有可独立复现的 CI 证据）。
+#
+# 范围与本地 verify:pre-push 的关系（诚实边界，见 PR 说明）：
+# - CI 覆盖本 PR 声明的全部可复现门禁：install + 构建 + lint + typecheck（root 与
+#   zcode-cli）+ architecture:check + payswap 插件包测试 + bootstrap 插件系统受影响
+#   测试（plugins / plugins-protocol / bundled-plugins-resilience / payswap-launch-path）。
+# - 全量套件（engineering 158 文件、bootstrap 全量）仍是本地 verify:pre-push 门禁；
+#   其 2 个已知沙盒环境性失败（session-persistence 的 5s 超时，4GB/2vCPU 内存压力）
+#   已在未修改基线上对照复现，与本仓库改动无关，不属于 CI 断言范围。
+# - e2e-remote targets 与 desktop 运行时资产构建依赖本机/远程环境，不入 CI。
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  gates:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      # 与本地通过验证相同的堆上限；2 vCPU runner 上并行 tsc 需要约束。
+      NODE_OPTIONS: --max-old-space-size=3072
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4 # 读取根 package.json 的 packageManager（pnpm@10.33.2）
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build workspace (root packages + zcode-cli, desktop runtime assets excluded)
+        run: pnpm -r --workspace-concurrency=2 --filter '!@zcode/desktop' run build
+
+      - name: Lint (0 errors gate)
+        run: pnpm lint
+
+      - name: Typecheck (root projects)
+        run: pnpm typecheck
+
+      - name: Typecheck (zcode-cli workspace, serial)
+        run: pnpm --dir apps/zcode-cli exec turbo run typecheck --concurrency=1
+
+      - name: Architecture check (0 violations gate)
+        run: node scripts/architecture/architecture-check.mjs check
+
+      - name: Payswap plugin package tests
+        run: pnpm --filter @zcode/payswap-plugin run test
+
+      - name: Bootstrap plugin-system tests (this change's affected scopes)
+        run: >
+          pnpm --dir apps/zcode-cli/packages/bootstrap exec vitest run
+          tests/plugins.test.ts
+          tests/plugins-protocol.test.ts
+          tests/bundled-plugins-resilience.test.ts
+          tests/payswap-launch-path.test.ts
