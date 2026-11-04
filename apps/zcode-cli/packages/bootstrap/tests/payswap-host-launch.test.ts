@@ -11,6 +11,7 @@ import { ZCODE_OFFICIAL_PLUGIN_MARKETPLACE, ZCODE_PLUGIN_HOST_COMMAND } from "@z
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resolveOfficialPluginRoots } from "../src/app/bundled-plugins.js";
 import { OFFICIAL_PLUGIN_DEFINITIONS } from "../src/app/official-plugin-definitions.js";
+import { ensurePayswapPluginDist } from "./payswap-plugin-build.js";
 
 /**
  * PaySwap 生产宿主启动集成测试（P1 PR #3 架构师评审第 2 轮，第 3 项最终收口）。
@@ -69,18 +70,14 @@ describe("payswap production host launch (real zcode.cjs entrypoint + __zcode-pl
 
   beforeAll(async () => {
     // ── 真实构建产物（两段）──────────────────────────────────────────────────
-    // 1) PaySwap 插件：官方构建脚本产出 requiredSeedPaths 钉住的 dist/server.mjs。
-    const bootstrapRoot = dirname(fileURLToPath(import.meta.url));
-    const pluginRoot = resolve(bootstrapRoot, "..", "..", "payswap-plugin");
-    execFileSync(process.execPath, [join(pluginRoot, "scripts", "build.mjs")], {
-      cwd: pluginRoot,
-      stdio: "pipe",
-    });
+    // 1) PaySwap 插件：并行安全地确保官方构建脚本产出 requiredSeedPaths 钉住的
+    //    dist/server.mjs（新鲜则零写入 —— 并行套件的 seeding 正在读同一目录）。
+    ensurePayswapPluginDist();
 
     // 2) 真实 ZCode CLI 入口：优先用 workspace 生产构建产物（CI 的
     // "Build workspace" 步骤 = pnpm -r build 已产出）；本地定向运行缺失时用同一个
     // 生产构建脚本补齐。绝不手搓第二个入口/launcher。
-    const cliRoot = resolve(bootstrapRoot, "..", "..", "cli");
+    const cliRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "cli");
     cliEntry = join(cliRoot, "dist", "zcode.cjs");
     if (!existsSync(cliEntry)) {
       execFileSync(process.execPath, [join(cliRoot, "scripts", "build.mjs")], {

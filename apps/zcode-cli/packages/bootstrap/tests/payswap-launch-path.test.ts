@@ -1,9 +1,7 @@
-import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { discoverNodePluginsSync } from "@zcode/adapters/plugins";
@@ -12,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { resolveOfficialPluginRoots } from "../src/app/bundled-plugins.js";
 import { OFFICIAL_PLUGIN_DEFINITIONS } from "../src/app/official-plugin-definitions.js";
 import { listPluginUiSurfacesFromPlugins } from "../src/zcode-protocol/plugin-ui-surfaces.js";
+import { ensurePayswapPluginDist } from "./payswap-plugin-build.js";
 
 /**
  * PaySwap 官方插件启动路径验收（P1 PR #3 架构师评审第 3 项）。
@@ -56,18 +55,14 @@ const THREE_SURFACE_URIS = [
 describe("payswap official-plugin launch path (definition → build → seed → resolution → stdio → MCP)", () => {
   let storageRoot: string;
   let workspace: string;
-  let pluginRoot: string;
   let payswapCacheRoot: string;
   let payswapVersion: string;
 
   beforeAll(async () => {
     // 仓库内的插件包目录（bootstrap/tests → ../../payswap-plugin）。
-    pluginRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "payswap-plugin");
-    // 启动路径证据必须来自真实打包产物：先跑官方构建脚本（与 office-runtime smoke 同纪律）。
-    execFileSync(process.execPath, [join(pluginRoot, "scripts", "build.mjs")], {
-      cwd: pluginRoot,
-      stdio: "pipe",
-    });
+    // 启动路径证据必须来自真实打包产物：并行安全地确保官方构建脚本产出存在
+    // （CI 由 workspace build 预先产出；缺失/过期时在跨进程锁内构建，见 helper）。
+    ensurePayswapPluginDist();
 
     storageRoot = await mkdtemp(join(tmpdir(), "payswap-launch-storage-"));
     workspace = await mkdtemp(join(tmpdir(), "payswap-launch-workspace-"));
