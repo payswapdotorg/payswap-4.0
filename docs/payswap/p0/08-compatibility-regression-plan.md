@@ -57,7 +57,9 @@ web-share/share-ui, Android, the retired services-layer unit coverage). Decision
   comparisons, plus the S1 **delta-equivalence** check — the S1-vs-S0 delta must
   equal the standard upstream delta of a control plugin with the same component
   shape (one stdio MCP server, same tool count, no UI surfaces), with no
-  PaySwap-specific delta kinds beyond it.
+  PaySwap-specific delta kinds beyond it — plus the T7 opt-out-with-live-surfaces
+  test (addendum §2.3 host-side revocation) and the negative rows N29–N32
+  (server principal) and N33–N35 (broker replay) alongside their P1 row groups.
 - **P2 (Stripe vertical):** battery + account-connection browser acceptance +
   approval-gating E2E (a money tool is refused without the bound approval) +
   the CUA fail-closed contract still green.
@@ -66,7 +68,8 @@ web-share/share-ui, Android, the retired services-layer unit coverage). Decision
 - **P6/P7 (routing/execution):** deterministic-route property tests (engineering
   Vitest) + the no-bypass battery (INV-30 carried from PaySwap 3.0: decomposition
   never changes purpose classification/eligibility) + unknown-outcome no-retry law
-  tests.
+  tests + the fenced-lease rows N36–N38 (addendum §4.6 — stale-holder write after
+  takeover, simultaneous acquisition, stale-generation write).
 - **Every upstream sync:** battery + the New Task state proofs (S0a/S0b-vs-upstream;
   the S3 invariant holds in every state).
 

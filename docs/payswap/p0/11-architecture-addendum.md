@@ -1,20 +1,37 @@
 # PaySwap P0 — Architecture Addendum (response to the P0 architect review)
 
-**Owner:** TL · **Status:** normative for P1+ · **Revision:** 3 — incorporates the
-architect's second R1–R4 review round (surface-class conflict resolved in
-§1.6.0; broker citation corrections and honest peer-verification labeling in
-§3.5; state-model contradiction fixed in §2; lease-based single-writer lock in
-§4.6) · **Reviewed against:** worktree `a9fe401` (v3.17.2) · **Responds to:** the
+**Owner:** TL · **Status:** normative for P1+ · **Revision:** 4 — incorporates the
+architect's third R1–R4 review round on top of revision 3 (server principal
+model and desktop main-frame/origin sender validation in §1.6.2–§1.6.3;
+broker-instance replay protection and the authenticated Windows helper relay
+in §3.5.7–§3.5.9; opt-out host-side revocation in §2.3; fenced-lease ledger
+authority with explicit authoritative-instance configuration in §4.6) ·
+**Reviewed against:** worktree `a9fe401` (v3.17.2) · **Responds to:** the
 architect reviews of PR #2 (changes-requested before merge).
 
-**The finding this revision leads with:** revision 2 required that authorization
-cards never render in a plugin webview (§1.6) while simultaneously listing
-authorization-request cards among the `ui.surfaces[]` plugin-surface cards (§2,
-deliverable 07 §1.3). That was a direct conflict inside our own documentation.
-§1.6.0 resolves it with a two-class surface model, and every affected document is
-amended in this PR.
+**What revision 4 adds (the architect's third R1–R4 round — four focused
+corrections, revision 3's architecture preserved):** §1.6.2–§1.6.3 distinguish
+server authentication from authenticated operator identity and add the stable
+server principal, server-side financial roles, expiry/revocation/cross-user
+isolation, and desktop sender validation against the expected main frame and
+the trusted application origin; §2.3 + T7 define immediate host-side
+revocation when the user opts out while surfaces are already open; §3.5.7–
+§3.5.9 define broker-instance replay protection that survives connection
+changes, the authenticated native Windows peer-verification relay, and the
+end-to-end authenticated chain; §4.6 adds a fencing generation to every lease
+acquisition, validated at the repository write boundary, with explicit
+authoritative-instance configuration for the SQLite server topology. New
+negative rows N29–N38 and transition test T7; all existing N1–N28 and T1–T6
+criteria stand unchanged.
 
-This addendum resolves the gaps the architect identified across two review
+**The revision-3 finding (kept for the record):** revision 2 required that
+authorization cards never render in a plugin webview (§1.6) while
+simultaneously listing authorization-request cards among the `ui.surfaces[]`
+plugin-surface cards (§2, deliverable 07 §1.3). That was a direct conflict
+inside our own documentation. §1.6.0 resolved it with a two-class surface
+model, and every affected document was amended in this PR.
+
+This addendum resolves the gaps the architect identified across four review
 rounds. Each section states the decision, the source evidence at `a9fe401`,
 and the acceptance criteria that make it enforceable. **Every security mechanism
 is labeled** as either an *upstream precedent* (already shipped in ZCode — PaySwap
@@ -216,12 +233,35 @@ sees and what the host records are the same data.
    content-origin rule (displayed values are host-derived), this closes both
 tamper directions: a card cannot display values other than the tuple, and an
    approval event cannot bind a tuple other than the one displayed.
-3. **Sender verification, per topology.** Desktop: the approval event must
-   arrive over the main window's service port — the port-delivery discipline
-   (§1.6.1) means only that window's webContents holds a transport, and the host
-   additionally applies the sender-identity check (`event.sender.id` against
-   the expected webContents — the `webRemoteControlRendererReconnect.ts:33-36`
-   precedent) on the approval channel. Server deployments: item 5.
+3. **Sender verification, per topology (R1 — strengthened to the expected main
+   frame and the trusted application origin).** Desktop: the approval event
+   must arrive over the main window's service port — the port-delivery
+   discipline (§1.6.1) means only that window's webContents holds a transport
+   — and the host applies **three** checks on the approval channel, two
+   upstream-precedented and one assembled from upstream disciplines:
+   - **Expected webContents:** `event.sender.id` equals the webContents id the
+     host recorded when it issued the challenge (upstream precedent:
+     `webRemoteControlRendererReconnect.ts:33-36`).
+   - **Expected main frame:** `event.senderFrame === event.sender.mainFrame` —
+     the event must originate from the window's main frame, not a subframe
+     (upstream precedent: the browser-local-preview navigation owner check,
+     `packages/desktop/src/main/browser-local-preview/index.ts:124-130` —
+     `win.webContents !== event.sender || event.senderFrame !==
+     event.sender.mainFrame` ⇒ "Browser navigation owner mismatch").
+   - **Trusted application origin:** the sending frame's URL must be the
+     application shell's own trusted origin (upstream discipline: capturing and
+     checking `event.senderFrame?.url` before acting on security-sensitive IPC —
+     `packages/desktop/src/main/index.ts:380-385`,
+     `packages/desktop/src/main/desktopMainIpcRemote.ts:362-366`). Explicitly
+     **not** accepted: any plugin-sandbox origin
+     (`zcode-sandbox://plugin-<appIdentity>/…`, `protocol.ts:205-255`), any
+     `ui://` resource origin, any remote or unknown origin. This composition is
+     a **new PaySwap requirement** — upstream checks frame URLs per surface but
+     has no approval channel to protect; PaySwap applies the disciplines to
+     one.
+   All three checks must pass; any failure rejects the event with no grant
+   (N13 extends to frame and origin failures). Server deployments: item 5 and
+   §1.6.3.
 4. **Plugin-webview and model-originated approvals are impossible by
    construction — and tested anyway.** Plugin webviews have no transport to the
    approval channel and never receive challenges; model output is not an event;
@@ -248,7 +288,75 @@ tamper directions: a card cannot display values other than the tuple, and an
    broker tokens are never present in MCP child environments (the
    `sanitizeZCodeRuntimeEnv` stripping discipline,
    `packages/shared/src/runtimeEnv.ts:64-76`). An unauthenticated client cannot
-   resolve an approval — N28.
+   resolve an approval — N28. Item (b) authenticates the *connection*; which
+   human is acting on it is a different question — that is the
+   operator-principal model of §1.6.3 (R1's core distinction).
+
+#### 1.6.3 Server principal model (R1 — server authentication is not operator identity)
+
+**What upstream actually has (verified at `a9fe401`) — none of it is an
+operator identity:**
+
+| Mechanism | Source | What it is — and is not |
+|---|---|---|
+| Optional shared auth token (Bearer / `?token=` / HttpOnly cookie) | `packages/server/src/entry-http.ts:21,39`; `hasValidLiteToken` (`packages/server/src/http.ts:245-262`); middleware `:353-363` | **Deployment authentication.** It proves a client holds the deployment's single shared token. It does not distinguish humans: no per-operator credential, no expiry, no revocation, no roles. The auth middleware registers only when a token is configured — with none, `/ws` and `/api/*` are unauthenticated (`authRequired` in the server-info payload at `http.ts:190` is advertising, not enforcement). |
+| Per-connection identity | `createZCodeAgentConnectionScope` with `connectionId: server-ws-${randomUUID()}` and a role derived from the client mode (`trusted-host-relay` / `terminal-client`) — `http.ts:112-116` | A random **connection** id and a transport-mode **role**. Stable for neither: a reconnect is a new id; neither names a human. |
+| Downstream session resolution | `requireSession` (`server-types.ts:334-347`) | Session-runtime lookup for protocol operations — a session, not a principal. |
+
+**The decision, stated as law:** *server authentication* (the transport-level
+token / authenticated connection — upstream) and *authenticated operator
+identity* (which human principal is acting — PaySwap's addition) are different
+things, and **only the second may appear in a grant.**
+
+1. **Operator registry and per-operator credentials (new PaySwap requirement).**
+   A PaySwap-enabled server deployment provisions operators as a server-side
+   admin action: each operator receives an individual credential — never the
+   shared server token, never a client-chosen id. The registry is server-host
+   state; credentials are verifiable server-side.
+2. **Operator sessions and the stable principal (new).** An operator session is
+   an authenticated `/ws` connection whose upgrade carried a valid operator
+   credential. The server resolves the **principal** from the credential
+   server-side and binds it to the connection's session state for that
+   connection's lifetime. The principal is a stable server-assigned identifier:
+   a reconnecting operator presents the credential again and resolves to the
+   same principal; the per-connection `server-ws-*` id is never the principal.
+3. **Approval events bind the server-resolved principal (new).** Every grant
+   records the principal that approved it. A challenge is issued to one
+   operator session's interaction stream and records the issuing session's
+   principal; upstream's `resolveInteraction` is first-come-first-served with
+   late resolution a noop (`command.ts:223` — "先到先得，晚到 noop"), and PaySwap
+   additionally requires that a resolution arriving on a session whose
+   principal differs from the issuing session's is rejected as an impersonation
+   attempt (N29), not resolved.
+4. **Client-supplied operator ids are never identity (law, with the mechanism).**
+   The principal is read exclusively from the server-side session state keyed
+   by the credential. An `operatorId` / `principal` / `onBehalfOf` field in any
+   request payload is ignored — and a payload attempting to name a principal
+   other than the authenticated one refuses the request (N32). There is no code
+   path from payload to principal.
+5. **Server-side financial roles (new).** The proposer / approver / auditor /
+   viewer roles (deliverable 06 §4) are enforced at the service boundary before
+   approval processing and before any money-affecting operation: an
+   authenticated operator without the approver role cannot mint a grant (N31).
+   The check is server-side, never in the UI.
+6. **Expiry, revocation, and cross-user isolation (new).** Operator sessions
+   carry a bounded, deployment-configured lifetime; revocation is a server-side
+   admin action that invalidates the credential immediately — pending
+   challenges issued to a revoked or expired principal are invalidated at
+   revocation/expiry, and a resolution arriving on such a session is rejected
+   (N30). Cross-user isolation: challenges are single-use and bound to one
+   pending proposal **and** the issuing session's principal; one operator's
+   session cannot resolve, inspect, or mint another's (N29); ledger
+   authorization records name the principal, so post-hoc audit is unambiguous.
+
+**Labels:** the fail-closed server posture, the exposure policy, and the
+authenticated-channel requirement are §1.6.2 item 5 (upstream mechanisms,
+PaySwap policy). The operator registry, per-operator credentials, stable
+principals, financial roles, and expiry/revocation/isolation are **new PaySwap
+requirements with no upstream equivalent** — upstream's server has no
+operator-identity mechanism at all; the verified table above is the evidence.
+They gate P1 alongside N27/N28 (the same server boundary), before any
+server-side approval is trusted.
 
 ### 1.7 Negative E2E test matrix (required before any write operation ships)
 
@@ -270,7 +378,7 @@ API call is attempted** (asserted at the adapter boundary, not the UI):
 | N10 | valid grant | operation with any tuple deviation (amount +1 minor unit; different recipient; extra leg) | refuse `authorization_mismatch` |
 | N11 | valid grant | second execution attempt with same grant | refuse — single-use |
 | N12 | valid grant | execution after expiry | refuse |
-| N13 | any session | forged renderer approval event (wrong webContents/sender, or non-expected frame) | approval rejected; no grant created (§1.6.2) |
+| N13 | any session | forged renderer approval event (wrong webContents/sender, non-main frame, or untrusted frame origin) | approval rejected; no grant created (§1.6.2 item 3) |
 | N14 | valid proposal pending | card-content deviation — a payload (or forged frame) presenting amount/recipient/legs differing from the host-side proposal record | host recomputes the digest from its own state → mismatch → approval rejected; independently, the rendered payload is host-derived (§1.6.0) and asserted byte-equal to the proposal record (§1.6.2) |
 | N15 | valid proposal pending | replayed approval challenge (already consumed, expired, or belonging to another proposal) | rejected; no grant (§1.6.2) |
 | N16 | any session | approval event originating from a plugin webview | cannot reach the approval channel (no transport, no challenge); asserted refused end-to-end (§1.6.2) |
@@ -286,13 +394,29 @@ API call is attempted** (asserted at the adapter boundary, not the UI):
 | N26 | any session | approval-resolution attempt arriving via the plugin-UI callback path (`mcp/uiCallTool`) or any `ui://` interaction | not an approval channel: no grant can originate; asserted refused end-to-end (§1.6.2) |
 | N27 | server deployment | financial mode requested but no `ZCODE_SERVER_AUTH_TOKEN` configured | financial services fail closed at activation (§1.6.2) |
 | N28 | server deployment | approval resolution from a client without a valid authenticated session (or excluded by the PaySwap exposure policy) | rejected; no grant (§1.6.2) |
+| N29 | server deployment, two operators | operator B's session attempts to resolve the challenge issued to operator A's session (cross-user approval / impersonation) | rejected — the challenge is bound to the issuing session's principal (§1.6.3); no grant |
+| N30 | server deployment | approval resolution from an expired or revoked operator session | rejected; pending challenges issued to that principal were invalidated at expiry/revocation (§1.6.3); no grant |
+| N31 | server deployment | approval resolution by an authenticated operator whose financial role is not approver | refused at the service boundary — server-side role enforcement (§1.6.3); no grant |
+| N32 | server deployment | request payload carries a client-supplied operator id that differs from the authenticated principal | payload field never used as identity; grants bind the server-resolved principal only; naming another principal refuses the request (§1.6.3) |
+| N33 | broker, new connection | request id already dispatched on an earlier connection of the same broker instance | rejected before dispatch — dedupe scope is the broker instance, not the connection (§3.5.7) |
+| N34 | broker session, after reconnect | the same request (same instance id + sequence number) re-sent after the connection dropped and was re-established | rejected before dispatch — the per-instance seen-record survives connection changes (§3.5.7) |
+| N35 | broker, concurrent duplicates | two connections present the same request id simultaneously | exactly one dispatches; the other is rejected before any host-service call (§3.5.7) |
+| N36 | ledger authority, after takeover | the previous holder (paused past the lease TTL, takeover completed) resumes and attempts a write | refused at the repository boundary — its fencing generation is below the ledger's current generation; typed `ledger_authority_lost`; hash chain unaffected (§4.6) |
+| N37 | two host processes, one ledger DB | simultaneous lease acquisition attempts | exactly one acquisition wins (atomic-rename primitive); the loser fails closed within the boot budget (`ledger_authority_unavailable`); the generation is incremented exactly once (§4.6) |
+| N38 | any ledger write | writer presenting a stale fencing generation (any generation below the ledger's current value) | refused inside the write transaction at the repository boundary, before any record is appended (§4.6) |
 
 N10–N12 run in P7 when execution lands; N1–N9 are executable against the refusal
 path as soon as P1's tool surface exists (the refusal logic is present from day one).
 N13–N18 gate P1 (approval-origin boundary) together with the tool surface;
 N19–N22 gate the P1 broker bridge; N23–N24 gate the P7 ledger; **N25–N28 gate P1
 with the approval-origin rows** (N25 manifest validation, N26 plugin-callback
-path, N27 unauthenticated server, N28 unauthenticated client). Every "refuse"
+path, N27 unauthenticated server, N28 unauthenticated client); **N29–N32 gate
+P1 with the server-principal rows** (§1.6.3: cross-user resolution,
+expired/revoked session, insufficient role, forged client operator id);
+**N33–N35 gate the P1 broker bridge alongside N19–N22** (replay on a new
+connection, after reconnect, concurrent duplicates); **N36–N38 gate the P7
+ledger alongside N23–N24** (stale-holder write after takeover, simultaneous
+acquisition, stale-generation write). Every "refuse"
 means the typed refusal is returned and, for money rows, **no provider write API
 call is attempted** (asserted at the adapter boundary, not the UI).
 
@@ -361,8 +485,9 @@ navigation change, no PaySwap-specific settings chrome.
 
 **State machine:** S0a/S0b (not installed / disabled) → S1 (enabled,
 `financialWorkspace=false`) → S2 (enabled, `financialWorkspace=true`). The five
-transitions: **enable** (S0b→S1), **opt-in** (S1→S2), **opt-out** (S2→S1),
-**disable** (S1→S0b or S2→S0b), **uninstall** (any → S0a).
+transitions: **enable** (S0b→S1), **opt-in** (S1→S2), **opt-out** (S2→S1 —
+immediate host-side revocation, §2.3), **disable** (S1→S0b or S2→S0b),
+**uninstall** (any → S0a).
 
 **The inert-registration mechanism is a PaySwap plugin behavior, not a
 plugin-runtime change.** Upstream has no "registered but inert" server state:
@@ -398,12 +523,52 @@ broker-binding revocation is what makes the code reachable and meaningful.
 |---|---|---|
 | T1 | enable (S0b→S1) | rendered-surface delta vs S0b equals the control-plugin delta set (§2 oracle — delta-equivalence, not zero-diff); tools registered and inert (`not_opted_in`) |
 | T2 | opt-in (S1→S2) | refusal codes flip immediately (`not_opted_in` → `not_connected` — live broker state); plugin-UI surfaces appear per the upstream session lifecycle (sessions created after the flip); the host-rendered authorization card appears only with a pending proposal |
-| T3 | opt-out (S2→S1) | refusal codes revert immediately; plugin-UI surfaces disappear per the upstream session lifecycle; no authorization card renders (the broker refuses to create proposals — no card can be pending) |
+| T3 | opt-out (S2→S1) | refusal codes revert immediately; plugin-UI surfaces disappear per the upstream session lifecycle; no authorization card renders (the broker refuses to create proposals — no card can be pending); surfaces already open at the moment of opt-out follow §2.3's immediate revocation semantics — asserted end-to-end by T7 |
 | T4 | disable (→S0b) | new sessions identical to upstream's disabled state (no PaySwap runtime components); running sessions keep their frozen tool surface (upstream behavior, unchanged — PaySwap adds no teardown it doesn't own) but money operations refuse `financial_mode_disabled` via broker-binding revocation; interface otherwise upstream |
 | T5 | uninstall (→S0a) | interface identical to upstream not-installed; plugin config and userConfig removed by the existing uninstall flow (`plugins.ts:783-817`; `file-config.adapter.ts:318-325` removes both `enabledPlugins[id]` and `options[id]`); connection credentials deleted via the revocation flow (deliverable 05 §5); **ledger evidence retained** per its own retention rules — financial audit records are never destroyed by a UI uninstall — or exported-then-deleted by explicit operator choice; same residual-session semantics as T4 |
 | T6 | settings page | the existing plugin settings surface renders the PaySwap entry exactly like any other plugin — zero settings-page modification beyond the plugin's own declared options |
+| T7 | opt-out while an informational surface and an authorization proposal are already open (S2→S1, live surfaces) | **host-side revocation, immediate (§2.3):** the open Class-A surface stops receiving protected account information (its data queries refuse `not_opted_in` — the surface shows the disabled state, never stale balances); the surface is non-actionable (every action routes through the broker and refuses); the pending grant proposal and its one-time challenge are invalidated at the transition — an approval click after opt-out is rejected (no live challenge) and the authorization card dismisses; new sessions follow the updated state; the upstream plugin lifecycle is untouched (the plugin remains enabled — S1 — and no upstream-owned teardown runs) |
 
 Deliverables 07 §3 and 10 (P1/P5 acceptance) are amended accordingly in this PR.
+
+### 2.3 Opt-out with existing surfaces — host-side revocation (R3)
+
+The per-session surface lifecycle (above) governs what *new* sessions render,
+but an opt-out must also be effective **immediately**, against surfaces that
+are already open. The rule: **revocation authority lives in the host, never in
+the plugin and never in the surface.**
+
+1. **Existing surfaces must not continue exposing protected account
+   information.** Open Class-A surfaces are fed by the plugin's MCP server →
+   broker → host services. On opt-out the broker's live state flips (§2.1), so
+   every subsequent data query refuses `not_opted_in` — the host stops serving
+   protected account data to that plugin instance's broker session. The host
+   additionally emits a PaySwap revocation event over the plugin-UI data path
+   so PaySwap's own surfaces can render an explicit disabled state; **the
+   guarantee does not depend on the surface honoring the event** — even a
+   surface that ignored it could fetch nothing, because the data path is closed
+   host-side.
+2. **Existing surfaces must become non-actionable.** Every action a Class-A
+   surface offers routes through `payswap_*` tools → broker → refusal. There is
+   no host-service path from a plugin surface to a financial operation that
+   bypasses the broker (§3.3's closed dispatch table is the structural
+   guarantee); non-actionability is therefore inherited from the same live
+   state flip, not implemented per-surface.
+3. **Pending authorization challenges are invalidated.** All pending grant
+   proposals and their one-time challenges are host-owned state (§1.6.2);
+   opt-out invalidates them at the transition. An approval event arriving
+   after opt-out finds no live challenge — rejected, no grant (the N15
+   invalid-challenge rule; T7 asserts it end-to-end). The host-rendered
+   authorization card dismisses with the invalidation.
+4. **New sessions follow the updated plugin state** — the upstream per-session
+   lifecycle (§2) is unchanged and needs no PaySwap help.
+5. **Upstream plugin lifecycle semantics are not modified.** Opt-out does not
+   disable the plugin (it remains enabled — S1), does not tear down or restart
+   its MCP server (upstream owns that lifecycle), and touches no upstream
+   surface. Everything above is host-side state the PaySwap host services own:
+   broker live-state, challenge registry, and the PaySwap revocation event.
+
+T7 is the acceptance test for exactly this scenario.
 
 ---
 
@@ -559,12 +724,85 @@ prove):**
    with the private-directory lifecycle. We do **not** adopt upstream's stable
    process-lifetime CUA pipe name (`stableCuaTransport.ts:19-22`) — a fresh
    per-boot path is required. N22.
-7. **Replay resistance.** Timing-safe token comparison + the
-   one-request-per-connection protocol (upstream) **plus** a per-request unique
-   id with dedupe inside the connection lifetime (per-call ledger-token
-   precedent, `call-ledger/ledger.ts:49`): a replayed request id is rejected.
-   N21 covers the closed dispatch table; N19 the impostor config; N20 the
-   cross-instance token.
+7. **Replay protection at broker-instance scope (R2 — corrected: dedupe scoped
+   to the connection lifetime is not replay protection).** The architect is
+   right that the previous wording ("dedupe inside the connection lifetime")
+   established nothing across reconnects: upstream's per-call ledger token is
+   valid only while the call entry is open (`call-ledger/ledger.ts:49` —
+   "token 每次调用一个，只在条目打开期间有效"), and the one-request-per-connection
+   line protocol ends all state at connection close — a reconnected peer could
+   replay any prior request id untouched. New PaySwap requirements:
+   - **Request identity is (instanceId, seq).** Each request carries the
+     calling MCP server instance's id (bound to the per-instance credential,
+     item 1) and a **monotonically increasing per-instance sequence number**
+     allocated by the MCP child. The pair is unique by construction.
+   - **The dedupe scope is the broker instance** — the host process's
+     financial-services lifetime — not the connection. The broker keeps, per
+     instance, a seen-record of dispatched sequence numbers (a watermark plus a
+     bounded set of in-flight sequences above it, pruned as the watermark
+     advances). Connection drops and reconnections do not clear it; a new MCP
+     server instance gets a new instanceId and credential, so requests from a
+     superseded instance fail the instance check before sequence handling
+     matters.
+   - **Duplicates are rejected before dispatch.** The dedupe check precedes any
+     host-service call: a request whose (instanceId, seq) was already
+     dispatched — on this connection, a new connection, or concurrently on a
+     second connection — receives the typed replay refusal and nothing is
+     dispatched. N33–N35.
+   - **Durable operation-level idempotency for financial side effects stands
+     unchanged and complementary** (deliverable 05 §6.3): executor-allocated
+     per-leg idempotency keys relayed onto provider-native mechanisms, plus
+     the append-only ledger, survive host restarts — a scope the broker table
+     deliberately does not claim. The two layers reject different things:
+     transport replay (same request id) is refused at the broker; a
+     *legitimate* retry after an unknown outcome (new request id, same
+     idempotency key) reconciles at the financial boundary without
+     double-executing.
+8. **The native Windows peer-verification channel (R2 — how the verified client
+   PID reaches the Node host).** On Windows the client-pid check lives in the
+   native helper (item 2: Node/libuv expose neither `GetNamedPipeClientProcessId`
+   nor DACL control). The relay is specified so the verified pid cannot be
+   forged in transit:
+   - **The helper holds the pipe.** The broker's Windows endpoint is the
+     helper's named pipe — explicit DACL restricted to the current user's SID,
+     single server instance (`Program.cs:1031-1057`), each client connection
+     verified by `GetNamedPipeClientProcessId` + exact pid + image path
+     (`:1095-1127`) before any payload is read.
+   - **The helper→host channel is authenticated with the helper family's own
+     shipped disciplines (upstream precedents, verified):** the host spawns
+     the helper only after hash/signature verification and passes its own pid
+     (`--parent-pid` + `String(process.pid)`,
+     `windowsChromeAppBoundKey.ts:295,316`); the helper binds its pipe and
+     one-shot token to that exact parent pid — "broker 侧用启动后拿到的精确
+     PID 和随机 token 绑定本次实例" (`Program.cs:125`) — and the token is
+     compared constant-time (`FixedTimeEquals`, `:193`; one-shot 32-byte
+     token, `:1213-1217, 1249-1262`). The relayed "verified client pid" is
+     trustworthy exactly because (a) the helper binary was verified at spawn,
+     (b) the helper serves no parent but the spawning host, and (c) the
+     host↔helper channel is token-bound.
+   - **New PaySwap requirement (labeled):** applying this helper family as a
+     broker peer-verification relay. Upstream uses it for browser cookie
+     import; the pattern is upstream, the application to the financial broker
+     is ours to build and prove.
+9. **The complete chain, authenticated end-to-end (R2).** No hop accepts the
+   previous hop's word — each hop's identity is established at that hop:
+   1. **MCP child → broker endpoint:** per-instance token (item 1); on
+      Windows the pipe DACL also bounds who may connect (item 8).
+   2. **OS peer verification:** Unix — the host reads peer credentials
+      (pid/uid) at the socket; Windows — the native helper verifies client
+      pid + image path and relays only verified requests (items 2 and 8).
+   3. **Host broker:** the caller's plugin-identity claim is validated against
+      the in-memory registry (§1.5) **and** the verified pid is mapped to the
+      host's own spawn table — `McpTrackedProcess`/`listProcesses()`
+      (`telemetry.ts:33-39, 277-290`) plus the transport's recorded child pid
+      (`stdio-transport.ts:91-93`) — the pid must be a live PaySwap MCP server
+      child the host itself spawned, holding the credential issued to *that*
+      child (N19, N20).
+   4. **Registered plugin instance → session scope:** re-resolved
+      authoritatively downstream (`requireSession` pattern,
+      `server-types.ts:334-347`) — never from the request payload (item 5).
+   5. **Money-affecting operations:** the grant id is validated against the
+      ledger's grant record and the tuple re-checked before dispatch (§1.3).
 
 **The dispatch table stays closed:** exactly the six `payswap_*` operations of
 deliverable 05 §9 — no general `ServiceChannels` access, no arbitrary
@@ -587,7 +825,7 @@ writes ledger tables — on any deployment.
 | Topology | Authoritative ledger host | Storage | Notes |
 |---|---|---|---|
 | **Desktop, single user** (P0–P6 default) | the desktop host process | local `node:sqlite` file — own DB file, WAL + `BEGIN IMMEDIATE`, **lease-based authority lock** (§4.6; the bot-runtime-lock precedent, `channelRuntime.ts:153-238`); versioned migrations (repo precedents: `packages/services/src/session/taskIndexRepo.ts:398-402, 766-767`, `tasksDatabase/migrations.ts:62-121`) | Single writer process ⇒ **no concurrent writers by construction**. This is the single-user audit journal + saga journal + evidence store. |
-| **Server-hosted workspace** (`packages/server`) | the **server** host process (webhook ingress already lands there per deliverable 06 §2.10) | same local SQLite discipline in P0–P6 | The desktop client participating in that deployment holds **at most a read-only replay replica** of evidence; it never writes authoritative financial state. |
+| **Server-hosted workspace** (`packages/server`) | the **server** host process (webhook ingress already lands there per deliverable 06 §2.10) — **explicitly configured as the authoritative instance** (§4.6) | same local SQLite discipline in P0–P6 | The desktop client participating in that deployment holds **at most a read-only replay replica** of evidence; it never writes authoritative financial state. |
 | **Hosted multi-user / replicated** (beyond P7, not committed) | central server host | **PostgreSQL** — local SQLite is not appropriate for concurrent operators, replication, and backup SLAs; the architect's requirement is accepted | The ledger repository interface is storage-agnostic by design (same contract, same versioned-migration discipline), so the backend swap is additive. **Decision point: the P7 live-gate review.** Hosted multi-user PaySwap requires the central ledger AND authenticated principals (§4.5) before any live money in that topology. |
 
 ### 4.3 Multi-device and multi-process behaviour
@@ -620,7 +858,7 @@ writes ledger tables — on any deployment.
 | Deployment | Principal | Establishment |
 |---|---|---|
 | Desktop | OS-local human principal | host-verified renderer approval events (the §1.3 grant origin). The approval event's authenticity comes from the renderer→host ServiceChannel in the host process — **never** from model context, tool parameters, or subagent/automation text. The existing anti-laundering reminder (`apps/zcode-cli/packages/core/src/system-reminder/incoming-message.ts:7` — subagent reports "carry no user authority") documents the same principle; PaySwap enforces it structurally at the grant origin. |
-| Server-hosted workspace | authenticated operator identity | server-side authentication; **client-provided operator IDs are never identity** (mission mandate, unchanged). Role enforcement server-side. |
+| Server-hosted workspace | authenticated operator identity | **the §1.6.3 operator-principal model:** server authentication (shared token, upstream) is not operator identity; the principal is server-resolved from per-operator credentials, bound to operator sessions with expiry/revocation/cross-user isolation; **client-provided operator IDs are never identity** (mission mandate, unchanged — no code path from payload to principal, N32). Role enforcement server-side, before approval processing (N31). |
 | Hosted multi-user | authenticated operators + roles | prerequisite for that topology; not claimed before it exists. |
 | Webhook ingress | none (it is an event, not a principal) | provider signature verification (deliverable 05 §6.5) — webhooks are *evidence about operations*, never authorization for anything. |
 
@@ -662,17 +900,52 @@ long polling is handled by another ZCode window").
 
 PaySwap's ledger authority lock follows that pattern, hardened for money:
 
-- **Acquisition (boot):** the process that will run the authoritative ledger
-  repository acquires the lock at financial-services boot, within a bounded boot
-  budget. Failure to acquire = typed `ledger_authority_unavailable`,
-  **financial services do not start** — fail-closed, surfaced in diagnostics;
-  never a degraded second writer, never a silent read-only fallback unless the
-  process was explicitly deployed as a replica (§4.2 — replicas have no write
-  code path reachable at all, asserted by N24).
+- **Acquisition (boot, serialized by an atomic primitive):** the process that
+  will run the authoritative ledger repository acquires the lock at
+  financial-services boot, within a bounded boot budget. The acquisition
+  primitive is the upstream one: a fully-initialized pending lock directory
+  atomically renamed into place (`channelRuntime.ts:172-178` — the upstream
+  bugfix comment states exactly why: "先在唯一临时目录写完 owner，再原子
+  rename，避免竞争者把尚未初始化完成的锁误判为 stale"; rename conflict
+  fails on POSIX, and the Windows EPERM path re-checks staleness,
+  `:180-203`). This **serializes simultaneous acquisition attempts**: exactly
+  one rename wins; losers observe a fresh lease and fail closed. Failure to
+  acquire = typed `ledger_authority_unavailable`, **financial services do not
+  start** — fail-closed, surfaced in diagnostics; never a degraded second
+  writer, never a silent read-only fallback unless the process was explicitly
+  deployed as a replica (§4.2 — replicas have no write code path reachable at
+  all, asserted by N24).
+- **Fencing generation on every acquisition (new — the split-brain fix).** The
+  upstream lock's honest gap, stated plainly: its heartbeat is
+  `utimes(leasePath, …).catch(() => undefined)` (`channelRuntime.ts:213-214`)
+  — a stale holder whose lease directory was taken over receives **no
+  signal** (the heartbeat fails silently; upstream tolerates this for bot
+  polling; money may not). PaySwap therefore adds a **fencing generation**: a
+  monotonically increasing counter persisted **in the ledger database itself**
+  (a meta row — the one artifact every writer must touch). The acquisition
+  winner, and only the winner, increments it inside a `BEGIN IMMEDIATE`
+  transaction before its first write and holds the resulting generation for
+  its lease's lifetime.
+- **Generation validation at the repository boundary (new).** Every ledger
+  write — inside the same `BEGIN IMMEDIATE` transaction, before any record is
+  appended — compares the writer's held generation against the ledger's
+  current meta generation. Mismatch (stale holder after takeover;
+  pathological double-acquisition) = typed `ledger_authority_lost`, the write
+  is refused, the hash chain is untouched. A stale holder therefore **cannot
+  write after takeover even though its process is alive and its SQLite
+  connection is open** — the check reads the same database the write targets,
+  under the same transaction, so it cannot be raced. This is the classic
+  fencing-token discipline; SQLite's own locking cannot provide it (see the
+  opening of this section: two authoritative hosts on one file interleave two
+  hash chains — physically serialized, semantically divergent).
 - **Hold:** heartbeat for the process lifetime; explicit release on shutdown.
-- **Crash recovery:** takeover only after the lease TTL expires or the owner pid
-  is dead — **and the chain verifier (§4.4) must pass before the first
-  post-takeover write**. A takeover without verification is prohibited.
+- **Crash recovery:** takeover only after the lease TTL expires or the owner
+  pid is dead — **and the chain verifier (§4.4) must pass before the first
+  post-takeover write, and the takeover itself increments the fencing
+  generation** (takeover is an acquisition; the new holder's generation
+  supersedes the old holder's, which is what makes the old holder's
+  subsequent writes refuse — N36). A takeover without verification is
+  prohibited.
 - **In-process discipline:** within the authoritative process, ledger writes use
   the SQLite discipline upstream already ships for the tasks index: WAL +
   `busy_timeout` + `BEGIN IMMEDIATE` transactions (`taskIndexRepo.ts:398-402,
@@ -686,25 +959,44 @@ PaySwap's ledger authority lock follows that pattern, hardened for money:
 | Deployment | Lock holder | Notes |
 |---|---|---|
 | Desktop, single user | the desktop host process (the services host) | the desktop app is single-instance by upstream design (`app.requestSingleInstanceLock`, `packages/desktop/src/main/index.ts:2101-2139`), so exactly one candidate exists; the CLI adapter process never opens the ledger (no write path) |
-| Server-hosted workspace | the server host process — one lease per ledger file (keyed by DB path) | webhook ingress is in-process (deliverable 06 §2.10); a second server process against the same root refuses |
+| Server-hosted workspace | the server host process — one lease per ledger file (keyed by DB path), and only an instance **explicitly configured as authoritative** (below) | webhook ingress is in-process (deliverable 06 §2.10); a second server process against the same root refuses — by explicit-configuration refusal at activation, and by the lease at latest |
 | Horizontal / multi-instance against one SQLite file | **nobody — prohibited** | refused by the lease (N23); stated in deployment documentation |
 | Hosted multi-user | n/a (PostgreSQL topology) | the lease is SQLite-topology-specific; PostgreSQL provides its own concurrency control — and that topology additionally requires authenticated principals (§4.5) before any live operation |
+
+**Explicit authoritative-instance configuration (server mode, new — R4):** in
+the SQLite server topology, authority is never inferred from reach or order of
+boot. The deployment must **explicitly configure** exactly one instance as the
+ledger authority for each logical ledger/workspace (an explicit
+authority/replica setting; an instance not explicitly configured refuses
+financial activation with a typed diagnostic). Desktop needs no such
+configuration: the desktop host is authoritative by upstream construction
+(single-instance, `app.requestSingleInstanceLock`,
+`packages/desktop/src/main/index.ts:2101-2139`). The lease + fencing remains
+the enforcement backstop regardless of configuration: two instances both
+explicitly configured as authority against one file are still refused by the
+lease (N23) and cannot interleave chains (N36–N38).
 
 **Verification is a test, not a claim:** N23 starts two host processes against
 one ledger DB and asserts the second refuses within the boot budget (typed
 failure, no financial services); the crash-recovery arm of N23 kills the lease
 holder and asserts (a) no other process acquires before the TTL, (b) takeover
 after TTL runs the chain verifier before the first write. N24 asserts the
-replica's write path is rejected at the repository, not by convention.
+replica's write path is rejected at the repository, not by convention. N36–N38
+assert the fencing discipline specifically: the stale holder's post-takeover
+write refuses (`ledger_authority_lost`, hash chain unaffected), simultaneous
+acquisition produces exactly one winner with the generation incremented exactly
+once, and a write presenting any generation below the ledger's current value
+refuses inside the write transaction before any record is appended.
 
 **Deployment consequence:** the initial server deployment is
-**single-authoritative-host and single-writer** — enforced by the lease, stated
-in the deployment documentation, and asserted by N23. **Hosted multi-user or
-horizontally scaled deployments require the central PostgreSQL ledger and
-authenticated principals (§4.5) before any live financial operation in that
-topology.** This is a hard precondition of the P7 live gate, not a
-recommendation: a scaled deployment with a shared SQLite ledger is a
-configuration the software refuses, not one it tolerates.
+**single-authoritative-host and single-writer** — enforced by the lease,
+required by explicit configuration, and asserted by N23. **Hosted multi-user
+or horizontally scaled deployments must refuse financial activation until the
+central PostgreSQL ledger and the authenticated principal model (§4.5, §1.6.3)
+exist.** This is a hard precondition of the P7 live gate, not a recommendation:
+a scaled deployment with a shared SQLite ledger is a configuration the software
+**refuses at activation time** (typed diagnostic, no financial services) — not
+a documented prohibition alone, and never one it tolerates.
 
 ---
 
@@ -796,7 +1088,7 @@ Revision 2 (R1–R4 round):
 | 10 P1 | Adds transition tests T1–T6, approval-origin rows N13–N18, broker rows N19–N22, per-instance credential + peer-verification scope |
 | 10 P7 | Adds ledger rows N23–N24 and the explicit hosted/horizontal live-operation precondition |
 
-Revision 3 (this commit — second R1–R4 round):
+Revision 3 (second R1–R4 round):
 
 | Deliverable | Amendment |
 |---|---|
@@ -808,6 +1100,18 @@ Revision 3 (this commit — second R1–R4 round):
 | 10 P1 | Approval-origin rows extended to N13–N18 **+ N25–N28**; the S1 zero-diff claim replaced by delta-equivalence; the Windows native peer-verification scope (client-pid + pipe DACL helper, fail-closed) made explicit |
 | 08 §4 | The P1 "New Task layout zero-diff proof … with the plugin installed vs. not" — the same S1-vs-S0 zero-diff claim the architect rejected — replaced by the state proofs (S0a/S0b-vs-upstream + S1 delta-equivalence) |
 | 10 P7 | N23 expanded with the crash-recovery arm (no takeover before TTL; chain verification before the first post-takeover write); single-writer wording aligned to §4.6 |
+
+Revision 4 (third R1–R4 round):
+
+| Deliverable | Amendment |
+|---|---|
+| 05 §9 | Broker description extended: broker-instance replay protection — (instanceId, sequence) request identity, dedupe at broker-instance scope surviving connection changes, reject-before-dispatch; the spawn-verified, parent-pid-bound Windows peer-verification relay; the end-to-end authenticated chain; N-row reference updated to N1–N38 |
+| 06 §2.12 | Fenced lease: fencing generation persisted in the ledger and validated at the repository write boundary (`ledger_authority_lost`); explicit authoritative-instance configuration for the SQLite server topology; rows N36–N38 |
+| 06 §4 | Server principal model applied (§1.6.3): server authentication ≠ operator identity; per-operator credentials; expiry/revocation/cross-user isolation; rows N29–N32 |
+| 07 §3 | Opt-out host-side revocation semantics (§2.3) + T7 in the transition tests |
+| 08 §4 | P1 row adds T7 and N29–N35; the P6/P7 row adds N36–N38 |
+| 10 P1 | Server operator-principal model, broker-instance replay protection, Windows helper relay, and the authenticated chain in scope; N29–N35 and T7 in acceptance |
+| 10 P7 | Fenced lease + explicit authoritative-instance configuration in scope; N36–N38 in acceptance; activation-time refusal wording |
 
 ## §7. What this addendum deliberately does not change
 

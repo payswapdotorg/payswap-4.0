@@ -28,7 +28,7 @@ Nothing about New Task changes until the user opts in. With PaySwap active:
    specified in addendum §1.6: host-controlled approval surface, one-time
    host-generated challenge, transaction-digest binding, renderer/window
    ownership verification, and structural exclusion of plugin-webview and
-   model-originated approvals. Negative E2E rows N1–N28 (addendum §1.7)
+   model-originated approvals. Negative E2E rows N1–N38 (addendum §1.7)
    are the proof.
 3. **Additive cards in two trust classes (addendum §1.6.0, normative).**
    Financial context renders through two distinct surfaces:
@@ -120,12 +120,25 @@ disable/uninstall — never conflated.
 **Transition acceptance tests (P1, addendum §2.2):** T1 enable (S0b→S1 —
 delta-equivalence + inert tools), T2 opt-in (S1→S2 — immediate code flip,
 surfaces per upstream session lifecycle, authorization card only on pending
-proposals), T3 opt-out (S2→S1 — revert), T4 disable (→S0b — new sessions
-upstream-identical; running sessions keep their frozen tool surface per
-upstream semantics but money ops refuse `financial_mode_disabled`), T5
+proposals), T3 opt-out (S2→S1 — revert; surfaces already open at the moment
+of opt-out follow the host-side revocation semantics), T4 disable (→S0b — new
+sessions upstream-identical; running sessions keep their frozen tool surface
+per upstream semantics but money ops refuse `financial_mode_disabled`), T5
 uninstall (→S0a — credentials revoked, ledger evidence retained per retention
 rules or exported by explicit operator choice), T6 settings page unchanged
-beyond the plugin's own declared options.
+beyond the plugin's own declared options, **T7 opt-out with live surfaces**
+(S2→S1 while an informational surface and an authorization proposal are open
+— addendum §2.3: the surface stops receiving protected account data and
+becomes non-actionable, the pending proposal and its challenge are
+invalidated so a late approval click is rejected, new sessions follow the
+updated state, and the upstream plugin lifecycle is untouched).
+
+**Opt-out is host-side revocation, not a per-surface courtesy (addendum §2.3,
+normative):** the broker's live state closes the data path to open surfaces,
+the host's challenge registry invalidates pending proposals, and a PaySwap
+revocation event over the plugin-UI data path lets open surfaces render the
+disabled state — the guarantee never depends on the surface's cooperation,
+and no upstream plugin lifecycle semantics are modified.
 
 ## 4. The acceptance look
 

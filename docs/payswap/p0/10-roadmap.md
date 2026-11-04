@@ -20,11 +20,24 @@ socket+token credentials, OS peer verification against the host-registered
 instance table — Unix peer credentials, Windows native client-pid + pipe-DACL
 helper on the C# `windows-browser-import-helper` model, **fail-closed where peer
 identity cannot be established — no token-only fallback for money** — host-private
-socket directory, endpoint replacement protection, request-id replay dedupe), the
+socket directory, endpoint replacement protection, **broker-instance replay
+protection** — request identity (instance id, sequence number), dedupe at
+broker-instance scope surviving connection changes, reject-before-dispatch
+(§3.5.7); the native Windows peer-verification helper holding the pipe
+endpoint, relaying only verified requests over its spawn-verified,
+parent-pid-bound, token-authenticated channel (§3.5.8); the end-to-end
+authenticated chain MCP child → OS peer verifier → host broker → registered
+plugin instance → authoritative session (§3.5.9)), the server
+**operator-principal model** (addendum §1.6.3 — per-operator credentials
+distinct from the shared server token, server-resolved stable principals,
+server-side financial roles, session expiry/revocation, cross-user
+isolation), the
 transaction-authorization grant mechanism with its refusal path and **trusted
 approval origin** (addendum §1.3 + §1.6 — host-rendered authorization card on the
 permission-prompt pattern with host-derived content, one-time challenge,
-transaction-digest binding, sender verification, server-deployment auth boundary),
+transaction-digest binding, sender verification — expected webContents,
+expected main frame, trusted application origin — server-deployment auth
+boundary),
 Gate E1 (per-plugin hook admission in financial mode — the upgrade path the
 source itself names), Gate E3 (controlled provider-authorization Browser flow —
 allowlist, not blocklist), and the rpc/client relay engineering tests from
@@ -34,13 +47,17 @@ lifecycle end-to-end (browser-verified); `payswap_*` tools register and the brok
 bridge serves read-only queries end-to-end (Model → MCP tool → broker → host service,
 addendum §3.2 sequence); **negative E2E rows N1–N9 green** (addendum §1.7 — every
 bypass context refuses money ops with no provider write attempted); **approval-origin
-rows N13–N18 + N25–N28 green** (forged renderer events, card-content deviation,
-replayed challenges, plugin-webview and model-originated approvals, manifest
-authorization-surface declarations, plugin-callback approval attempts,
-unauthenticated server/client — all rejected); **broker rows N19–N22 green**
-(impostor config, cross-instance token, closed dispatch, stale endpoint);
-**transition tests T1–T6 green** (addendum §2.2 — enable, opt-in, opt-out, disable,
-uninstall, settings-page-unchanged; S0a/S0b-vs-upstream proofs; **S1 delta-equivalence
+and server-principal rows N13–N18 + N25–N32 green** (forged renderer events,
+card-content deviation, replayed challenges, plugin-webview and model-originated
+approvals, manifest authorization-surface declarations, plugin-callback approval
+attempts, unauthenticated server/client, cross-user resolution, expired/revoked
+operator session, insufficient financial role, forged client operator id — all
+rejected); **broker rows N19–N22 + N33–N35 green** (impostor config, cross-instance
+token, closed dispatch, stale endpoint, replay on a new connection, replay after
+reconnect, concurrent duplicate dispatch — all rejected before dispatch);
+**transition tests T1–T7 green** (addendum §2.2 — enable, opt-in, opt-out, disable,
+uninstall, settings-page-unchanged, and opt-out-with-live-surfaces host-side
+revocation (§2.3); S0a/S0b-vs-upstream proofs; **S1 delta-equivalence
 against a control plugin** — the S1-vs-S0 delta equals the standard upstream
 enabled-plugin delta set; S2 renders only Class-A `ui.surfaces[]`-declared surfaces
 plus the host-rendered authorization card; S3 invariant intact); Gate E1 test green
@@ -104,23 +121,32 @@ addendum §1.3 grant, single-use, host-minted only); the multi-leg saga with
 per-leg idempotency, partial-failure handling, recovery, reconciliation; webhook
 ingress (additive server route); unknown outcomes never auto-retried when
 duplication is possible; append-only ledger under the addendum §4 authority model
-(one authoritative host per deployment; server topology moves authority to the
-server host; hosted multi-user requires the PostgreSQL-ledger + authenticated
-principals decision **at this wave's live-gate review**).
+(one authoritative host per deployment — under the **fenced lease**, addendum
+§4.6: a fencing generation persisted in the ledger, incremented on every
+acquisition, validated at the repository write boundary, with the SQLite server
+topology requiring one **explicitly configured** authoritative instance per
+logical ledger/workspace; server topology moves authority to the server host;
+hosted multi-user requires the PostgreSQL-ledger + authenticated principals
+decision **at this wave's live-gate review**).
 **Acceptance:** saga/execution property tests; **negative E2E rows N10–N12 green**
 (tuple-deviation, single-use, expiry refusals — addendum §1.7); **ledger rows
-N23–N24 green** (second host process against one SQLite ledger refuses within the
-boot budget under the lease-based authority lock — typed `ledger_authority_unavailable`,
-no financial services; crash arm: no takeover before lease TTL, and chain
-verification runs before the first post-takeover write; replica write rejected at
-the repository — addendum §4.6); reconciliation closes the loop against provider
+N23–N24 + N36–N38 green** (second host process against one SQLite ledger refuses
+within the boot budget under the fenced lease-based authority lock — typed
+`ledger_authority_unavailable`, no financial services; crash arm: no takeover
+before lease TTL, and chain verification runs before the first post-takeover
+write; replica write rejected at the repository; fencing arms — the stale
+holder's post-takeover write refuses typed `ledger_authority_lost` with the hash
+chain unaffected, simultaneous acquisition produces exactly one winner with the
+generation incremented exactly once, and a write presenting a stale generation
+refuses inside the write transaction — addendum §4.6); reconciliation closes the
+loop against provider
 read-back; the unknown-outcome law machine-asserted; ledger hash-chain
 verification test; **chain-verified restore** (addendum §4.4 — a restored ledger
 loads only after chain verification passes); battery green. **Live money movement
 remains operator-gated off, and hosted multi-user or horizontally scaled
-deployments remain blocked from live financial operations until the central
-PostgreSQL ledger and authenticated principals are in place (addendum §4.6 —
-hard precondition, not a recommendation).**
+deployments refuse financial activation until the central PostgreSQL ledger
+and authenticated principals are in place** (addendum §4.6 — activation-time
+refusal, a hard precondition, not a recommendation).
 
 ### P8 — UI Plugins, financial operations surfaces, and automations
 **Acceptance:** the financial workspace toggle and Class-A informational cards

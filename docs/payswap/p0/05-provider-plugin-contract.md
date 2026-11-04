@@ -253,7 +253,14 @@ host financial services **only** through the authenticated broker bridge (addend
 financial service → provider adapter`. The broker authenticates the **calling
 process** — per-process-instance credentials, OS peer verification against the
 host-registered plugin instance, socket/pipe filesystem restrictions, endpoint
-replacement protection (addendum §3.5) — a plugin identity claim alone is never
+replacement protection, **broker-instance replay protection** (request identity
+is (instance id, sequence number), deduped at broker-instance scope so it survives
+connection changes, duplicates rejected before dispatch, with durable
+operation-level idempotency — §6.3 — complementary underneath), and, on Windows,
+a native spawn-verified helper that holds the pipe endpoint, verifies each
+client's pid and image path, and relays only verified requests to the host over
+its parent-pid-bound, token-authenticated channel (addendum §3.5.7–§3.5.9) —
+a plugin identity claim alone is never
 sufficient. The broker's dispatch table is closed — exactly these six operations,
 no general `ServiceChannels` access (ServiceChannels is the renderer↔host fabric;
 it is not an API for an external MCP process). Tool registration rides the agent
@@ -270,9 +277,10 @@ calls; `financial_mode_disabled` is the broker's refusal for **residual calls**
 from sessions that predate a disable/uninstall (in steady-state S0 the tools
 are not registered at all — upstream `emptyComponents` semantics — so nothing
 else could return it).
-Negative E2E rows N1–N28 (addendum §1.7) prove the bypass resistance, the
-approval-origin boundary, the broker boundary, and the ledger single-writer
-boundary.
+Negative E2E rows N1–N38 (addendum §1.7) prove the bypass resistance, the
+approval-origin and server-principal boundaries, the broker boundary (including
+replay protection), and the ledger single-writer boundary (including lease
+fencing).
 
 ## 10. Persistence & state rules for adapters
 
