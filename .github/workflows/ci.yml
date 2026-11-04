@@ -51,8 +51,10 @@ jobs:
       - name: Typecheck (root projects)
         run: pnpm typecheck
 
+      # turbo 的 bin 只在仓库根 node_modules/.bin（apps/zcode-cli 声明了 devDep 但 pnpm 只装在根），
+      # 因此从根 exec，用 turbo 自己的 --cwd 指向 zcode-cli 工作区。
       - name: Typecheck (zcode-cli workspace, serial)
-        run: pnpm --dir apps/zcode-cli exec turbo run typecheck --concurrency=1
+        run: pnpm exec turbo run typecheck --concurrency=1 --cwd apps/zcode-cli
 
       - name: Architecture check (0 violations gate)
         run: node scripts/architecture/architecture-check.mjs check
@@ -60,9 +62,10 @@ jobs:
       - name: Payswap plugin package tests
         run: pnpm --filter @zcode/payswap-plugin run test
 
+      # vitest 未列在 bootstrap 自己的 devDeps（靠 workspace 根提升），--filter exec 才能解析到 bin。
       - name: Bootstrap plugin-system tests (this change's affected scopes)
         run: >
-          pnpm --dir apps/zcode-cli/packages/bootstrap exec vitest run
+          pnpm --filter @zcode/bootstrap exec vitest run
           tests/plugins.test.ts
           tests/plugins-protocol.test.ts
           tests/bundled-plugins-resilience.test.ts
