@@ -13,11 +13,19 @@ Nothing about New Task changes until the user opts in. With PaySwap active:
    in the normal message stream — the model is an orchestrator over PaySwap's
    `payswap_*` MCP tools (deliverable 05). No new chat application, no replacement
    composer, no hardcoded model list.
-2. **Approval prompts ride the existing mechanism.** Every `payswap_*` tool call is
-   `needsApproval: true` always (the MCP precedent verified in deliverable 03 —
-   MCP tools are always approval-gated; app-tool "always allow" is session-only).
-   Money-moving operations can never be silenced by yolo/accept-edits modes (P1
-   hardening task with Worker 2).
+2. **Approval rides two independent layers** (addendum §1, normative). Layer 1:
+   `payswap_*` tools are ordinary MCP tools — `needsApproval: true` at registration
+   (`core/src/mcp/index.ts:148`) — so they prompt like every MCP tool in
+   build/edit mode. **That registration alone is not a security boundary:** the
+   permission service's decision order lets yolo/guarded modes, session allow
+   rules, `allowedTools` config, owned workflow amendments, and subagent/automation
+   contexts reach `allow` without a prompt (`core/src/permission/service.ts:148`,
+   `:399-456` — verified in addendum §1.1). Layer 2 is therefore where money is
+   actually controlled: the host execution authority refuses every money-affecting
+   operation without a valid, single-use, expiry-bound, tuple-bound Authorization
+   Grant that only a host-verified human approval event can create. Yolo mode can
+   silence prompts; it cannot mint grants. Negative E2E rows N1–N12 (addendum §1.6)
+   are the proof.
 3. **Additive cards, not new pages.** Financial context renders through the existing
    generative-UI/plugin surface contract (`ui.surfaces[]` + `ui://` resources in
    the hardened plugin sandbox webview, mounted via `pluginUiBridgeService` —
@@ -49,13 +57,28 @@ Nothing about New Task changes until the user opts in. With PaySwap active:
 - The model never authorizes; approval binds the human principal server-side
   (deliverable 06 §authorization).
 
-## 3. The acceptance look
+## 3. Acceptance criteria (corrected — addendum §2, normative)
+
+The four-state model replaces the earlier on/off zero-diff wording:
+
+- **S0** (plugin absent/disabled): identical to upstream `a9fe401` — the
+  zero-difference proof compares this state against upstream.
+- **S1** (enabled, not opted in): rendered interface identical to S0. Tools may
+  register and are inert (`not_connected` typed refusal). No cards, no toggle.
+- **S2** (opted in): only surfaces declared in the `ui.surfaces[]` registry may
+  render — the registry is the complete, closed definition of what PaySwap adds.
+- **S3** (invariant): composer, model selector, Browser/Terminal/Computer-Use
+  controls, theme, navigation, layout unchanged in every state. Local-workspace
+  bridge capability limitation preserved (Web/remote surfaces that do not declare
+  the plugin-UI capability render no PaySwap cards).
+
+## 4. The acceptance look
 
 A user with a connected Stripe account asks, in the existing New Task box, "what
 can I use to pay a supplier in Kenya?" — the model answers from the evidence-backed
 capability registry via `payswap_*` tools; a route card renders inline listing the
 direct baseline first, then conditional/opportunity routes clearly marked; any
-money movement surfaces an approval prompt whose card binds the full authorization
-tuple; execution outcomes come from provider read-back and appear as evidence
-cards. Every step of that sentence maps to an existing ZCode surface named in
-deliverables 03 and 06 — that mapping is the design.
+money movement surfaces an authorization-request card binding the full grant tuple
+(addendum §1.3); execution outcomes come from provider read-back and appear as
+evidence cards. Every step of that sentence maps to an existing ZCode surface named
+in deliverables 03 and 06 — that mapping is the design.

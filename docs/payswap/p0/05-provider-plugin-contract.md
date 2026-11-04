@@ -246,7 +246,22 @@ The model gets **zero** direct provider tools. It sees the narrow common-layer M
 
 `payswap_compile_intent` · `payswap_check_eligibility` · `payswap_discover_routes` (always includes direct-route baseline) · `payswap_request_authorization` · `payswap_get_execution_status` · `payswap_get_account_overview` (redacted, evidence-based)
 
-Every tool is a proxy into host services over the existing RPC channel pattern (`ServiceChannels` additive entries). Tool registration rides the agent runtime's `ToolRegistry` (`apps/zcode-cli/packages/core/src/tool/registry.ts`); permissions ride the existing `permission.requested`/`permission.resolved` protocol (`packages/shared/src/zcode-protocol/index.ts`), with money movement always `riskLevel: "critical"`, `approvalMode: "user-once"`.
+Every tool is a thin, typed proxy. The MCP server process (stdio child of the host)
+holds no financial state, no credentials, and no ledger access; tool calls reach the
+host financial services **only** through the authenticated broker bridge (addendum
+§3, normative): `Model → payswap_* MCP tool → authenticated host-owned broker
+(loopback socket/named pipe, trusted-snapshot credential injection, host-verified
+plugin authority per the CUA precedent) → financial service → provider adapter`.
+The broker's dispatch table is closed — exactly these six operations, not general
+`ServiceChannels` access (ServiceChannels is the renderer↔host fabric; it is not an
+API for an external MCP process). Tool registration rides the agent runtime's
+`ToolRegistry` (`apps/zcode-cli/packages/core/src/tool/registry.ts`); invocation
+permission rides the existing permission protocol
+(`packages/shared/src/zcode-protocol/index.ts`) with money movement
+`riskLevel: "critical"` — and **no money operation executes without a valid,
+single-use Authorization Grant** (addendum §1.3: host-minted, tuple-bound,
+expiry-bound; the permission layer governs invocation noise, the grant governs
+money). Negative E2E rows N1–N12 (addendum §1.6) prove the bypass resistance.
 
 ## 10. Persistence & state rules for adapters
 
