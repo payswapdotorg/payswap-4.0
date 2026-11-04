@@ -270,22 +270,22 @@ API call is attempted** (asserted at the adapter boundary, not the UI):
 | N10 | valid grant | operation with any tuple deviation (amount +1 minor unit; different recipient; extra leg) | refuse `authorization_mismatch` |
 | N11 | valid grant | second execution attempt with same grant | refuse — single-use |
 | N12 | valid grant | execution after expiry | refuse |
-| N13 | forged renderer approval event (wrong webContents/sender, or non-expected frame) | approval rejected; no grant created (§1.6.2) |
-| N14 | card-content deviation — a payload (or forged frame) presenting amount/recipient/legs differing from the host-side proposal record | host recomputes the digest from its own state → mismatch → approval rejected; independently, the rendered payload is host-derived (§1.6.0) and asserted byte-equal to the proposal record (§1.6.2) |
-| N15 | replayed approval challenge (already consumed, expired, or belonging to another proposal) | rejected; no grant (§1.6.2) |
-| N16 | approval event originating from a plugin webview | cannot reach the approval channel (no transport, no challenge); asserted refused end-to-end (§1.6.2) |
-| N17 | model-generated text claiming the user approved | not an event; no grant path exists; assertion: no grant record after model text (§1.6.2) |
-| N18 | stale capability handle replayed after card/instance teardown | handle rejected (upstream `pluginUiHostTeardown` discipline); no effect on newer pages (§1.6) |
-| N19 | impostor MCP config with copied PaySwap names/commands/env but not the official plugin registration | no broker credential; cannot connect; tools unreachable (§1.5/§3.3) |
-| N20 | second PaySwap MCP server instance presenting the first instance's token | per-instance credential mismatch → connection refused (§3.5.1) |
-| N21 | broker request naming an operation outside the six `payswap_*` operations | closed dispatch table → refused, no host-service reach (§3.3/§3.5) |
-| N22 | connection to a stale/pre-planted socket path after host restart | endpoint replacement protection: fresh per-boot path, unknown peer → dropped (§3.5.6/§3.5.2) |
-| N23 | second host process opened against the same SQLite ledger DB | lease-based authority lock: the second process fails within the boot budget — typed `ledger_authority_unavailable`, financial services do not start, never a second writer (§4.6); crash arm: after `kill -9` of the holder, no process acquires before lease TTL, and takeover runs chain verification before the first write |
-| N24 | non-authoritative process (read-only replica) attempting a ledger write | rejected at the repository, not by convention (§4.6) |
-| N25 | PaySwap plugin manifest declaring an authorization-styled surface in `ui.surfaces[]`, or a tool with `_meta.ui` naming one | manifest validation rejects the declaration; plugin does not load with it (§1.6.0) |
-| N26 | approval-resolution attempt arriving via the plugin-UI callback path (`mcp/uiCallTool`) or any `ui://` interaction | not an approval channel: no grant can originate; asserted refused end-to-end (§1.6.2) |
-| N27 | server deployment with financial mode requested but no `ZCODE_SERVER_AUTH_TOKEN` configured | financial services fail closed at activation (§1.6.2) |
-| N28 | server deployment: approval resolution from a client without a valid authenticated session (or excluded by the PaySwap exposure policy) | rejected; no grant (§1.6.2) |
+| N13 | any session | forged renderer approval event (wrong webContents/sender, or non-expected frame) | approval rejected; no grant created (§1.6.2) |
+| N14 | valid proposal pending | card-content deviation — a payload (or forged frame) presenting amount/recipient/legs differing from the host-side proposal record | host recomputes the digest from its own state → mismatch → approval rejected; independently, the rendered payload is host-derived (§1.6.0) and asserted byte-equal to the proposal record (§1.6.2) |
+| N15 | valid proposal pending | replayed approval challenge (already consumed, expired, or belonging to another proposal) | rejected; no grant (§1.6.2) |
+| N16 | any session | approval event originating from a plugin webview | cannot reach the approval channel (no transport, no challenge); asserted refused end-to-end (§1.6.2) |
+| N17 | any session | model-generated text claiming the user approved | not an event; no grant path exists; assertion: no grant record after model text (§1.6.2) |
+| N18 | after card/instance teardown | stale capability handle replayed | handle rejected (upstream `pluginUiHostTeardown` discipline); no effect on newer pages (§1.6) |
+| N19 | any config | impostor MCP config with copied PaySwap names/commands/env but not the official plugin registration | no broker credential; cannot connect; tools unreachable (§1.5/§3.3) |
+| N20 | two live instances | second PaySwap MCP server instance presenting the first instance's token | per-instance credential mismatch → connection refused (§3.5.1) |
+| N21 | any broker session | request naming an operation outside the six `payswap_*` operations | closed dispatch table → refused, no host-service reach (§3.3/§3.5) |
+| N22 | after host restart | connection to a stale/pre-planted socket path | endpoint replacement protection: fresh per-boot path, unknown peer → dropped (§3.5.6/§3.5.2) |
+| N23 | two host processes, one ledger DB | second process opened against the same SQLite ledger | lease-based authority lock: fails within the boot budget — typed `ledger_authority_unavailable`, financial services do not start, never a second writer (§4.6); crash arm: after `kill -9` of the holder, no process acquires before lease TTL, and takeover runs chain verification before the first write |
+| N24 | read-only replica | ledger write attempted | rejected at the repository, not by convention (§4.6) |
+| N25 | plugin load | manifest declaring an authorization-styled surface in `ui.surfaces[]`, or a tool with `_meta.ui` naming one | manifest validation rejects the declaration; plugin does not load with it (§1.6.0) |
+| N26 | any session | approval-resolution attempt arriving via the plugin-UI callback path (`mcp/uiCallTool`) or any `ui://` interaction | not an approval channel: no grant can originate; asserted refused end-to-end (§1.6.2) |
+| N27 | server deployment | financial mode requested but no `ZCODE_SERVER_AUTH_TOKEN` configured | financial services fail closed at activation (§1.6.2) |
+| N28 | server deployment | approval resolution from a client without a valid authenticated session (or excluded by the PaySwap exposure policy) | rejected; no grant (§1.6.2) |
 
 N10–N12 run in P7 when execution lands; N1–N9 are executable against the refusal
 path as soon as P1's tool surface exists (the refusal logic is present from day one).
