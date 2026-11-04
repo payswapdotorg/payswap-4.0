@@ -263,9 +263,14 @@ invocation permission rides the existing permission protocol
 `riskLevel: "critical"` — and **no money operation executes without a valid,
 single-use Authorization Grant** (addendum §1.3: host-minted, tuple-bound,
 expiry-bound; the permission layer governs invocation noise, the grant governs
-money). State refusals are three distinct typed codes, never conflated:
-`financial_mode_disabled` / `not_opted_in` / `not_connected` (addendum §2.1).
-Negative E2E rows N1–N24 (addendum §1.7) prove the bypass resistance, the
+money). State refusals are three distinct typed codes, never conflated, with
+reachability semantics fixed in addendum §2.1: `not_opted_in` (S1) and
+`not_connected` (S2, no account) are returned by the broker for live tool
+calls; `financial_mode_disabled` is the broker's refusal for **residual calls**
+from sessions that predate a disable/uninstall (in steady-state S0 the tools
+are not registered at all — upstream `emptyComponents` semantics — so nothing
+else could return it).
+Negative E2E rows N1–N28 (addendum §1.7) prove the bypass resistance, the
 approval-origin boundary, the broker boundary, and the ledger single-writer
 boundary.
 

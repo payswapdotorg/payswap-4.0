@@ -52,9 +52,12 @@ web-share/share-ui, Android, the retired services-layer unit coverage). Decision
 
 ## 4. Per-wave regression contracts
 
-- **P1 (plugin extension):** full battery + the plugin lifecycle E2E + New Task
-  layout zero-diff proof (a preservation check that the rendered New Task surface
-  set is unchanged with the PaySwap plugin installed vs. not).
+- **P1 (plugin extension):** full battery + the plugin lifecycle E2E + the New
+  Task state proofs (addendum §2 oracle): S0a/S0b-vs-upstream rendered-surface
+  comparisons, plus the S1 **delta-equivalence** check — the S1-vs-S0 delta must
+  equal the standard upstream delta of a control plugin with the same component
+  shape (one stdio MCP server, same tool count, no UI surfaces), with no
+  PaySwap-specific delta kinds beyond it.
 - **P2 (Stripe vertical):** battery + account-connection browser acceptance +
   approval-gating E2E (a money tool is refused without the bound approval) +
   the CUA fail-closed contract still green.
@@ -64,7 +67,8 @@ web-share/share-ui, Android, the retired services-layer unit coverage). Decision
   Vitest) + the no-bypass battery (INV-30 carried from PaySwap 3.0: decomposition
   never changes purpose classification/eligibility) + unknown-outcome no-retry law
   tests.
-- **Every upstream sync:** battery + the New Task zero-diff proof.
+- **Every upstream sync:** battery + the New Task state proofs (S0a/S0b-vs-upstream;
+  the S3 invariant holds in every state).
 
 ## 5. Honest-boundaries register (carried from the mission methodology)
 
