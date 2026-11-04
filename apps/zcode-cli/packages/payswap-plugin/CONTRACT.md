@@ -36,7 +36,10 @@ refusal 码与表面纪律见 [src/contract.ts](src/contract.ts) 与 P0 附录
   seed 完整性检查与此对齐；`dist/` 是构建产物（git 忽略），打包时由
   `scripts/build.mjs`（esbuild bundle，与 office-runtime 同参数）生成。完整启动路径
   （定义 → 构建 → seed → manifest 解析 → stdio → MCP 调用）由 bootstrap 的
-  `tests/payswap-launch-path.test.ts` 在真实管线上验收。
+  `tests/payswap-launch-path.test.ts` 在真实管线上验收；**生产宿主派发链**（真实构建的
+  `zcode.cjs` 入口 + `__zcode-plugin-host` 派发 + 解析器 env → 本插件 server）由
+  `tests/payswap-host-launch.test.ts` 逐字执行解析器产出的完整生产命令验收（P1 PR #3
+  架构师评审第 2 轮第 3 项）。
 - **插件名** `payswap` 取自 `.zcode-plugin/plugin.json`；运行时 MCP server 名为
   `plugin:payswap:gateway`（workspace isolation）。三处版本（package.json / manifest /
   bootstrap 定义）保持一致，由 bootstrap 单测机械校验。

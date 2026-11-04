@@ -3,7 +3,9 @@
 # 范围与本地 verify:pre-push 的关系（诚实边界，见 PR 说明）：
 # - CI 覆盖本 PR 声明的全部可复现门禁：install + 构建 + lint + typecheck（root 与
 #   zcode-cli）+ architecture:check + payswap 插件包测试 + bootstrap 插件系统受影响
-#   测试（plugins / plugins-protocol / bundled-plugins-resilience / payswap-launch-path）。
+#   测试（plugins / plugins-protocol / bundled-plugins-resilience / payswap-launch-path /
+#   payswap-host-launch —— 后者经真实构建的 zcode.cjs 入口 + __zcode-plugin-host 派发
+#   执行完整生产启动命令，见架构师评审第 2 轮第 3 项的收口）。
 # - 全量套件（engineering 158 文件、bootstrap 全量）仍是本地 verify:pre-push 门禁；
 #   其 2 个已知沙盒环境性失败（session-persistence 的 5s 超时，4GB/2vCPU 内存压力）
 #   已在未修改基线上对照复现，与本仓库改动无关，不属于 CI 断言范围。
@@ -63,6 +65,8 @@ jobs:
         run: pnpm --filter @zcode/payswap-plugin run test
 
       # vitest 未列在 bootstrap 自己的 devDeps（靠 workspace 根提升），--filter exec 才能解析到 bin。
+      # payswap-host-launch 依赖上方 "Build workspace" 步骤产出的 cli/dist/zcode.cjs
+      # （@zcode/cli 也在 pnpm -r build 范围内）；无需额外构建步骤。
       - name: Bootstrap plugin-system tests (this change's affected scopes)
         run: >
           pnpm --filter @zcode/bootstrap exec vitest run
@@ -70,3 +74,4 @@ jobs:
           tests/plugins-protocol.test.ts
           tests/bundled-plugins-resilience.test.ts
           tests/payswap-launch-path.test.ts
+          tests/payswap-host-launch.test.ts
