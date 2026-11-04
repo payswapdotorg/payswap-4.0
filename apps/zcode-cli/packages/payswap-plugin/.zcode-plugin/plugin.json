@@ -1,0 +1,59 @@
+{
+  "name": "payswap",
+  "version": "0.1.0",
+  "description": "PaySwap financial workspace — informational financial surfaces (account overview, route plans, evidence) behind an explicit opt-in. Official ZCode plugin.",
+  "description_i18n": {
+    "en": "PaySwap financial workspace — informational financial surfaces behind an explicit opt-in. Official ZCode plugin.",
+    "zh-CN": "PaySwap 金融工作区——信息性金融表面，需显式开启后可用。ZCode 官方插件。"
+  },
+  "author": { "name": "PaySwap", "url": "https://payswap.org" },
+  "license": "Apache-2.0",
+  "mcpServers": {
+    "gateway": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${ZCODE_PLUGIN_ROOT}/dist/server.mjs"],
+      "cwd": "${ZCODE_PROJECT_DIR}",
+      "env": {
+        "PAYSWAP_FINANCIAL_WORKSPACE": "${user_config.financialWorkspace}"
+      },
+      "isolation": "workspace"
+    }
+  },
+  "ui": {
+    "surfaces": [
+      {
+        "id": "workspace",
+        "title": { "en-US": "PaySwap Workspace", "zh-CN": "PaySwap 金融工作区" },
+        "icon": "wallet",
+        "server": "gateway",
+        "resourceUri": "ui://payswap/workspace.html",
+        "availability": "session"
+      },
+      {
+        "id": "route-plan",
+        "title": { "en-US": "Route Plan", "zh-CN": "路线计划" },
+        "icon": "route",
+        "server": "gateway",
+        "resourceUri": "ui://payswap/route-plan.html",
+        "availability": "session"
+      },
+      {
+        "id": "evidence",
+        "title": { "en-US": "Evidence", "zh-CN": "凭据与证据" },
+        "icon": "receipt",
+        "server": "gateway",
+        "resourceUri": "ui://payswap/evidence.html",
+        "availability": "session"
+      }
+    ]
+  },
+  "userConfig": {
+    "financialWorkspace": {
+      "type": "boolean",
+      "default": false,
+      "title": "Financial workspace",
+      "description": "Opt in to PaySwap financial surfaces. Off by default: no financial data is fetched or shown until this is enabled, and no money can move."
+    }
+  }
+}
