@@ -7,7 +7,7 @@
 
 The product owner has delegated execution of the approved P1–P9 roadmap to the TL. The TL must not stop after a milestone to ask whether it may begin the next milestone. When the previous milestone's defined gates have passed and the evidence-bearing change is merged to `main`, the TL automatically starts the next milestone and updates the canonical status register.
 
-This authority includes ordinary engineering decisions inside the approved scope: task decomposition, worker assignment, implementation details, test selection, refactoring, sequencing of independent tasks, and reversible design choices that respect the existing contracts. Record material decisions in a short ADR in the relevant module/spec; do not ask for approval merely because a new wave is beginning.
+This authority includes ordinary engineering decisions inside the approved scope: task decomposition, worker assignment, implementation details, test selection, refactoring, sequencing of independent tasks, and reversible design choices that respect the existing contracts. Record material decisions in a short ADR in the relevant module/spec; do not ask for approval merely because a new wave is beginning. **Contract/ADR review and phase-gate acceptance are internal TL responsibilities.** The TL may request a worker's independent review, but must not wait for product-owner or ChatGPT sign-off for an in-scope contract, sub-wave, or next milestone. A PR statement such as “implementation is gated on contract approval” means the TL records a checklist-based acceptance against the P0 addendum and passing tests; it is not a new external approval gate.
 
 The delegation does **not** permit:
 - Enabling live money movement or submitting real provider write operations.
@@ -121,7 +121,7 @@ PR #3 is only the initial Wave 1 plugin scaffold. It is not completion of P1. Af
 | Order | Work package | TDD-first emphasis | Dependency / exit |
 |---|---|---|---|
 | P1.0 | Official plugin scaffold and production host-launch path | Manifest/lifecycle, official seed, resolver, real CLI host dispatch, six tools, static Class-A surfaces and typed refusal tests | PR #3 merge; scaffold only |
-| P1.1 | Broker protocol, host ownership and threat model | Contract schemas, caller trust assumptions, closed operation names, typed failures, trust-boundary negative tests | Before broker implementation |
+| P1.1 | Broker protocol, host ownership and threat model | Contract schemas, caller trust assumptions, closed operation names, typed failures, trust-boundary negative tests | TL records contract acceptance against P0; no product-owner sign-off; then P1.2 proceeds |
 | P1.2 | Trusted instance registration and per-instance credentials | Unknown instance, forged identity, credential substitution/rotation/revocation, endpoint replacement and private socket directory | P1.1 |
 | P1.3 | OS peer verification | Impostor process, wrong PID/image, ACL/DACL and owner mismatch; Unix peer credentials; Windows native helper parent/process binding | P1.2; fail closed on all supported OSes |
 | P1.4 | Closed six-operation dispatch and authoritative session binding | Unknown operation, malformed payload, cross-instance token, forged session/workspace, wrong role; no unregistered dispatch | P1.3 |
@@ -167,7 +167,7 @@ For each milestone, the TL prepares an evidence record in the PR description (no
 5. The evidence-bearing change is merged to `main`.
 6. The status row in `docs/payswap/p0/10-roadmap.md` is changed to `complete`, and the next milestone is changed to `in_progress` in the same merged change or immediate status-only follow-up.
 
-The TL then starts the next milestone automatically. Do not wait for a user response or request permission to begin it. If a PR is ready but not yet merged, keep the milestone at `gate_passed` (or `in_progress` if any gate remains) and do not claim the dependent milestone is complete.
+The TL then starts the next milestone automatically. Do not wait for a user response or request permission to begin it. Contract acceptance, architecture review within the approved P0 boundary, and merge readiness are TL-owned quality gates—not a request for the user or ChatGPT to approve the next step. If a PR is ready but not yet merged, keep the milestone at `gate_passed` (or `in_progress` if any gate remains) and do not claim the dependent milestone is complete.
 
 ## 10. PR and implementation discipline
 
