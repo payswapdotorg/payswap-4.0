@@ -41,6 +41,13 @@ test("rejects a duplicate milestone definition outside the canonical roadmap", (
   assert.ok(validateRoadmap(root).some((issue) => issue.includes("Milestone definitions found outside")));
 });
 
+test("rejects a second roadmap-named markdown document", (t) => {
+  const root = fixture();
+  t.after(() => rmSync(root, { force: true, recursive: true }));
+  writeFileSync(join(root, "docs", "payswap", "roadmap-copy.md"), "This is a duplicate.\n");
+  assert.ok(validateRoadmap(root).some((issue) => issue.includes("second roadmap-named document")));
+});
+
 test("rejects a missing milestone heading and invalid status", (t) => {
   const root = fixture();
   t.after(() => rmSync(root, { force: true, recursive: true }));

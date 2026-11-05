@@ -84,10 +84,10 @@ export function validateRoadmap(repositoryRoot = DEFAULT_ROOT) {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const errors = validateRoadmap();
   if (errors.length > 0) {
-    process.stderr.write(`PaySwap roadmap integrity FAILED (${errors.length} finding(s)):\\n`);
-    for (const error of errors) process.stderr.write(`- ${error}\\n`);
+    console.error(`PaySwap roadmap integrity FAILED (${errors.length} finding(s)):`);
+    for (const error of errors) console.error(`- ${error}`);
     process.exitCode = 1;
   } else {
-    process.stdout.write("PaySwap roadmap integrity passed: one canonical P1–P9 roadmap and status register.\\n");
+    console.log("PaySwap roadmap integrity passed: one canonical P1–P9 roadmap and status register.");
   }
 }
