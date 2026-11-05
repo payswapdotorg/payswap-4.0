@@ -469,6 +469,35 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
     ],
     version: "0.4.2",
   },
+  {
+    // PaySwap 金融工作区（P0 附录 §2 状态模型的官方落点）。defaultEnabled 保持 false：
+    // 安装后停在 S0b（installed + disabled），用户显式 enable 才进入 S1（工具注册、
+    // 全部返回 not_opted_in），在插件设置里打开 financialWorkspace 才进入 S2。
+    // Wave 1（P1）只有六工具注册 + typed refusals + 三个 Class A 信息面板；
+    // 数据来自 Wave 2 的认证 broker 桥（附录 §3），本插件永不触碰凭据或账本。
+    componentTypes: ["ui"],
+    name: "payswap",
+    defaultEnabled: false,
+    listing: {
+      author: { name: "PaySwap", url: "https://payswap.org" },
+      category: "productivity",
+      displayName: "PaySwap",
+      displayName_i18n: { "zh-CN": "PaySwap 金融工作区" },
+      description_i18n: {
+        "zh-CN":
+          "只读金融工作区：账户概览、路线计划与证据卡片。默认关闭，需在插件设置中显式开启。",
+      },
+    },
+    rootCandidates: [
+      "packages/payswap-plugin",
+      "../payswap-plugin",
+      "../../payswap-plugin",
+      "../../../payswap-plugin",
+    ],
+    // 缺 server.mjs 会 seed 出能看到面板入口却启动不了 MCP server 的残缺插件。
+    requiredSeedPaths: [".zcode-plugin/plugin.json", "dist/server.mjs"],
+    version: "0.1.0",
+  },
 ];
 
 // 在 official plugin 定义里标了 defaultEnabled: true 的, 拼成 `<name>@<marketplace>` 形式,
