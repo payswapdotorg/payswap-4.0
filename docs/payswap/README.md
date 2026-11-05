@@ -19,4 +19,4 @@ When the roadmap changes, update the canonical file and its integrity checks in 
 
 ## Current starting point
 
-P0 is merged. The initial P1.0 official-plugin scaffold (PR #3) is now merged at `86a9ae53160cf06fa92d5e0778be61fbfd85a637`; it does not complete P1. The next required P1 work is the authenticated broker, operator-principal model, trusted authorization grant and host-rendered approval experience, followed by the P1 security and preservation acceptance battery. See the live status register rather than relying on this summary.
+P0 is merged. The initial P1.0 official-plugin scaffold (PR #3) is now merged at `86a9ae53160cf06fa92d5e0778be61fbfd85a637`; it does not complete P1. P1.1 is underway in [PR #4](https://github.com/payswapdotorg/payswap-4.0/pull/4): the host-owned broker contract and threat model. After that contract gate, the TL proceeds automatically through per-instance credentials, OS peer verification, closed dispatch/session binding, replay protection, operator principals, authorization grants and the complete P1 security/preservation battery. See the live status register rather than relying on this summary.
