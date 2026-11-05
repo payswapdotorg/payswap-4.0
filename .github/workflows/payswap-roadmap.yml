@@ -1,0 +1,30 @@
+name: PaySwap roadmap integrity
+
+on:
+  pull_request:
+    paths:
+      - "AGENTS.md"
+      - "docs/payswap/**"
+      - "scripts/payswap/**"
+      - ".github/workflows/payswap-roadmap.yml"
+  push:
+    branches: [main]
+    paths:
+      - "AGENTS.md"
+      - "docs/payswap/**"
+      - "scripts/payswap/**"
+      - ".github/workflows/payswap-roadmap.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  roadmap-integrity:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Enforce a single canonical PaySwap roadmap
+        run: node scripts/payswap/validate-roadmap.mjs
