@@ -1195,6 +1195,19 @@ modules:
     layers:
       app: .
     owner: plugin
+  # shared-payswap：由 architecture:adopt 登记（层修正：node:crypto 的 Ed25519/SHA-256
+  # 是系统原语，domain 层禁 IO —— 与 payswap-plugin 同层 app；协议机器归 trust 侧 owner）
+  - id: shared-payswap
+    roots:
+      - packages/shared/src/payswap
+    managed: true
+    requires: []
+    publicEntrypoints:
+      - packages/shared/src/payswap/index.ts
+      - packages/shared/src/payswap/contract.ts
+    layers:
+      app: .
+    owner: plugin
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
