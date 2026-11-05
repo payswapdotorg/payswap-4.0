@@ -60,7 +60,7 @@ export function validateRoadmap(repositoryRoot = DEFAULT_ROOT) {
     if (count !== 1) {
       errors.push(`Canonical roadmap must define exactly one ${milestone} milestone heading; found ${count}.`);
     }
-    const statusPattern = new RegExp(`^\\| ${milestone} \\| (${VALID_STATUSES}) \\|`, "m");
+    const statusPattern = new RegExp(`^\\| ${milestone}(?: — [^|]+)? \\| (${VALID_STATUSES}) \\|`, "m");
     if (!statusPattern.test(roadmap)) {
       errors.push(`Canonical status register is missing a valid status row for ${milestone}.`);
     }

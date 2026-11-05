@@ -12,7 +12,7 @@ function fixture() {
   const docs = join(root, "docs", "payswap");
   mkdirSync(join(docs, "p0"), { recursive: true });
   const headings = milestones.map((id) => `### ${id} — Example milestone`).join("\n");
-  const rows = milestones.map((id) => `| ${id} | not_started | fixture |`).join("\n");
+  const rows = milestones.map((id) => `| ${id} — Example milestone | not_started | fixture |`).join("\n");
   writeFileSync(
     join(docs, "p0", "10-roadmap.md"),
     `## Live delivery status — single authoritative register\n${rows}\n## Execution authority and autonomous phase advancement\n${headings}\n`,
@@ -55,7 +55,10 @@ test("rejects a missing milestone heading and invalid status", (t) => {
   const original = readFileSync(roadmapPath, "utf8");
   writeFileSync(
     roadmapPath,
-    original.replace("### P9 — Example milestone\n", "").replace("| P4 | not_started | fixture |", "| P4 | done | fixture |"),
+    original.replace("### P9 — Example milestone\n", "").replace(
+      "| P4 — Example milestone | not_started | fixture |",
+      "| P4 — Example milestone | done | fixture |",
+    ),
   );
   const issues = validateRoadmap(root);
   assert.ok(issues.some((issue) => issue.includes("exactly one P9 milestone heading")));
