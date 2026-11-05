@@ -13,7 +13,7 @@ This directory is the repository's PaySwap product documentation. Read the docum
 
 ## Single-source-of-truth rule
 
-The file `p0/10-roadmap.md` is the only authoritative roadmap and status register. Do not maintain duplicate roadmaps in issues, PR descriptions, planning documents, agent memory, project boards or chat. Those systems may contain task-level execution details, but must link back to the canonical milestone and may not alter its scope, order or acceptance criteria.
+The only authoritative roadmap and status register is `docs/payswap/p0/10-roadmap.md` (linked above as `p0/10-roadmap.md`). Do not maintain duplicate roadmaps in issues, PR descriptions, planning documents, agent memory, project boards or chat. Those systems may contain task-level execution details, but must link back to the canonical milestone and may not alter its scope, order or acceptance criteria.
 
 When the roadmap changes, update the canonical file and its integrity checks in the same PR. When a milestone changes state, update the status table in that same file with the exact commit/PR and CI evidence. If a supporting document conflicts with the canonical roadmap, the canonical roadmap controls milestone sequencing and acceptance; the architecture addendum controls normative safety and architecture constraints.
 
