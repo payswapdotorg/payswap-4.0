@@ -14,6 +14,16 @@ import {
   ZCODE_CUA_PLUGIN_AUTHORITY_ENV_KEY,
   ZCODE_PLUGIN_ID_ENV_KEY,
 } from "@zcode/shared";
+import {
+  isValidPayswapBrokerCredentialTuple,
+  PAYSWAP_BROKER_HOST_ID_ENV_KEY,
+  PAYSWAP_BROKER_INSTANCE_ID_ENV_KEY,
+  PAYSWAP_BROKER_SOCKET_ENV_KEY,
+  PAYSWAP_BROKER_TOKEN_ENV_KEY,
+  PAYSWAP_BROKER_VERIFY_KEY_ENV_KEY,
+  PAYSWAP_OFFICIAL_PLUGIN_ID,
+  type PayswapBrokerCredentialTuple,
+} from "@zcode/shared/payswap";
 
 export { ZCODE_CUA_BROKER_SOCKET_ENV_KEY as ZCODE_CUA_BROKER_SOCKET_ENV } from "@zcode/shared";
 // 保留环境变量名供旧诊断脚本读取；迁移后的配置路径不会据此启动独立 CUA MCP。
@@ -52,6 +62,30 @@ export function resolveTrustedOfficialCuaServerNames(
           config.type === "stdio" &&
           config.env?.[ZCODE_PLUGIN_ID_ENV_KEY]?.trim().toLowerCase() ===
             ZCODE_CUA_OFFICIAL_PLUGIN_ID,
+      )
+      .map(([name]) => name),
+  );
+}
+
+/**
+ * 官方 PaySwap 插件的受信 server 名（契约 w2-01 §4.2(2)，CUA 同款 reference-identity 门）。
+ * 权威来自内存中的官方插件注册表而非可序列化的 MCP 字段：`configuredServers[name] ===
+ * config` —— 用户/项目 override 会替换 `configuredServers` 里的配置对象，拷贝了 PaySwap
+ * 的名字、命令与 env 值的配置不继承凭据（N19 反拷贝门）。凭据只进**这个**官方注册的
+ * config 对象，且在 spawn 时（§4.2(1)）；注入在 strip 之后落地（§4.3(2)）。
+ */
+export function resolveTrustedOfficialPayswapServerNames(
+  configuredServers: Record<string, McpServerConfig>,
+  pluginServers: Record<string, McpServerConfig>,
+): Set<string> {
+  return new Set(
+    Object.entries(pluginServers)
+      .filter(
+        ([name, config]) =>
+          configuredServers[name] === config &&
+          config.type === "stdio" &&
+          config.env?.[ZCODE_PLUGIN_ID_ENV_KEY]?.trim().toLowerCase() ===
+            PAYSWAP_OFFICIAL_PLUGIN_ID,
       )
       .map(([name]) => name),
   );
@@ -163,6 +197,50 @@ function injectCuaCredentialsIntoNodeRepl(
       [ZCODE_PLUGIN_ID_ENV_KEY]: ZCODE_CUA_OFFICIAL_PLUGIN_ID,
     },
   };
+}
+
+/**
+ * 向官方 PaySwap MCP server 配置注入五键凭据组（契约 w2-01 §4.2，CUA 同款纪律）。
+ *
+ * - 只注入 `trustedOfficialPayswapServerNames`（reference-identity 门给出）里的 stdio
+ *   配置对象；非 stdio / 未受信 / 兄弟配置原样保留（同对象引用返回，N19）。
+ * - 无凭据（null/undefined）或形状非法（fail-closed 防御门）→ 原样返回，什么都不注入
+ *   —— 凭据只在 spawn 时存在（§4.2(1)）。
+ * - 注入只落在 config.env 上；真正的子进程 env 由 sanitize 基座（已剔除五键，§4.3(1)）
+ *   之后 spread config.env 构成 —— 受注入的官方子进程拿到全组，其它子进程一个键都
+ *   拿不到（§4.3(2) 顺序）。
+ */
+export function injectPayswapBrokerMcpServers(
+  servers: Record<string, McpServerConfig>,
+  credentials: PayswapBrokerCredentialTuple | null | undefined,
+  trustedOfficialPayswapServerNames: ReadonlySet<string> = new Set(),
+): Record<string, McpServerConfig> {
+  if (!credentials || !isValidPayswapBrokerCredentialTuple(credentials)) {
+    return servers;
+  }
+
+  let changed = false;
+  const next: Record<string, McpServerConfig> = {};
+  for (const [name, config] of Object.entries(servers)) {
+    if (!trustedOfficialPayswapServerNames.has(name) || config.type !== "stdio") {
+      next[name] = config;
+      continue;
+    }
+    next[name] = {
+      ...config,
+      env: {
+        ...config.env,
+        [PAYSWAP_BROKER_SOCKET_ENV_KEY]: credentials.socket,
+        [PAYSWAP_BROKER_TOKEN_ENV_KEY]: credentials.token,
+        [PAYSWAP_BROKER_INSTANCE_ID_ENV_KEY]: credentials.instanceId,
+        [PAYSWAP_BROKER_HOST_ID_ENV_KEY]: credentials.hostId,
+        [PAYSWAP_BROKER_VERIFY_KEY_ENV_KEY]: credentials.verifyKeyBase64,
+      },
+    };
+    changed = true;
+  }
+
+  return changed ? next : servers;
 }
 
 function isZCodeCuaStdioServer(

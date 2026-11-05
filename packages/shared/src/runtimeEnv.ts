@@ -1,3 +1,14 @@
+import {
+  hasAnyPayswapBrokerEnvKey,
+  PAYSWAP_BROKER_HOST_ID_ENV_KEY,
+  PAYSWAP_BROKER_INSTANCE_ID_ENV_KEY,
+  PAYSWAP_BROKER_SOCKET_ENV_KEY,
+  PAYSWAP_BROKER_TOKEN_ENV_KEY,
+  PAYSWAP_BROKER_VERIFY_KEY_ENV_KEY,
+  readPayswapBrokerCredentialTupleFromEnv,
+  type PayswapBrokerCredentialTuple,
+} from "./payswap/broker-env.js";
+
 export const ZCODE_RUNTIME_ENV_KEY = "ZCODE_RUNTIME_ENV";
 export const ZCODE_HTTP_PROXY_ENV_KEY = "ZCODE_HTTP_PROXY";
 export const ZCODE_NO_PROXY_ENV_KEY = "ZCODE_NO_PROXY";
@@ -78,6 +89,17 @@ const SANITIZED_RUNTIME_ENV_KEYS = [
   // 值（例如嵌套运行的 agent）一律剔除，避免一个 session 拿着另一个 session 的 token。
   ZCODE_OFFICIAL_ENDPOINT_ENV_KEY,
   ZCODE_OFFICIAL_ENDPOINT_TOKEN_ENV_KEY,
+  // PaySwap broker 五键凭据组（契约 w2-01 §4.3(1)）：只该给官方 PaySwap MCP 子进程的连接/
+  // 响应验证材料（由 bootstrap 的受信注入路径定向注入其 env，reference-identity 门）。绝不能
+  // 随 agent 全局 env 泄漏给其它 MCP server / Bash / tool 子进程 —— 同 agent 内的恶意 MCP 或
+  // 被 prompt-injection 触发的命令能据此驱动已授权 broker / 冒充 endpoint（confused-deputy）。
+  // 两个 rev-2 新键同样剔除：公钥与 host id 不秘密，但拿到它们的兄弟至少能对真子进程尝试
+  // endpoint 冒充 —— 剔除使凭据组的交付面恰好一个进程。注入在剔除之后落地（§4.3(2)）。
+  PAYSWAP_BROKER_SOCKET_ENV_KEY,
+  PAYSWAP_BROKER_TOKEN_ENV_KEY,
+  PAYSWAP_BROKER_INSTANCE_ID_ENV_KEY,
+  PAYSWAP_BROKER_HOST_ID_ENV_KEY,
+  PAYSWAP_BROKER_VERIFY_KEY_ENV_KEY,
   // Agent OTLP Endpoint/Auth/Identity 只属于 CLI telemetry bootstrap，不能继续泄漏给
   // Bash、MCP 或模型工具子进程。sanitize 前会捕获到本进程私有 Map，供 Agent 启动边界读取。
   "OTEL_EXPORTER_OTLP_ENDPOINT",
@@ -114,6 +136,14 @@ const NON_TOOL_PASSTHROUGH_RUNTIME_ENV_KEYS = [
   ZCODE_REMOTE_RUNTIME_NETWORK_AUTHORITY_ENV_KEY,
   ZCODE_REMOTE_HTTP_PROXY_ENV_KEY,
   ZCODE_REMOTE_NO_PROXY_ENV_KEY,
+  // PaySwap 五键同款双表纪律（契约 §4.3(1) rev 2a，F5）：只进 strip list 不进 blocklist
+  // 会重新打开上游注释警告的 confused-deputy 旁路 —— Bash/tool 子进程不得经 passthrough
+  // 恢复任何 PAYSWAP_BROKER_* 键。
+  PAYSWAP_BROKER_SOCKET_ENV_KEY,
+  PAYSWAP_BROKER_TOKEN_ENV_KEY,
+  PAYSWAP_BROKER_INSTANCE_ID_ENV_KEY,
+  PAYSWAP_BROKER_HOST_ID_ENV_KEY,
+  PAYSWAP_BROKER_VERIFY_KEY_ENV_KEY,
 ] as const;
 
 const SANITIZED_PACKAGE_MANAGER_ENV_PATTERN =
@@ -145,6 +175,7 @@ interface CapturedCuaBrokerCredentials {
 }
 
 let capturedCuaBrokerCredentials: Readonly<CapturedCuaBrokerCredentials> | undefined;
+let capturedPayswapBrokerCredentials: Readonly<PayswapBrokerCredentialTuple> | undefined;
 const capturedZCodeAgentTelemetryEnv: Record<string, string> = {};
 
 // CUA broker socket 会被上面的 sanitize 从子进程 env 中剔除（confused-deputy 防护 —— 不能让
@@ -176,6 +207,18 @@ function captureZCodeCuaBrokerCredentials(env: Record<string, string | undefined
 
 function captureZCodeAgentTelemetryEnv(env: Record<string, string | undefined>): void {
   Object.assign(capturedZCodeAgentTelemetryEnv, readZCodeAgentTelemetryEnv(env));
+}
+
+// PaySwap 五键凭据组会被上面的 sanitize 从子进程 env 剔除（§4.3(1) 双表纪律），但
+// __zcode-plugin-host 派发链需要在本进程内恢复它们（§4.4(1) capture-before-sanitization，
+// CUA 快照模式的五键推广）。all-or-nothing（§4.4(1)）：任何一个 PAYSWAP_BROKER_* 键出现
+// 而组不完整/形状非法 → 清空快照并 fail-closed —— 半组凭据永不启动（:171-174 纪律）；
+// 一个键都没出现 → 快照不动（与 CUA 捕获一致）。快照只经
+// readCapturedPayswapBrokerCredentials() 暴露给受信注入/启动断言路径，绝不写回任何子进程 env。
+function capturePayswapBrokerCredentials(env: Record<string, string | undefined>): void {
+  if (!hasAnyPayswapBrokerEnvKey(env)) return;
+  const tuple = readPayswapBrokerCredentialTupleFromEnv(env);
+  capturedPayswapBrokerCredentials = tuple ? Object.freeze({ ...tuple }) : undefined;
 }
 
 /**
@@ -213,6 +256,28 @@ export function resetCapturedZCodeCuaBrokerCredentialsForTest(): void {
   capturedCuaBrokerCredentials = undefined;
 }
 
+/**
+ * 从给定 env 读取 PaySwap 五键凭据组（纯函数）：五键齐全且逐键形状合法 → tuple；
+ * 部分出现 / 形状非法 / 全缺 → null（§4.4(1) all-or-nothing，fail-closed）。
+ */
+export function getCapturedPayswapBrokerCredentials(
+  env: Record<string, string | undefined>,
+): PayswapBrokerCredentialTuple | null {
+  return readPayswapBrokerCredentialTupleFromEnv(env);
+}
+
+/** 进程内快照（capture-before-sanitization 落下的组）；无有效快照 → null。 */
+export function readCapturedPayswapBrokerCredentials(): PayswapBrokerCredentialTuple | null {
+  return capturedPayswapBrokerCredentials
+    ? { ...capturedPayswapBrokerCredentials }
+    : null;
+}
+
+// 仅供测试重置进程内捕获状态。
+export function resetCapturedPayswapBrokerCredentialsForTest(): void {
+  capturedPayswapBrokerCredentials = undefined;
+}
+
 export function resetCapturedZCodeAgentTelemetryEnvForTest(): void {
   for (const key of Object.keys(capturedZCodeAgentTelemetryEnv)) {
     delete capturedZCodeAgentTelemetryEnv[key];
@@ -224,6 +289,7 @@ export function sanitizeZCodeRuntimeEnv<T extends Record<string, string | undefi
 ): Record<string, string> {
   captureZCodeCuaBrokerCredentials(env);
   captureZCodeAgentTelemetryEnv(env);
+  capturePayswapBrokerCredentials(env);
   const sanitized: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined || shouldSanitizeZCodeRuntimeEnvKey(key)) {
@@ -278,6 +344,7 @@ export function readZCodeToolEnvPassthroughEnv(env: EnvRecord): Record<string, s
 export function sanitizeZCodeRuntimeEnvInPlace(env: Record<string, string | undefined>): void {
   captureZCodeCuaBrokerCredentials(env);
   captureZCodeAgentTelemetryEnv(env);
+  capturePayswapBrokerCredentials(env);
   for (const key of Object.keys(env)) {
     if (shouldSanitizeZCodeRuntimeEnvKey(key)) {
       delete env[key];

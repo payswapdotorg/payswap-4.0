@@ -201,7 +201,12 @@ describe("payswap canonical JSON (RFC 8785 / JCS, contract §6.4(5))", () => {
         for (let i = 0; i < length; i++) items.push(randomValue(depth + 1));
         return items;
       }
-      // 对象：故意用乱序键注入。
+      // 对象：故意用乱序键注入。GREEN 侧 harness 修正（实现无关）：原对象分支无 depth
+      // 上限，分支过程超临界（每个对象节点平均 3 个子值 × 3/8 再入对象 ≈ 1.125 > 1），
+      // LCG 种子 0x5eed 下第 9 次迭代必然栈溢出 —— 生成器自身不终止，任何实现都无法
+      // 转绿。与数组分支同为 depth < 3 封顶后，性质断言（300 信封、乱序嵌套键、往返
+      // 稳定）保持不变。
+      if (depth >= 3) return randomString();
       const length = Math.floor(rand() * 5) + 1;
       const record: Record<string, unknown> = {};
       for (let i = 0; i < length; i++) record[randomString() + i] = randomValue(depth + 1);
