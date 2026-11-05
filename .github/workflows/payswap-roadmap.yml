@@ -26,5 +26,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
+      - name: Test roadmap governance validator
+        run: node --test scripts/payswap/validate-roadmap.test.mjs
       - name: Enforce a single canonical PaySwap roadmap
         run: node scripts/payswap/validate-roadmap.mjs

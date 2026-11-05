@@ -16,8 +16,8 @@ This register is maintained **in this file only**. Update it in the same PR that
 
 | Milestone | Status | Current evidence / next action |
 |---|---|---|
-| P0 — Architecture and preservation baseline | complete | P0 deliverables merged to `main` in commit `26f8c695c762a68a28f7553f333e2c1ecb8a46ed`. |
-| P1 — Trusted ZCode extension and financial authorization | in_progress | PR #3 head `aaad8a7ee375728e2b0514f80ac361c02479ff86` contains the Wave 1 plugin scaffold and production host-launch test; architect accepted it for merge, but it is still open and unmerged. Broker, operator-principal, grant/card, E1/E3 and N/T acceptance remain outstanding. |
+| P0 — Architecture and preservation baseline | complete | P0 deliverables merged to `main` in [commit `26f8c695`](https://github.com/payswapdotorg/payswap-4.0/commit/26f8c695c762a68a28f7553f333e2c1ecb8a46ed). |
+| P1 — Trusted ZCode extension and financial authorization | in_progress | [PR #3](https://github.com/payswapdotorg/payswap-4.0/pull/3), head `aaad8a7ee375728e2b0514f80ac361c02479ff86`; [CI run 41931968175](https://github.com/payswapdotorg/payswap-4.0/actions/runs/41931968175) is green. Architect accepted the scaffold for merge, but the PR is still open and unmerged. Broker, operator-principal, grant/card, E1/E3 and N/T acceptance remain outstanding. |
 | P2 — Stripe read-only vertical | not_started | Starts after P1 is complete. Gate E2 must pass before any PSP secret is stored. |
 | P3 — Paystack and PayPal | not_started | Starts after P2 is complete; provider-specific auth facts require dated official-source verification. |
 | P4 — Capability registry, eligibility and intent compiler | not_started | Starts after P3 is complete. |
