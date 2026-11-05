@@ -83,3 +83,20 @@ App 业务单测已退役，不新增或恢复 App 业务单测 test/spec 或 `c
 - `info` 用于进程和会话生命周期、权限结果、一次性初始化等生产可用事件。
 - `warn` 用于可恢复异常；`error` 用于崩溃、握手失败、鉴权丢失等不可恢复错误。
 - 不在日志、示例或提交中写入凭据、真实用户数据和内部服务地址。
+
+## PaySwap 4.0 — mandatory product roadmap governance
+
+PaySwap product work is governed by the repository artifacts below; read them before planning or changing PaySwap behavior:
+
+1. `docs/payswap/README.md` — authority and document navigation.
+2. `docs/payswap/p0/10-roadmap.md` — **the only canonical roadmap and live status register** for P1–P9. It alone controls milestone order, scope, acceptance and progress status.
+3. `docs/payswap/p0/11-architecture-addendum.md` — binding architecture/security constraints.
+4. `docs/payswap/IMPLEMENTATION-PLAYBOOK.md` — required TDD, team, evidence and autonomous-transition procedure.
+
+Do not create a duplicate roadmap, milestone status table, competing acceptance matrix or parallel phase tracker. Issues, PRs, task boards and agent notes are task-level aids only and must link to the canonical roadmap.
+
+The TL has delegated authority to execute and advance through the approved P1–P9 roadmap without asking the product owner to approve each next phase. When a milestone's full acceptance evidence is green and its change is merged to `main` under normal branch protection, the TL must update the canonical status register and start the next milestone automatically. No user confirmation is required for ordinary in-scope implementation choices or phase transitions. Contract/ADR review and phase-gate acceptance are internal TL responsibilities; the TL may use worker peer review but must not wait for product-owner or ChatGPT sign-off for an in-scope contract or next phase.
+
+This delegation never authorizes live-money activation, real provider writes, use of production credentials, weakening of security invariants, changes that conflict with the P0 addendum, irreversible production data changes, or unapproved paid/external obligations. Apply the stop-and-escalate rules in the implementation playbook only to those reserved decisions. Never bypass branch protections or claim skipped tests as passed.
+
+All PaySwap behavior changes follow the repository's existing spec-first and TDD rules. Respect `docs/testing/unit-test-quality.md`: App business unit tests and module `contract.test.ts` files are retired; use the supported engineering, CLI, integration and browser/E2E harnesses. A scaffold is not a completed milestone.

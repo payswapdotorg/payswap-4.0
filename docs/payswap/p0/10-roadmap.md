@@ -1,9 +1,34 @@
 # P0 Deliverable 10 — Roadmap with Explicit Acceptance Criteria
 
+
+> **Canonical roadmap / single source of truth.** This file is the only authoritative definition of the PaySwap P1–P9 sequence, milestone scope, acceptance criteria and live delivery status. Do not create another roadmap, milestone checklist or parallel status register. The navigation page is [docs/payswap/README.md](../README.md); the subordinate implementation procedure is [IMPLEMENTATION-PLAYBOOK.md](../IMPLEMENTATION-PLAYBOOK.md); the normative architecture and security constraints are in [11-architecture-addendum.md](11-architecture-addendum.md). Those documents may explain how to work, but may not redefine milestone scope, ordering or acceptance.
+
 **Owner:** TL · **Law:** prove the extension architecture with one Stripe vertical
 before attempting every transactional feature across all providers. Live money
 movement stays disabled until the complete provider, beneficiary, authorization
 and reconciliation acceptance suite passes (operator-gated).
+
+## Live delivery status — single authoritative register
+
+This register is maintained **in this file only**. Update it in the same PR that proves a milestone gate. Issue trackers, PR descriptions, project boards, chat messages and dashboards may link here, but must not create competing status or acceptance records.
+
+**Status vocabulary:** `not_started` = no implementation started; `in_progress` = implementation underway; `blocked` = a named dependency or gate is preventing work; `gate_passed` = all milestone acceptance evidence is green on the proposed head but not yet merged to `main`; `complete` = the evidence-bearing change is merged to `main`. A green build by itself never means a milestone is complete.
+
+| Milestone | Status | Current evidence / next action |
+|---|---|---|
+| P0 — Architecture and preservation baseline | complete | P0 deliverables merged to `main` in [commit `26f8c695`](https://github.com/payswapdotorg/payswap-4.0/commit/26f8c695c762a68a28f7553f333e2c1ecb8a46ed). |
+| P1 — Trusted ZCode extension and financial authorization | in_progress | P1.0 scaffold merged via [PR #3](https://github.com/payswapdotorg/payswap-4.0/pull/3) at [merge `86a9ae53`](https://github.com/payswapdotorg/payswap-4.0/commit/86a9ae53160cf06fa92d5e0778be61fbfd85a637). P1.1 broker contract/threat model is in [PR #4](https://github.com/payswapdotorg/payswap-4.0/pull/4), head `bb8f04a8d560b063107fb7bf1681456b3f280317`; its CI run [41982070127](https://github.com/payswapdotorg/payswap-4.0/actions/runs/41982070127) passed. P1 remains incomplete: broker runtime, operator-principal, grant/card, E1/E3 and N/T acceptance are outstanding. |
+| P2 — Stripe read-only vertical | not_started | Starts after P1 is complete. Gate E2 must pass before any PSP secret is stored. |
+| P3 — Paystack and PayPal | not_started | Starts after P2 is complete; provider-specific auth facts require dated official-source verification. |
+| P4 — Capability registry, eligibility and intent compiler | not_started | Starts after P3 is complete. |
+| P5 — Conversational New Task workflow | not_started | Starts after P4 is complete. |
+| P6 — Deterministic multi-provider route intelligence | not_started | Starts after P5 is complete. |
+| P7 — Execution, ledger and reconciliation | not_started | Starts after P6 is complete; live activation remains separately operator-gated. |
+| P8 — Financial surfaces and automations | not_started | Starts after P7 is complete; live activation remains separately operator-gated. |
+| P9 — Wider provider network and capability learning | not_started | Starts after P8 is complete. |
+
+**Last reconciled:** 2026-11-05. The TL must update this register from actual merged Git state and CI evidence; never infer completion from a report or an unmerged branch.
+
 
 ## Wave plan
 
@@ -182,3 +207,12 @@ The governing invariant (every ZCode capability preserved — deliverable 02 mat
 maintained), the AML law (INV-30), model-never-authorizes, API-acceptance-is-not-
 settlement, unknown-no-retry, evidence-or-refusal, and honest reporting of every
 gate result (real output, never claims).
+
+
+## Execution authority and autonomous phase advancement
+
+The TL is authorized to plan, implement, test, integrate and advance through P1–P9 without requesting user approval for each next milestone or wave. This delegation is part of the approved roadmap. The TL must follow [IMPLEMENTATION-PLAYBOOK.md](../IMPLEMENTATION-PLAYBOOK.md), preserve the acceptance criteria above, and update this file's status register with evidence.
+
+A milestone may be marked `gate_passed` only when every acceptance criterion in its section is backed by committed tests and reproducible evidence on the exact PR head. It becomes `complete` only after that evidence-bearing change is merged into `main` under the repository's normal branch protections. Once a milestone is complete, the TL automatically starts the next milestone; no additional user confirmation is required. The same rule applies to ordered sub-waves inside P1.
+
+This delegation does **not** authorize bypassing branch protections, fabricating test evidence, weakening an acceptance criterion, changing the normative architecture, or enabling real-money operations. The hard-stop cases and reserved operator decisions are defined in the implementation playbook. No phase transition can override the live-money gate above or the architecture addendum.
