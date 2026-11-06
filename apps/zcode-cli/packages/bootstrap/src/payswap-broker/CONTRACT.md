@@ -1,10 +1,19 @@
 # payswap-broker
 
-PaySwap broker 的 **host 侧运行时**（P1.3 Step 3）：UDS 端点落位（per-boot 0700 目录 +
-0600 socket、绑定前拒绝/移除既有条目）、启动期自探针（真实 loopback 对上验证对等凭据
-读取路径，失败即 `degraded_refusing`）、§5.5 检查序（对等验证 → 解析+1 MiB 上限 →
-时序安全 token 比对 → 实例/注册表绑定）、全响应签名（null-bound 拒绝纪律）、生命周期
-（close 兜底）与审计 ingress。
+PaySwap broker 的 **host 侧运行时**（P1.3 Step 3 + P1.4 Step 4）：UDS 端点落位（per-boot
+0700 目录 + 0600 socket、绑定前拒绝/移除既有条目）、启动期自探针（真实 loopback 对上
+验证对等凭据读取路径，失败即 `degraded_refusing`）、§5.5 检查序（对等验证 → 解析+
+1 MiB 上限 + §6.1 `.strict()` 请求 schema → 时序安全 token 比对 → 实例/注册表绑定
+（tombstone 原因分裂）→ 闭集 dispatch）、全响应签名（null-bound / request-attributed
+拒绝纪律）、生命周期（close 兜底）与审计 ingress。
+
+Step 4 落地（§6/§7）：`dispatch.ts` 的闭集六操作表（enum → per-op schema 的字面 map，
+N21 皮带扣 operation_not_found）、§7.3 三码法则（live reader 每次请求现读；缺省 S2
+not_connected；reader 故障 internal_error）、§7.4 dormant grant hook（authorizationId
+在 Wave 2 是未知 params 键，schema 层即拒）、D5.6 升级（disable tombstone 流通到
+financial_mode_disabled 业务拒绝）。宿主接线（lazy boot / 受信注入 / 进程观察 /
+disable 撤销）在 `payswap-broker/spawn-wiring.ts`（宿主接线半边，
+经本模块公开入口导出）。
 
 ## 不变量
 
@@ -23,5 +32,7 @@ PaySwap broker 的 **host 侧运行时**（P1.3 Step 3）：UDS 端点落位（p
   本模块只消费不复制（§6.4(5)）。
 - payswap-plugin（child 侧，Step 4+ 接线）：不经本模块；child 经 shared 的
   `verifyResponseEnvelope` 验签。
-- `@zcode/bootstrap` mcp-config / `@zcode/cli` plugin-host-command（P1.2 已落）：
-  受信注入与启动断言 —— 与本模块的 spawn 表注册在集成 PR（Step 4+）接线。
+- `@zcode/shared/payswap` operations（Step 4）：六操作 per-op params schema、§6.1
+  请求 schema、三码业务拒绝 —— dispatch 只消费不复制。
+- `@zcode/bootstrap` mcp-config / `payswap-broker/spawn-wiring.ts` / `@zcode/cli`
+  plugin-host-command：受信注入、spawn 表注册观察与启动断言（Step 4 已接线）。

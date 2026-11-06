@@ -12,3 +12,4 @@ export * from "./broker-env.js";
 export * from "./broker-identity.js";
 export * from "./envelope.js";
 export * from "./instance-registry.js";
+export * from "./operations.js";

@@ -238,6 +238,8 @@ export async function listPlugins(
   };
 }
 
+import { PAYSWAP_OFFICIAL_PLUGIN_ID } from "@zcode/shared/payswap";
+
 export async function setPluginEnabled(
   context: ZCodeProtocolAgentServerContext,
   rawParams: unknown,
@@ -254,6 +256,11 @@ export async function setPluginEnabled(
   });
   // 启用配置写入当前不可回滚；若取消在 IO 期间到达，只阻断后续响应和 UI 写入。
   abortSignal?.throwIfAborted();
+  // §10.2(2) 撤销：禁用官方 PaySwap 插件 → tombstone 其全部 live 实例（reason
+  // "disabled"）→ 残留调用按 §7.3 row 1 答 financial_mode_disabled（D5.6）。
+  if (!params.enabled && params.pluginId === PAYSWAP_OFFICIAL_PLUGIN_ID) {
+    context.deps.payswapBroker?.revokeForDisable();
+  }
   return {
     plugin: {
       ...toPluginInfo(result.plugin),
@@ -385,6 +392,10 @@ export async function uninstallPlugin(
     removeCache: params.removeCache,
     workingDirectory: params.workspace.workspacePath,
   });
+  // §10.2(2) 撤销（uninstall 臂）：同 disable —— 撤销全部 live PaySwap 实例。
+  if (params.pluginId === PAYSWAP_OFFICIAL_PLUGIN_ID) {
+    context.deps.payswapBroker?.revokeForDisable();
+  }
   return {
     ...(removed ? { removedPlugin: toInstalledPluginSummary(removed) } : {}),
     diagnostics: [],

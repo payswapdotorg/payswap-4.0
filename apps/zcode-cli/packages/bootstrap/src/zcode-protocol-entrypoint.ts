@@ -3,6 +3,7 @@ import { createConfig, resolvePath } from "@zcode/adapters/config";
 import type { McpElicitationPort, McpNotificationPort } from "@zcode/contracts";
 import { createNodeModelSelectionFacade } from "@zcode/provider-node";
 import { createNodeLoggerFactory } from "@zcode/adapters/logging";
+import { createPayswapBrokerCoordinator } from "./payswap-broker/index.js";
 import {
   createMcpAdapterConnectionPool,
   createMcpTelemetryTracker,
@@ -263,6 +264,12 @@ export async function runZCodeProtocolAgent(
       requestMcpElicitation: McpElicitationPort["requestElicitation"];
       handleMcpNotification: McpNotificationPort["onNotification"];
     } | null = null;
+    // PaySwap broker 协调器（进程级，Step 4）：lazy boot（首个受信 server 出现时）；
+    // 观察者随 pool 的 adapter 工厂注入 —— 设置面 lease 与 session 工厂共享同一 pool。
+    const payswapBrokerCoordinator = createPayswapBrokerCoordinator({
+      env: options.env,
+      workingDirectory: options.cwd,
+    });
     mcpConnectionPool =
       configResult.config.features.mcp === false
         ? undefined
@@ -291,6 +298,7 @@ export async function runZCodeProtocolAgent(
               logger,
             }),
             officialMcpAuth,
+            stdioProcessObserver: payswapBrokerCoordinator.processObserver,
             telemetry: mcpTelemetryTracker,
             workingDirectory: options.cwd,
           });
@@ -323,6 +331,7 @@ export async function runZCodeProtocolAgent(
             ...(telemetryDeviceMid ? { ZCODE_TELEMETRY_DEVICE_MID: telemetryDeviceMid } : {}),
           },
           ...(nodeReplBrowserBroker ? { nodeReplBrowserBroker } : {}),
+          ...(configResult.config.features.mcp !== false ? { payswapBroker: payswapBrokerCoordinator } : {}),
           ...(mcpConnectionPool
             ? {
                 mcpPortFactory: () =>
@@ -342,6 +351,9 @@ export async function runZCodeProtocolAgent(
       cwd: options.cwd,
       env: options.env,
       loggerFactory,
+      ...(configResult.config.features.mcp !== false
+        ? { payswapBroker: payswapBrokerCoordinator }
+        : {}),
       mcpPort,
       mcpTelemetry: mcpTelemetryTracker,
       sessionStore,

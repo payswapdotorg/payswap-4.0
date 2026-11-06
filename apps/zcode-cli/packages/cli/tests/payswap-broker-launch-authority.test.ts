@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
+import { access, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { ZCODE_PLUGIN_ID_ENV_KEY } from "@zcode/shared";
+import {
+  resetCapturedPayswapBrokerCredentialsForTest,
+  sanitizeZCodeRuntimeEnv,
+} from "@zcode/shared/runtime-env";
 import {
   createPayswapInstanceRegistry,
   mintBrokerBootState,
@@ -12,6 +19,7 @@ import {
 import {
   assertCapturedPayswapBrokerLaunchIsAuthorized,
   PayswapBrokerLaunchAuthorizationError,
+  runPluginHostCommand,
 } from "../src/plugin-host-command.js";
 
 /**
@@ -164,3 +172,137 @@ test("no captured payswap credentials → nothing to assert (CUA precedent early
     else process.env[ZCODE_PLUGIN_ID_ENV_KEY] = previous;
   }
 });
+
+// ---------------------------------------------------------------------------
+// P1.4 Step 4 —— __zcode-plugin-host 派发链的生产接线（契约 §4.4(2) 的 child 侧半边）
+// ---------------------------------------------------------------------------
+
+test("runPluginHostCommand wiring: a captured payswap tuple refuses an impostor plugin context before import", async () => {
+  const boot = mintBrokerBootState();
+  const instanceId = randomUUID();
+  const tuple = makeTuple(boot, instanceId);
+  // 模拟 CLI 入口的 capture-before-sanitization：五键组进入进程内私有快照。
+  sanitizeZCodeRuntimeEnv({
+    PAYSWAP_BROKER_SOCKET: tuple.socket,
+    PAYSWAP_BROKER_TOKEN: tuple.token,
+    PAYSWAP_BROKER_INSTANCE_ID: tuple.instanceId,
+    PAYSWAP_BROKER_HOST_ID: tuple.hostId,
+    PAYSWAP_BROKER_VERIFY_KEY: tuple.verifyKeyBase64,
+  });
+  const root = await mkdtemp(join(tmpdir(), "payswap-host-launch-"));
+  const marker = join(root, "imported.marker");
+  const serverPath = join(root, "server.mjs");
+  await writeFile(
+    serverPath,
+    [
+      "import { writeFileSync } from 'node:fs';",
+      `export async function main() { writeFileSync(${JSON.stringify(marker)}, "imported"); }`,
+    ].join("\n"),
+  );
+  const previous = process.env[ZCODE_PLUGIN_ID_ENV_KEY];
+  process.env[ZCODE_PLUGIN_ID_ENV_KEY] = "attacker-plugin@evil-marketplace";
+  const stderr = createCapturedStream();
+  try {
+    const exitCode = await runPluginHostCommand(
+      { argv: [], stderr, stdin: {} as NodeJS.ReadStream, stdout: createCapturedStream() } as never,
+      [serverPath],
+    );
+    assert.equal(exitCode, 1);
+    assert.match(stderr.output(), /PaySwap/);
+    // 拒绝发生在 import 之前 —— 探针模块绝不能被加载（凭据不落入不受信代码）。
+    assert.equal(await fileExists(marker), false);
+  } finally {
+    if (previous === undefined) delete process.env[ZCODE_PLUGIN_ID_ENV_KEY];
+    else process.env[ZCODE_PLUGIN_ID_ENV_KEY] = previous;
+    resetCapturedPayswapBrokerCredentialsForTest();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("runPluginHostCommand wiring: the trusted official payswap context proceeds with the tuple captured", async () => {
+  const boot = mintBrokerBootState();
+  const instanceId = randomUUID();
+  const tuple = makeTuple(boot, instanceId);
+  sanitizeZCodeRuntimeEnv({
+    PAYSWAP_BROKER_SOCKET: tuple.socket,
+    PAYSWAP_BROKER_TOKEN: tuple.token,
+    PAYSWAP_BROKER_INSTANCE_ID: tuple.instanceId,
+    PAYSWAP_BROKER_HOST_ID: tuple.hostId,
+    PAYSWAP_BROKER_VERIFY_KEY: tuple.verifyKeyBase64,
+  });
+  const root = await mkdtemp(join(tmpdir(), "payswap-host-launch-"));
+  const marker = join(root, "imported.marker");
+  const serverPath = join(root, "server.mjs");
+  await writeFile(
+    serverPath,
+    [
+      "import { writeFileSync } from 'node:fs';",
+      `export async function main() { writeFileSync(${JSON.stringify(marker)}, "imported"); }`,
+    ].join("\n"),
+  );
+  const previous = process.env[ZCODE_PLUGIN_ID_ENV_KEY];
+  process.env[ZCODE_PLUGIN_ID_ENV_KEY] = PAYSWAP_OFFICIAL_PLUGIN_ID;
+  try {
+    const exitCode = await runPluginHostCommand(
+      { argv: [], stderr: createCapturedStream(), stdin: {} as NodeJS.ReadStream, stdout: createCapturedStream() } as never,
+      [serverPath],
+    );
+    assert.equal(exitCode, 0);
+    assert.equal(await fileExists(marker), true);
+  } finally {
+    if (previous === undefined) delete process.env[ZCODE_PLUGIN_ID_ENV_KEY];
+    else process.env[ZCODE_PLUGIN_ID_ENV_KEY] = previous;
+    resetCapturedPayswapBrokerCredentialsForTest();
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+test("runPluginHostCommand wiring: no captured tuple → the gate does not block any host (CUA precedent early return)", async () => {
+  resetCapturedPayswapBrokerCredentialsForTest();
+  const root = await mkdtemp(join(tmpdir(), "payswap-host-launch-"));
+  const marker = join(root, "imported.marker");
+  const serverPath = join(root, "server.mjs");
+  await writeFile(
+    serverPath,
+    [
+      "import { writeFileSync } from 'node:fs';",
+      `export async function main() { writeFileSync(${JSON.stringify(marker)}, "imported"); }`,
+    ].join("\n"),
+  );
+  const previous = process.env[ZCODE_PLUGIN_ID_ENV_KEY];
+  process.env[ZCODE_PLUGIN_ID_ENV_KEY] = "attacker-plugin@evil-marketplace";
+  try {
+    // 无 PaySwap 凭据 → 断言不适用（不得阻塞非 PaySwap 宿主启动）。
+    const exitCode = await runPluginHostCommand(
+      { argv: [], stderr: createCapturedStream(), stdin: {} as NodeJS.ReadStream, stdout: createCapturedStream() } as never,
+      [serverPath],
+    );
+    assert.equal(exitCode, 0);
+    assert.equal(await fileExists(marker), true);
+  } finally {
+    if (previous === undefined) delete process.env[ZCODE_PLUGIN_ID_ENV_KEY];
+    else process.env[ZCODE_PLUGIN_ID_ENV_KEY] = previous;
+    await rm(root, { force: true, recursive: true });
+  }
+});
+
+function createCapturedStream(): { write(chunk: string | Uint8Array): void; output(): string } {
+  let buffer = "";
+  return {
+    write(chunk: string | Uint8Array): void {
+      buffer += typeof chunk === "string" ? chunk : Buffer.from(chunk).toString("utf8");
+    },
+    output(): string {
+      return buffer;
+    },
+  };
+}
+
+async function fileExists(path: string): Promise<boolean> {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}

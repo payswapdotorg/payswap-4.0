@@ -105,6 +105,10 @@ import {
   type NodeReplBrowserBroker,
 } from "./node-repl-browser-broker.js";
 import { resolveBuiltInNodeReplMcpServers } from "./built-in-node-repl.js";
+import {
+  createPayswapBrokerCoordinator,
+  type PayswapBrokerCoordinator,
+} from "../payswap-broker/index.js";
 import { resolveZCodeCustomCommandPrompt } from "../custom-command-prompt.js";
 import { resolveZCodeBuiltinPromptCommandInvocation } from "../builtin-prompt-command.js";
 import { BUILTIN_WORKFLOW_COMMAND_NAME } from "../builtin-workflow-command.js";
@@ -220,6 +224,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
   });
   let nodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
   let ownedNodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
+  let ownedPayswapBroker: PayswapBrokerCoordinator | undefined;
   let providerModelRuntime: ApiProviderModelRuntime | undefined;
   try {
     const storageRoot = resolvePath(configResult.config.storage.dir);
@@ -325,6 +330,34 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         ),
       };
     }
+
+    // PaySwap broker 接线（契约 w2-01 §4.2，Step 4）：受信官方 PaySwap server 存在时
+    // lazy boot + per-workspace 稳定五键注入（注入在 sanitize 基座之后落在 config.env，
+    // §4.3(2) 顺序由 createTransport 的 buildMcpStdioEnv-then-spread 保证）；插件禁用
+    // → 无受信名 → 不 boot、不注入（Wave 1 fail-closed 无凭据路径照旧）。
+    const payswapBroker =
+      options.payswapBroker ??
+      (ownedPayswapBroker = createPayswapBrokerCoordinator({
+        env: options.env,
+        workingDirectory,
+      }));
+    const payswapWorkspaceKey =
+      options.runtimeConfig?.memory?.workspaceIdentity?.trim() || workingDirectory;
+    configuredMcpServers = await payswapBroker.injectBrokerCredentials(
+      configuredMcpServers,
+      pluginOutcome.mcpServers,
+      { workspaceKey: payswapWorkspaceKey },
+    );
+    if (runtimeConfig.mcp?.servers) {
+      runtimeConfig.mcp = {
+        ...runtimeConfig.mcp,
+        servers: await payswapBroker.injectBrokerCredentials(
+          runtimeConfig.mcp.servers,
+          pluginOutcome.mcpServers,
+          { workspaceKey: payswapWorkspaceKey },
+        ),
+      };
+    }
     startupTimer.mark("ZCode runtime configuration resolved", {
       context: runtimeConfigLogContext(runtimeConfig, workingDirectory),
       event: "bootstrap.app.startup.runtime_config.completed",
@@ -426,6 +459,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
             clientVersion: appVersion,
             env: options.env,
             logger,
+            stdioProcessObserver: payswapBroker.processObserver,
             network: {
               httpProxy: configResult.config.network.httpProxy,
               noProxy: configResult.config.network.noProxy,
@@ -1088,6 +1122,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       closeNodeReplBrowserBroker: async () => {
         await ownedNodeReplBrowserBroker?.close();
       },
+      closePayswapBroker: async () => {
+        await ownedPayswapBroker?.close();
+      },
       ownsSessionStore,
       prepareUserExecutionBoundary,
       prepareResume,
@@ -1518,6 +1555,7 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
     providerModelRuntime?.dispose();
     void modelTelemetry.shutdown().catch(() => undefined);
     void ownedNodeReplBrowserBroker?.close();
+    void ownedPayswapBroker?.close();
     startupTimer.fail("ZCode app startup failed", error, {
       context: { sessionId, workingDirectory },
       event: "bootstrap.app.startup.failed",

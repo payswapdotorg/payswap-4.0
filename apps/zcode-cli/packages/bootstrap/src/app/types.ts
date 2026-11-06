@@ -107,6 +107,7 @@ import type { ModelProviderSourceTitle } from "../model-config.js";
 import type { ZCodeInstalledPluginData } from "../plugins.js";
 import type { SessionTranscriptMessage } from "../session-transcript.js";
 import type { NodeReplBrowserBroker } from "./node-repl-browser-broker.js";
+import type { PayswapBrokerCoordinator } from "../payswap-broker/index.js";
 import type { ProviderRegistryModelSource } from "./provider-registry-model-runtime.js";
 import type { WorkspaceHookReviewCommandResult } from "./workspace-hook-review-controller.js";
 export type { ZCodeModelOption } from "@zcode/shared";
@@ -192,6 +193,12 @@ export interface ZCodeAppOptions {
   browserControlPort?: BrowserControlPort;
   /** 可由协议宿主注入的进程级 node_repl Browser broker；缺省时 app 自建并拥有。 */
   nodeReplBrowserBroker?: NodeReplBrowserBroker;
+  /**
+   * 可由协议宿主注入的进程级 PaySwap broker 协调器（lazy boot + 受信五键注入 + 实例
+   * 注册/tombstone）；缺省时 app 自建并拥有（CLI 单 app 进程）。插件禁用时协调器不
+   * boot —— 无受信名即无注入（契约 w2-01 §4.2）。
+   */
+  payswapBroker?: PayswapBrokerCoordinator;
   fileSystemPort?: FileSystemPort;
   httpClientPort?: HttpClientPort;
   imageProcessorPort?: ImageProcessorPort;

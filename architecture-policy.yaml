@@ -1215,6 +1215,7 @@ modules:
     managed: true
     requires:
       - shared-payswap
+      - zcode-cli
     publicEntrypoints:
       - apps/zcode-cli/packages/bootstrap/src/payswap-broker/index.ts
       - apps/zcode-cli/packages/bootstrap/src/payswap-broker/contract.ts

@@ -402,3 +402,83 @@ off-by-one; `R ⊆ (W, W+G]` by the accept test).
 **Boundary restated:** this acceptance authorizes the broker contract and
 its Steps 2–7 implementation only. No Stripe, Paystack, PayPal, live
 account data, or money movement is authorized by it.
+
+---
+
+## ADR-7 — Step 4 dispatch shape, per-workspace stable minting, and the wiring halves (Step 4)
+
+**Status:** accepted (as-built, P1.4 Step 4) · **Date:** 2026-11-06 · **Owner:** TL
+
+### D7.1 — The closed dispatch table IS the per-op schema record (N21)
+
+The §7.2 "closed enum → handler map in code" is implemented as the literal
+`PAYSWAP_OPERATION_PARAMS_SCHEMAS` record (op → `.strict()` schema, 1:1 with the
+Wave 1 tool surface). No registration surface exists; `op` outside the record is
+`operation_not_found` at dispatch (the belt behind the §6.1 schema enum's
+suspenders). A separate handler-map abstraction was rejected: the schemas record
+already *is* the table, and Wave-2 semantics (three-code law for every op) live
+in one resolver — per-op handlers would be six copies of the same law.
+
+### D7.2 — Tombstone-reason split at §5.5 step (4) (D5.6 as-built, incl. a caught bug)
+
+exit/superseded tombstones refuse `instance_unknown` (null-bound) exactly as
+Step 3 did; the `disabled` reason flows through to dispatch and answers the
+request-attributed business refusal `financial_mode_disabled` **without
+consulting the live reader** — the registry revocation is authoritative
+(§10.2(2)). The adversarial row caught the first implementation checking
+`lookup.entry.childPid` on tombstoned lookups (type-level unreachable at
+runtime: tombstoned results carry no `entry`), which silently degraded the
+disabled arm back to `instance_unknown`; the childPid consistency belt now runs
+only for live entries, and the disabled arm's pid ownership is guaranteed by the
+spawn table (pid-keyed, registerInstance-written) plus the claim-match check.
+
+### D7.3 — Post-binding refusals are request-attributed (§6.4(3) boundary)
+
+Pre-binding violations (§6.1 schema: unknown key / op beyond the enum / token
+shape / seq / sessionId / trace shape) stay null-bound. Per-op params
+violations and dispatch-level `internal_error` (a throwing live reader) happen
+**after** binding — the envelope binds the verified instanceId/seq/op/digest.
+Null-binding those would discard verified attribution for free; the tests pin
+both shapes distinctly.
+
+### D7.4 — Per-(server, workspace) stable minting; pending mints are reusable
+
+The coordinator mints one tuple per (trusted server, workspaceKey) and reuses
+it while the mint is pending (config injected, spawn not yet observed) or the
+instance is live — the connection pool keys entries by
+`stableStringify(config)` (pool.ts connectionKey), so per-prepare re-minting
+would fragment pool entries and double-spawn. The first implementation required
+registry liveness for reuse, which re-minted between the app-startup and
+settings-surface resolutions (spawn not yet observed → pool fragmentation) —
+the adversarial stability row caught it; reuse now requires "not known dead".
+Exit observation and disable revocation invalidate the mint (fresh instanceId
+on the next prepare, append-only §10.1).
+
+### D7.5 — Boot failure degrades fail-safe, not fail-shut
+
+A broker boot failure (endpoint occupied etc.) logs via `onWiringError` and
+returns the servers **un-injected**: the child then runs the Wave 1
+fail-closed no-credential path (env-snapshot refusals) instead of blocking the
+spawn. Rejected: failing the spawn — a broker-less child is safe (nothing
+crosses the bridge), and startup resilience wins. The three-code law's
+`financial_mode_disabled` reachability is preserved by the registry-driven
+revocation path independent of this degradation.
+
+### D7.6 — The launch assertion's child-side half is context-only, by structure
+
+`runPluginHostCommand` now gates the captured tuple on the trusted official
+plugin context (before import — credentials never load into untrusted code).
+The F2 currency checks (hostId/instanceId/socket vs the current boot) are
+structurally host/broker-side: the child holds no registry or boot state to
+check against, and §5.5 (token/instance/socket vs the live registry) is the
+enforcement point that matters. The full assertion remains the reference
+implementation for host-side use; the wired gate is its extracted first check.
+
+### D7.7 — Reader defaults and failure classes
+
+No live reader → every op answers `not_connected` (S2): all three codes are
+refusals, and "no account exists" is unconditionally true in Wave 2 (§13). A
+throwing reader → `internal_error` (typed, no detail leaked): it is an
+unexpected host-side failure, not a business state. Production wiring always
+provides the config-reading reader; the default exists for module-level use
+and is documented as such.
