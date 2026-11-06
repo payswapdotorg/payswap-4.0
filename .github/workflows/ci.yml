@@ -75,3 +75,4 @@ jobs:
           tests/bundled-plugins-resilience.test.ts
           tests/payswap-launch-path.test.ts
           tests/payswap-host-launch.test.ts
+          tests/payswap-broker-credentials.test.ts
