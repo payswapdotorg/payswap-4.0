@@ -17,8 +17,9 @@
  *    pre-binding 拒绝一律 null-bound；null-bound 信封永不满足子进程绑定（F1）。
  * 2. requestDigest 的字节区间唯一定义在 §6.4(2)：精确请求行、不含结尾换行（F4）。
  * 3. 五键凭据组 all-or-nothing（§4.4(1)）：部分出现/形状非法 → 快照清空，半组永不启动。
- * 4. 重放缺口 G = 64 是冻结的 v1 协议常量（§9.4/ADR-2）—— 本模块不含重放引擎（Step 6），
- *    但任何后续实现不得引入可配置 surface。
+ * 4. 重放缺口 G = 64 是冻结的 v1 协议常量（§9.4/ADR-2）—— 常量与两侧引擎
+ *    （broker seen-record 引擎 §9.3、child 发送边界分配器 §9.3(5)）自 Step 6 起以
+ *    replay.ts 落在本模块（共享单一实现纪律），但**不引入任何可配置 surface**。
  * 5. 每个验签失败原因机器可读且互不相同（`PayswapBrokerResponseRejectionReason`）。
  *
  * 幂等/持久化：本模块全部为内存态、无 IO 副作用（node:crypto 系统原语除外）；注册表

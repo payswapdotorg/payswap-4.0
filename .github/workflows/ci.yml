@@ -80,3 +80,4 @@ jobs:
           tests/payswap-broker-dispatch.test.ts
           tests/payswap-broker-spawn-wiring.test.ts
           tests/payswap-broker-session-scope.test.ts
+          tests/payswap-broker-replay.test.ts

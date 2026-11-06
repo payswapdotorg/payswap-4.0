@@ -21,6 +21,7 @@ import {
   createPayswapInstanceRegistry,
   type PayswapBrokerBootState,
   type PayswapInstanceRegistry,
+  type PayswapSeenRecords,
 } from "@zcode/shared/payswap";
 import {
   createDefaultPeerCredentialReader,
@@ -62,6 +63,11 @@ export interface PayswapBrokerBootOptions {
   sessionScopeResolver?: PayswapSessionScopeResolver;
   /** §8.3 实体工作区 resolver（Step 5；Wave 2 生产不接线，§13）。 */
   entityWorkspaceResolver?: PayswapEntityWorkspaceResolver;
+  /**
+   * §9 seen-record 引擎（Step 6，ADR-9）：缺省 = server 内部新建；测试/集成注入共享
+   * 实例做状态内省（内存界行）。dedupe scope = broker 实例（§9.2）。
+   */
+  seenRecords?: PayswapSeenRecords;
 }
 
 export interface PayswapBrokerProbeResult {
@@ -177,6 +183,7 @@ export async function bootPayswapBroker(options: PayswapBrokerBootOptions): Prom
     liveStateReader: options.liveStateReader,
     sessionScopeResolver: options.sessionScopeResolver,
     entityWorkspaceResolver: options.entityWorkspaceResolver,
+    seenRecords: options.seenRecords,
   });
   await listening;
   return handle;

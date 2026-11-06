@@ -584,3 +584,130 @@ op/peerPid). The session hint and the resolved workspace value are **not**
 logged — ids are not credential material, but the typed code suffices and
 hint logging would leak call patterns (§11(2)'s spirit; the least-log row
 asserts the serialized audit contains neither).
+
+## ADR-9 — Step 6 replay engine: shared-module placement, the intra-request order, and the audit shape (§9)
+
+**Status:** accepted (as-built, P1.6 Step 6) · **Date:** 2026-11-06 · **Owner:** TL
+
+**Context.** §12.1's binding order makes the Step 6 PR land the
+watermark/retained-set engine with the frozen `G`, allocation/recovery,
+retirement declarations, and all replay arms (N33/N34/N35/N39, the 64/65
+boundary rows, the memory-bound row, the cancellation/connection-failure
+rows). The contract fixes the algorithm and the frozen constant but leaves
+four as-built decisions to this ADR: where the engine lives, the order of a
+carrier's own accept verdict versus its retirement processing, the
+classification rule for retirement entries, and the audit/observability
+shape.
+
+### D9.1 — The carrier's own accept verdict is decided against the pre-retirement watermark; retirement resolves after the verdict, on every exit path past step (4)
+
+§9.3(6) rev 2a requires retirement processing to be independent of the
+carrier's own fate, but does not pin the intra-request order of "the
+carrier's accept test" versus "the carrier's retirement resolution". This
+implementation decides the carrier's verdict FIRST — the duplicate and gap
+tests see exactly the `W`/`R` state the request arrived into — and resolves
+the carrier's retirements AFTER the verdict, before any response is
+written. Two reasons, both normative-adjacent: (a) the mandatory
+wedge-recovery row ("retirement-carrying requests that **individually fail
+the gap test** until the watermark clears") requires a carrier's own
+declaration not to rescue its own gap verdict — otherwise a wedge of depth
+`G+1` would self-clear on the first carrier and the row's failing carriers
+would never exist; (b) the rev-2a narrative describes the bug as "every
+subsequent carrier fails the gap test, no retirement is ever processed" —
+the fix processes the retirement of failing carriers; it does not redefine
+the carrier's admissibility. The resolution runs on **every** exit path a
+step-(1)–(4)-passing carrier can take: the three §8 refusals
+(`session_unresolvable`, entity-resolver `internal_error`,
+`workspace_mismatch`), the two §9 refusals (`sequence_duplicate`,
+`sequence_gap_exceeded`), and the accepted→dispatch path. Step-(1)–(4)
+refusals never reach it — an unverified or unbound peer's declarations are
+not transport bookkeeping from a trusted child and are dropped with the
+request.
+
+### D9.2 — Retirement classification is judged against the running maximum of all prior array entries; effects are per-entry, machine-readable, and audit-logged
+
+Per entry `e` of `retiredSeqs`: `e ≥ carrierSeq`, a non-positive/non-integer
+`e`, an in-array duplicate, or any `e ≤` the maximum of the previously seen
+entries (valid or not) is `ignored_nonsensical` — the array must be strictly
+increasing as a whole, so a violating entry is judged against its strongest
+predecessor; `e ≤ W` or `e ∈ R` is `ignored_already_accepted` (the child
+cannot know `W`/`R`; tolerance is required and at-most-once is untouched);
+everything else (`W < e < carrierSeq`, never accepted) is `resolved_missing`
+(idempotent re-mark). Classification is closed, mutually exclusive, and
+carried per entry into the audit log. Schema-level shape violations
+(`> 8` entries, non-positive/non-integer elements) stay `request_invalid`
+pre-binding per §6.1(4) — the schema is the shape gate, the engine is the
+semantic gate.
+
+### D9.3 — The engine and the allocator live in the shared protocol module; injection rides the boot-options surface
+
+`packages/shared/src/payswap/replay.ts` is the single implementation of both
+sides: the broker-side seen-record engine (§9.3(1)–(4)/(6), §9.4) and the
+child-side send-boundary allocator (§9.3(5)). Placement follows §9.4(1)
+(`G` lives once in the shared protocol module, exported and referenced by
+both sides) and the §6.4(5) single-implementation discipline that
+`shared/payswap/contract.ts` already records for canonicalization and
+envelopes — two replay implementations drifting is the same class of
+violation. Both halves are synchronous pure in-memory state (no IO), so the
+shared module's no-IO invariant holds. The broker wires the engine through
+a `seenRecords` boot option (default: internally created; injection exists
+for state introspection — the §9.4(3) memory-bound row asserts `|R| ≤ G`
+after every flood step through the injected reference), exactly the
+`liveStateReader`/`sessionScopeResolver` injection-surface pattern of
+Steps 4–5. N35's atomicity is by construction: the accept verdict, the `R`
+insertion, and the watermark advance are one synchronous step — Node's event
+loop has no interleaving window even with the async §8 resolver ahead of the
+check, and two concurrent same-seq connections deterministically produce
+one dispatch and one `sequence_duplicate`.
+
+### D9.4 — The accepted-for-dispatch boundary is the dedupe step; §8 refusals never burn sequences, dispatch refusals always do
+
+§9.3(1)'s "accepted for dispatch" boundary is the §5.5 step-(5) accept test
+itself: a request refused at §8 (step 4.5) was never accepted, so its `seq`
+is unmarked and the child may re-send the same logical request or retire it
+(D8.1, pinned by an explicit row). A request that passes the accept test
+burns its `seq` regardless of the dispatch outcome — a three-code business
+refusal, a per-op params `request_invalid`, and a success are all
+"dispatched" for replay purposes ("regardless of the original request's
+eventual outcome"). The disable-revocation arm (D5.6) passes the boundary
+like any other: its residual NEW calls answer `financial_mode_disabled`,
+and a replay from a disabled instance answers `sequence_duplicate` — the
+residual-call reachability row and the replay rows compose rather than
+collide.
+
+### D9.5 — Memory bound: `R ⊆ (W, W+G]` structurally, with a belt invariant; the resolved-missing set grows only by explicit declaration
+
+`R` is bounded by `G` structurally (a seq beyond `W+G` is refused before it
+can enter `R`, and `W` never regresses), asserted by a belt check that
+throws `PayswapReplayInvariantError` (surfacing as `internal_error`, no
+detail leaked) if the implementation ever violates it. The resolved-missing
+set `M` has no contractual `G` bound — §9.3(6) admits entries anywhere in
+`(W, carrierSeq)` — but it grows only through explicit child declarations at
+≤ 8 entries per request: linear in request count, the same order as the
+audit log, with no single-request amplification (the gap bound already
+denies the cheap skip-ahead). ADR-2's rejection of time-based gap collection
+stands: hole closure is child-declared, monotone, and never time-dependent.
+
+### D9.6 — Audit: a `retired` outcome carries each entry's effect; replay refusals ride the existing refused shape
+
+The §11 ingress audit gains one outcome value, `retired`, emitted once per
+declared entry with `code` = the D9.2 effect, `seq` = the declared entry
+(not the carrier), plus instanceId/peerPid. `sequence_duplicate` and
+`sequence_gap_exceeded` refusals ride the existing `refused` outcome with
+their typed codes — no stack traces, no token, no endpoint path, unchanged
+from §11(2). The zero-dispatch assertions in the suite read the audit's
+dispatched count directly (§9.5's "nothing is dispatched" is proven, not
+assumed).
+
+### D9.7 — The child-side bridge transport lands with Step 7; Step 6 lands the allocation discipline
+
+§12.1's Step 6 list (engine, frozen `G`, allocation/recovery, retirement
+declarations, replay arms) is fully landed here; the register's "the
+child-side bridge client lands with it" refers to the Steps 6–7 pair as a
+unit. The transport shell (UDS connect, line write, response verification
+wiring, retry loop over the allocator) lands with Step 7, where the complete
+chain — real plugin build → broker → financial service stub — runs through
+the production host launch path and needs exactly that client. Step 6
+proves the discipline it will ride: the allocator rows (send-boundary only,
+uncertain-delivery retention, provable-non-delivery dual arm, abandonment,
+never-reuse) and both broker-integration delivery-situation rows.

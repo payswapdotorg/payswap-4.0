@@ -18,7 +18,9 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
   错误、被拒响应字段永不外露（§6.5(3)）。
 - 注册表 append/tombstone-only，tombstone 原因一次性设定（§10.2，F13）；未知 id 不产生
   状态（§10.1）。
-- G = 64 为冻结协议常量（§9.4/ADR-2）；本模块不含重放引擎（Step 6 落地）。
+- G = 64 为冻结协议常量（§9.4/ADR-2）；重放两侧引擎自 Step 6 起以 `replay.ts` 落在
+  本模块（broker seen-record 引擎 §9.3 + child 发送边界分配器 §9.3(5)，ADR-9 D9.3）——
+  共享单一实现纪律（与 canonical-json/envelope 同源），无任何可配置 surface。
 - per-op params schema 与 Wave 1 工具面 1:1（§6.1(3)/§7.1，deliverable 05 §9）：
   `.strict()`，无第七操作；`authorizationId` 不是 Wave 1 已知键 —— §7.4 的 dormant
   grant hook 只存在于 dispatch 层预留设计（schema 层即拒，Step 7 断言其不到达 grant 逻辑）。
