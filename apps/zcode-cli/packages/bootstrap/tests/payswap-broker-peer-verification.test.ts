@@ -294,26 +294,45 @@ describe.skipIf(process.platform !== "linux")("P1.3 Step 3 — Linux peer verifi
   it(
     "boots peer-verified: the self-probe establishes identity through a real loopback pair before the listener binds (ADR-4)",
     async () => {
-      const probeStart = Date.now();
+      // pre-boot 快照：本断言只裁决"本 boot 的自探针不留残骸"。vitest 并行 worker 的
+      // 其它套件（dispatch/session-scope/replay/spawn-wiring…）同用 /tmp 做自己的
+      // 自探针 —— 旧的 mtime 滤网会把**在飞探针**（创建于本测试 probeStart 之后、
+      // 尚未走完自己 finally 清理的其它 worker 目录）误判为残骸（PR #11 的 gates
+      // 偶发红即此竞态，非 boot 清理缺陷 —— boot.ts 的 finally 尽力而为清理对每个
+      // 自身探针都成立）。改为集合语义：采样窗口内轮询，直到当前目录集回到
+      // pre-boot 快照（自身与并行 worker 的探针都是短命自清的）。
+      const probeDirsBefore = new Set(
+        fs
+          .readdirSync(os.tmpdir())
+          .filter((name) => name.startsWith("payswap-broker-probe-")),
+      );
       const { handle } = await startBroker();
       expect(handle.mode).toBe("peer_verified");
       expect(handle.probe.verified).toBe(true);
       // 自探针对端就是 host 自身：pid/uid 都必须是本进程的。
       expect(handle.probe.pid).toBe(process.pid);
       expect(handle.probe.uid).toBe(process.geteuid());
-      // 自探针的临时目录必须清理干净（不留 probe 残骸）。
-      const leftovers = fs
+      // 自探针的临时目录必须清理干净（不留 probe 残骸）—— pre-boot 快照之外的同前缀
+      // 目录（含本 boot 自己的）最终全部消失；并行 worker 的在飞探针在窗口内自清。
+      const deadline = Date.now() + 3_000;
+      let settled = false;
+      while (Date.now() < deadline) {
+        const current = fs
+          .readdirSync(os.tmpdir())
+          .filter((name) => name.startsWith("payswap-broker-probe-"));
+        if (current.every((name) => probeDirsBefore.has(name))) {
+          settled = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 50));
+      }
+      const stragglers = fs
         .readdirSync(os.tmpdir())
-        .filter((name) => name.startsWith("payswap-broker-probe-"))
-        .map((name) => path.join(os.tmpdir(), name))
-        .filter((probePath) => {
-          try {
-            return fs.statSync(probePath).mtimeMs >= probeStart - 5;
-          } catch {
-            return false;
-          }
-        });
-      expect(leftovers).toEqual([]);
+        .filter((name) => name.startsWith("payswap-broker-probe-") && !probeDirsBefore.has(name));
+      expect(
+        settled,
+        `probe temp dirs beyond the pre-boot snapshot must settle to empty within the window; stragglers: ${stragglers.join(", ")}`,
+      ).toBe(true);
     },
     20000,
   );
