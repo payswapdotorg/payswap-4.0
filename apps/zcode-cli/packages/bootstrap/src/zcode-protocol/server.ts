@@ -143,6 +143,7 @@ import {
 } from "./session-resident-pool.js";
 import { createProtocolBrowserControlBroker } from "./browser-control-broker.js";
 import {
+  createPayswapSessionScopeResolver,
   createProtocolLogger,
   isErrorResponse,
   isNotification,
@@ -158,6 +159,7 @@ import {
   type ZCodeProtocolAgentServerContext,
   type ZCodeProtocolSessionRecord,
 } from "./server-types.js";
+import type { PayswapSessionScopeResolver } from "../payswap-broker/index.js";
 import { createInMemorySessionEventStore } from "@zcode/contracts";
 
 export type { ZCodeProtocolAgentDependencies, ZCodeProtocolSessionRecord };
@@ -275,6 +277,16 @@ export class ZCodeProtocolAgentServer {
 
   get officialMcpAuthRequestContext(): Pick<ZCodeProtocolAgentServerContext, "requestClient"> {
     return this.context;
+  }
+
+  /**
+   * PaySwap §8.1 会话 resolver 的窄端口（契约 w2-01 §8；Step 5）：requireSession 模式
+   * （readiness + 记录直查 → 会话的权威工作区绑定），协议宿主入口构造 server 后经
+   * `coordinator.bindSessionScopeResolver` 绑进进程级 PaySwap broker。只暴露解析闭包，
+   * 不外泄整个 context（officialMcpAuthRequestContext 同款窄端口纪律）。
+   */
+  get payswapSessionScopeResolver(): PayswapSessionScopeResolver {
+    return createPayswapSessionScopeResolver(this.context);
   }
 
   private messageSink?: (message: ZCodeProtocolOutboundMessage) => void;

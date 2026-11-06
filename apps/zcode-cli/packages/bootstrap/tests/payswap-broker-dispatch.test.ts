@@ -219,6 +219,10 @@ async function startBroker(
   const handle = await bootPayswapBroker({
     bootState,
     auditSink: (event) => audit.push(event),
+    // P1.5 Step 5（§8）起 live 实例请求须经会话解析才能到达三码法则 —— 本套件的行
+    // 一直都以 "sess-test" 为合法 hint（= 注册条目的 sessionScope），缺省 resolver 把
+    // 它解析进 scope；显式 undefined 可退回 fail-closed 臂（session-scope 套件覆盖）。
+    sessionScopeResolver: (hint) => (hint === "sess-test" ? { workspaceKey: "sess-test" } : null),
     ...overrides,
   });
   activeBrokers.push(handle);
@@ -645,6 +649,9 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker dispatch i
         bootState,
         auditSink: (event) => audit.push(event),
         liveStateReader: () => ({ pluginEnabled: false, financialWorkspace: false }),
+        // P1.5 Step 5（§8）：本行直呼 boot（不经 startBroker 缺省）—— live 实例的
+        // dispatched 审计行需要可解析会话（"sess-test" = 注册条目的 sessionScope）。
+        sessionScopeResolver: (hint) => (hint === "sess-test" ? { workspaceKey: "sess-test" } : null),
       });
       activeBrokers.push(handle);
       const entry = mintEntry();

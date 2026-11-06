@@ -1,6 +1,6 @@
 /**
- * PaySwap broker server —— UDS 线路协议宿主（契约 w2-01 §3、§4.5、§5.5、§6.3、§10、§11；
- * ADR-5/ADR-6）。host 侧专用：listener、accept 检查序、签名响应、生命周期。
+ * PaySwap broker server —— UDS 线路协议宿主（契约 w2-01 §3、§4.5、§5.5、§6.3、§8、§10、
+ * §11；ADR-5/ADR-6/ADR-8）。host 侧专用：listener、accept 检查序、签名响应、生命周期。
  *
  * 检查序（§5.5，normative，不可重排）：
  *   (1) 对等验证（§5.1 —— uid 等值 + pid ∈ host spawn 表；impostor 在**任何载荷字节被
@@ -10,9 +10,12 @@
  *       （§4.5，比对对象是**对端 pid 映射的实例**的 token，不是线上 claim 的）→
  *       (4) 实例/注册表绑定（§5.2(3)：claim 被核对，永不被采纳；tombstone 原因分裂：
  *       exit/superseded → instance_unknown；disabled → D5.6 流通到 dispatch）→
- *       (5) 重放检查（Step 6，未落地）→ (6) dispatch（Step 4：§7 闭集六操作表 +
- *       §7.3 三码法则 live 读；per-op params 违例与 reader 故障为绑定后拒绝，
- *       request-attributed）。
+ *       (4.5) §8 会话解析 + 工作区隔离（Step 5，ADR-8：live 实例经注入 resolver 权威
+ *       下游解析 sessionId hint，判定字段 = 注册条目 sessionScope；实体引用对照
+ *       workspace；disable 撤销臂绕过 —— 无 resolver 即 fail-closed
+ *       session_unresolvable，§8.1 resolved-not-asserted）→ (5) 重放检查（Step 6，
+ *       未落地）→ (6) dispatch（Step 4：§7 闭集六操作表 + §7.3 三码法则 live 读；
+ *       per-op params 违例与 reader 故障为绑定后拒绝，request-attributed）。
  *
  * fail-closed 纪律：
  * - degraded_refusing（§5.4）：socket 照常绑定（诊断可达），每个请求 peer gate 即拒
@@ -51,6 +54,11 @@ import {
   type PayswapInstanceBinding,
   type PayswapLiveStateReader,
 } from "./dispatch.js";
+import {
+  isSessionWithinBindingScope,
+  type PayswapEntityWorkspaceResolver,
+  type PayswapSessionScopeResolver,
+} from "./session-scope.js";
 
 /** 审计 ingress 事件（§11 —— Wave 2 形状：结构化本地审计，P7 ledger 的前芽）。 */
 export interface PayswapBrokerAuditEvent {
@@ -97,6 +105,19 @@ export interface PayswapBrokerServerOptions {
   auditSink: (event: PayswapBrokerAuditEvent) => void;
   /** §7.3 live 状态 reader（Step 4；缺省 → S2 not_connected，见 dispatch.ts）。 */
   liveStateReader?: PayswapLiveStateReader;
+  /**
+   * §8.1 会话 resolver（Step 5，ADR-8 D8.2）：live 实例请求的 sessionId hint 经此权威
+   * 下游解析。**缺省 = fail-closed**（无 resolver → 一切 live 请求 session_unresolvable
+   * —— 会话被解析而非被声明；与 liveStateReader 的宽松缺省不同：会话是每次 dispatch
+   * 的解析根，未解析的请求不得触及业务层）。disable 撤销臂不经此（D5.6 绕过）。
+   */
+  sessionScopeResolver?: PayswapSessionScopeResolver;
+  /**
+   * §8.3 实体工作区 resolver（Step 5）：params 命名实体的归属工作区；null = 未命名/未知
+   * （落到三码法则）。Wave 2 生产不接线（无实体存储，§13）；端口与法则由注入行证明，
+   * P2 接线。抽错 → internal_error（D7.7 同款分类）。
+   */
+  entityWorkspaceResolver?: PayswapEntityWorkspaceResolver;
 }
 
 // §6.1 `.strict()` 请求 schema（Step 4）—— 未知键/op 越枚举/token 形状/seq/sessionId
@@ -136,6 +157,8 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
     closeGraceMs,
     auditSink,
     liveStateReader,
+    sessionScopeResolver,
+    entityWorkspaceResolver,
   } = options;
   const endpointPath = bootState.endpointPath;
   const endpointDir = path.dirname(endpointPath);
@@ -492,12 +515,76 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
         return;
       }
 
+      // (4.5) §8 会话解析 + 工作区隔离（Step 5，ADR-8）：live 实例专有 —— disable 撤销臂
+      // 绕过（D5.6：注册表撤销是权威，被撤销实例无会话/实体 oracle，residual 调用答
+      // financial_mode_disabled）。两拒绝都是**绑定后**的 request-attributed 桥接错误
+      // （§6.3）—— 会话/实体失败先于三码法则（§7.3 是业务答案，预设解析成功）。
+      // `lookup.status === "live"` ≡ `instanceBinding === "live"`（disabled 臂在上方
+      // tombstoned 分支内改写并直落至此；exit/superseded 与 disabled 不匹配臂已 return）。
+      const opValue = op as PayswapBrokerOp;
+      if (lookup.status === "live") {
+        // §8.1/§8.2 会话解析：hint 经 resolver 权威解析后须落在注册条目的 sessionScope
+        // 内（hint 只能收窄永不放宽；判定字段是 sessionScope，不是 workspace）。无
+        // resolver = fail-closed（无法权威解析即拒绝 —— 绝不从载荷采纳会话身份）。
+        let resolvedSession = null as Awaited<ReturnType<PayswapSessionScopeResolver>>;
+        if (sessionScopeResolver !== undefined) {
+          try {
+            resolvedSession = await sessionScopeResolver(request.sessionId);
+          } catch {
+            // requireSession 模式的 typed 失败即"不可解析"（域答案）；无细节外泄。
+            resolvedSession = null;
+          }
+        }
+        if (
+          resolvedSession === null ||
+          !isSessionWithinBindingScope({ sessionScope: lookup.entry.sessionScope }, resolvedSession)
+        ) {
+          await respondRequestAttributedError(socket, "session_unresolvable", false, {
+            peerPid: verifiedPid,
+            instanceId: mapped.instanceId,
+            seq,
+            op: opValue,
+            line,
+          });
+          return;
+        }
+        // §8.3 实体隔离：params 命名实体归属工作区 ≠ 注册条目 workspace → mismatch。
+        // resolver 缺席 = 无实体存储（Wave 2 生产形状，§13）—— 空真通过。
+        if (entityWorkspaceResolver !== undefined) {
+          let entityWorkspace: string | null;
+          try {
+            entityWorkspace = await entityWorkspaceResolver(opValue, request.params);
+          } catch {
+            // 未预期的 host 侧失败：typed internal_error，无细节外泄（D7.7 同款）。
+            await respondRequestAttributedError(socket, "internal_error", false, {
+              peerPid: verifiedPid,
+              instanceId: mapped.instanceId,
+              seq,
+              op: opValue,
+              line,
+            });
+            return;
+          }
+          if (entityWorkspace !== null && entityWorkspace !== lookup.entry.workspace) {
+            await respondRequestAttributedError(socket, "workspace_mismatch", false, {
+              peerPid: verifiedPid,
+              instanceId: mapped.instanceId,
+              seq,
+              op: opValue,
+              line,
+            });
+            return;
+          }
+        }
+      }
+
       // (5) 重放检查 —— Step 6（§9），本步未落地（§12.1 顺序约束：水标引擎后行）。
+      // §8 拒绝（步 4.5）不经此处 —— §9.3(1) 的 accepted-for-dispatch 边界在 dedupe，
+      // pre-dispatch 拒绝不烧序列（ADR-8 D8.1）。
 
       // (6) dispatch（§7 闭集六操作表 + §7.3 三码法则，Step 4）。per-op params 违例与
       // reader 故障是**绑定后**的桥接拒绝：request-attributed（绑定字段齐全，§6.4(3)
       // 只对 pre-binding 拒绝要求 null-bound）。
-      const opValue = op as PayswapBrokerOp;
       const outcome = await dispatch.resolveRequest(
         { instanceId: mapped.instanceId, seq, op: opValue, params: request.params },
         { instanceBinding },

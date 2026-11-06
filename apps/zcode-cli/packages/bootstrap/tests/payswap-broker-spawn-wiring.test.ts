@@ -273,7 +273,13 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker spawn wiri
   it(
     "processObserver.onStarted registers the minted instance; the child's request then answers the three-code law end-to-end (§4.1/§10.1/§7.3)",
     async () => {
-      const coordinator = createPayswapBrokerCoordinator({ liveStateReader: liveStateOptedIn });
+      // P1.5 Step 5（§8）：闭环行带上会话 resolver —— "sess-test" 解析进注入 scope
+      // "ws-test"（= 注册条目的 sessionScope）。disable 撤销臂行（下行）刻意**不**带
+      // resolver：钉住 D5.6 绕过 §8（被撤销实例无会话 oracle）。
+      const coordinator = createPayswapBrokerCoordinator({
+        liveStateReader: liveStateOptedIn,
+        sessionScopeResolver: (hint) => (hint === "sess-test" ? { workspaceKey: "ws-test" } : null),
+      });
       activeCoordinators.push(coordinator);
       const injected = await injectWith(coordinator);
       const config = injected["plugin:payswap:gateway"];

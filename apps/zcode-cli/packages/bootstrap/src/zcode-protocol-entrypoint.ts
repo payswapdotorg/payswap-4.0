@@ -370,6 +370,13 @@ export async function runZCodeProtocolAgent(
       version: options.version,
     }));
     officialMcpAuthContext = server.officialMcpAuthRequestContext;
+    // PaySwap §8.1 会话 resolver 延迟绑定（契约 w2-01 §8；Step 5，ADR-8 D8.6）：server
+    // 构造晚于协调器 —— 在此把 requireSession 模式的窄端口绑进进程级 broker。解析发生在
+    // 每次请求（facade 现读槽位），lazy boot 尚未发生也安全；未绑定的窗口内一切 live
+    // 请求 fail-closed session_unresolvable（§8.1 resolved-not-asserted）。
+    if (configResult.config.features.mcp !== false) {
+      payswapBrokerCoordinator.bindSessionScopeResolver(server.payswapSessionScopeResolver);
+    }
     elicitationServer = server;
     if (configResult.config.features.mcp !== false) {
       nodeReplBrowserBroker = createNodeReplBrowserBroker({

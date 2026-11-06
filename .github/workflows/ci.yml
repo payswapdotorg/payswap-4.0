@@ -79,3 +79,4 @@ jobs:
           tests/payswap-broker-peer-verification.test.ts
           tests/payswap-broker-dispatch.test.ts
           tests/payswap-broker-spawn-wiring.test.ts
+          tests/payswap-broker-session-scope.test.ts

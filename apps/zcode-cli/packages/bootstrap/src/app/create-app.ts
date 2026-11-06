@@ -107,6 +107,7 @@ import {
 import { resolveBuiltInNodeReplMcpServers } from "./built-in-node-repl.js";
 import {
   createPayswapBrokerCoordinator,
+  createSingleSessionScopeResolver,
   type PayswapBrokerCoordinator,
 } from "../payswap-broker/index.js";
 import { resolveZCodeCustomCommandPrompt } from "../custom-command-prompt.js";
@@ -331,18 +332,23 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
       };
     }
 
-    // PaySwap broker 接线（契约 w2-01 §4.2，Step 4）：受信官方 PaySwap server 存在时
+    // PaySwap broker 接线（契约 w2-01 §4.2 + §8；Step 4/5）：受信官方 PaySwap server 存在时
     // lazy boot + per-workspace 稳定五键注入（注入在 sanitize 基座之后落在 config.env，
     // §4.3(2) 顺序由 createTransport 的 buildMcpStdioEnv-then-spread 保证）；插件禁用
     // → 无受信名 → 不 boot、不注入（Wave 1 fail-closed 无凭据路径照旧）。
+    // §8.1 会话 resolver（Step 5，ADR-8 D8.6）：自有协调器 = app 面单会话 —— 本 app 的
+    // sessionId（上方 179 行已定，永存在）解析进本注入 scope；其它 hint fail-closed。
+    // 协议宿主面不用此初值（options.payswapBroker 已由入口绑定 requireSession 多会话
+    // resolver，此处不覆盖）。
+    const payswapWorkspaceKey =
+      options.runtimeConfig?.memory?.workspaceIdentity?.trim() || workingDirectory;
     const payswapBroker =
       options.payswapBroker ??
       (ownedPayswapBroker = createPayswapBrokerCoordinator({
         env: options.env,
         workingDirectory,
+        sessionScopeResolver: createSingleSessionScopeResolver(sessionId, payswapWorkspaceKey),
       }));
-    const payswapWorkspaceKey =
-      options.runtimeConfig?.memory?.workspaceIdentity?.trim() || workingDirectory;
     configuredMcpServers = await payswapBroker.injectBrokerCredentials(
       configuredMcpServers,
       pluginOutcome.mcpServers,

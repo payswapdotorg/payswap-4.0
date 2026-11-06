@@ -31,7 +31,7 @@ import {
   type ZCodeSessionPersistence,
   type ZCodeWorkspaceRef,
 } from "@zcode/shared";
-import type { PayswapBrokerCoordinator } from "../payswap-broker/index.js";
+import type { PayswapBrokerCoordinator, PayswapSessionScopeResolver } from "../payswap-broker/index.js";
 import type { ZCodeApp, ZCodeAppOptions } from "../app/types.js";
 import type { V4InteractionRegistry } from "../zcode-protocol-v4/interaction-registry.js";
 import type { ConversationV4Gateway } from "../zcode-protocol-v4/v4-gateway.js";
@@ -368,6 +368,25 @@ export function requireSession(
     );
   }
   return record;
+}
+
+/**
+ * PaySwap §8.1 会话 resolver（契约 w2-01 §8；Step 5，ADR-8 D8.6）：requireSession 模式
+ * （readiness 先行 + 记录直查）的 §8 端口形状 —— 解析结果只携带会话的权威工作区绑定
+ * （ZCodeWorkspaceRef.workspaceKey），不外泄整个 record；不可解析（runtime 未就绪 / 记录
+ * 缺失）一律 null（fail-closed，broker 侧 session_unresolvable）。协议宿主面的
+ * `ZCodeProtocolAgentServer.payswapSessionScopeResolver` getter 委托本工厂。
+ */
+export function createPayswapSessionScopeResolver(
+  context: Pick<ZCodeProtocolAgentServerContext, "sessions" | "sessionLifecycle">,
+): PayswapSessionScopeResolver {
+  return (sessionIdHint) => {
+    if (context.sessionLifecycle && !context.sessionLifecycle.isReady(sessionIdHint)) {
+      return null;
+    }
+    const record = context.sessions.get(sessionIdHint);
+    return record ? { workspaceKey: record.workspace.workspaceKey } : null;
+  };
 }
 
 export function createProtocolLogger(deps: ZCodeProtocolAgentDependencies): Logger | undefined {
