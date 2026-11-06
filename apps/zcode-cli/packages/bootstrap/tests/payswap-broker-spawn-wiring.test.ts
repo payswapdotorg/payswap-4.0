@@ -17,7 +17,7 @@ import {
   createPayswapBrokerCoordinator,
   readPayswapLiveStateFromConfig,
   type PayswapBrokerCoordinator,
-} from "../src/payswap-broker-spawn-wiring.js";
+} from "../src/payswap-broker/index.js";
 
 /**
  * PaySwap P1.4 Step 4 —— 实弹 spawn 链接线的对抗性测试（契约 w2-01 §4.2、§7.3、§10；
@@ -42,19 +42,23 @@ const net = require("node:net");
 const path = process.env.PB_TEST_PATH;
 const lineArg = process.env.PB_TEST_LINE || "";
 function send(o) { process.stdout.write(JSON.stringify(o) + "\\n"); }
-const s = net.connect(path, () => {
-  send({ t: "connected" });
-  s.write(lineArg + "\\n");
-});
-let acc = "";
-s.on("data", (d) => {
+// 生产链路：host 的 MCP connect-success 观察注册先于子进程首个 broker 请求（工具调用）。
+// 测试模拟该顺序：延迟连接，留出 onStarted 注册窗口。
+const connect = () => {
+  const s = net.connect(path, () => {
+    send({ t: "connected" });
+    s.write(lineArg + "\\n");
+  });
+  let acc = "";
+  s.on("data", (d) => {
   acc += d.toString("utf8");
   let i;
   while ((i = acc.indexOf("\\n")) >= 0) { send({ t: "response", line: acc.slice(0, i) }); acc = acc.slice(i + 1); }
 });
-s.on("close", () => { send({ t: "close" }); process.exit(0); });
-s.on("error", (e) => { send({ t: "error", code: e.code }); process.exit(0); });
-setTimeout(() => process.exit(0), 20000);
+  s.on("close", () => { send({ t: "close" }); process.exit(0); });
+  s.on("error", (e) => { send({ t: "error", code: e.code }); process.exit(0); });
+};
+setTimeout(connect, Number(process.env.PB_TEST_CONNECT_DELAY_MS || 0));
 `;
 
 interface ChildEvent {
@@ -66,7 +70,12 @@ interface ChildEvent {
 function spawnClientChild(options: { path: string; line: string; onPid: (pid: number) => void }): void {
   const child = spawn(process.execPath, ["-e", CHILD_SCRIPT], {
     stdio: ["ignore", "pipe", "pipe"],
-    env: { PATH: process.env.PATH, PB_TEST_PATH: options.path, PB_TEST_LINE: options.line },
+    env: {
+      PATH: process.env.PATH,
+      PB_TEST_PATH: options.path,
+      PB_TEST_LINE: options.line,
+      PB_TEST_CONNECT_DELAY_MS: "300",
+    },
   });
   options.onPid(child.pid ?? -1);
   let buffer = "";
@@ -376,14 +385,8 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker spawn wiri
       const configA = injectedA["plugin:payswap:gateway"];
       const tupleA = tupleOf(configA) as { instanceId: string; token: string; hostId: string; verifyKeyBase64: string };
       const tupleB = tupleOf(injectedB["plugin:payswap:gateway"]) as { instanceId: string };
-      coordinator.processObserver.onStarted("plugin:payswap:gateway", configA, 5252);
-      coordinator.processObserver.onStarted("plugin:payswap:gateway", injectedB["plugin:payswap:gateway"], 5353);
-      expect(registry.listLive().length).toBe(2);
-      // 用户禁用插件 → §10.2(2) 撤销全部 live 实例。
-      const revoked = coordinator.revokeForDisable();
-      expect(new Set(revoked)).toEqual(new Set([tupleA.instanceId, tupleB.instanceId]));
-      expect(registry.listLive().length).toBe(0);
-      // 残留调用（子进程还活着）：request-attributed financial_mode_disabled。
+      // ws-b 用第二个真实子进程 pid（ws-a 的 pid 来自下面的残留调用子进程）。
+      let residualPid = -1;
       const handle = coordinator.handle as PayswapBrokerHandle;
       const line = JSON.stringify({
         instanceId: tupleA.instanceId,
@@ -394,7 +397,16 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker spawn wiri
         sessionId: "sess-test",
       });
       const responsePromise = nextResponse();
-      spawnClientChild({ path: handle.endpointPath, line, onPid: () => {} });
+      spawnClientChild({ path: handle.endpointPath, line, onPid: (pid) => (residualPid = pid) });
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      coordinator.processObserver.onStarted("plugin:payswap:gateway", configA, residualPid);
+      coordinator.processObserver.onStarted("plugin:payswap:gateway", injectedB["plugin:payswap:gateway"], 5353);
+      expect(registry.listLive().length).toBe(2);
+      // 用户禁用插件 → §10.2(2) 撤销全部 live 实例（残留子进程仍活着 —— 模拟）。
+      const revoked = coordinator.revokeForDisable();
+      expect(new Set(revoked)).toEqual(new Set([tupleA.instanceId, tupleB.instanceId]));
+      expect(registry.listLive().length).toBe(0);
+      // 残留调用：request-attributed financial_mode_disabled（子进程延迟连接已在注册之后）。
       const responseLine = await responsePromise;
       const verdict = verifyResponseEnvelope(
         responseLine,

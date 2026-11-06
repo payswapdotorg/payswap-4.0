@@ -107,6 +107,7 @@ interface SessionResourceCloseInput {
   closeExecution?: () => Promise<void> | void;
   closeMcp?: () => Promise<void> | void;
   closeNodeReplBrowserBroker?: () => Promise<void> | void;
+  closePayswapBroker?: () => Promise<void> | void;
   closeSessionStore?: () => void;
   logger: Logger;
 }
@@ -120,6 +121,7 @@ interface CreateSessionFacadeDeps {
   closeDynamicWorkflowRuns?: () => Promise<void>;
   closeScriptWorkflowRuns?: () => Promise<void>;
   closeNodeReplBrowserBroker?: () => Promise<void> | undefined;
+  closePayswapBroker?: () => Promise<void> | undefined;
   configResult: ConfigResult;
   configuredMcpServers: Record<string, McpServerConfig>;
   configuredDefaultModelSelection?: ModelSelection;
@@ -313,6 +315,7 @@ export function createSessionFacade(deps: CreateSessionFacadeDeps): SessionFacad
                 : undefined,
             closeMcp: deps.ownsMcpPort && deps.mcpPort ? () => deps.mcpPort?.close() : undefined,
             closeNodeReplBrowserBroker: deps.closeNodeReplBrowserBroker,
+            closePayswapBroker: deps.closePayswapBroker,
             closeSessionStore: closableSessionStore
               ? () => closableSessionStore.close()
               : undefined,
@@ -822,6 +825,7 @@ export async function closeSessionResources(input: SessionResourceCloseInput): P
     ["execution", input.closeExecution],
     ["mcp", input.closeMcp],
     ["node_repl_browser_broker", input.closeNodeReplBrowserBroker],
+    ["payswap_broker", input.closePayswapBroker],
   ];
 
   // 独立资源并行释放；外部超时不能让仍在收尾的借用者碰到已关闭的 store。

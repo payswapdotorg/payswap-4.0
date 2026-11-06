@@ -55,16 +55,42 @@ function send(o) { process.stdout.write(JSON.stringify(o) + "\\n"); }
 const s = net.connect(path, () => {
   send({ t: "connected" });
   if (mode === "line") s.write(lineArg + "\\n");
-  else if (mode === "two-requests") { s.write(lineArg + "\\n"); }
+  else if (mode === "two-connections") {
+    // 同一子进程的两次顺序连接（§3.3 一请求一连接；同一实例跨连接 —— T3 live-flip）。
+    s.write(lineArg + "\\n");
+  }
   // mode === "idle": 连接后什么都不写
 });
 let acc = "";
+let secondDone = false;
 s.on("data", (d) => {
   acc += d.toString("utf8");
   let i;
-  while ((i = acc.indexOf("\\n")) >= 0) { send({ t: "response", line: acc.slice(0, i) }); acc = acc.slice(i + 1); }
+  while ((i = acc.indexOf("\\n")) >= 0) {
+    send({ t: "response", line: acc.slice(0, i) });
+    acc = acc.slice(i + 1);
+    if (mode === "two-connections" && !secondDone) {
+      secondDone = true;
+      const line2 = process.env.PB_TEST_LINE_2 || "";
+      // 首响应后延迟再开第二连接：父侧的 live-flip（T3）需要先落地。
+      setTimeout(() => {
+        const s2 = net.connect(path, () => { s2.write(line2 + "\\n"); });
+        let acc2 = "";
+        s2.on("data", (d2) => {
+          acc2 += d2.toString("utf8");
+          let j;
+          while ((j = acc2.indexOf("\\n")) >= 0) { send({ t: "response", line: acc2.slice(0, j) }); acc2 = acc2.slice(j + 1); }
+        });
+        s2.on("close", () => { send({ t: "close" }); process.exit(0); });
+        s2.on("error", (e) => { send({ t: "error", code: e.code }); process.exit(0); });
+      }, 400);
+    }
+  }
 });
-s.on("close", () => { send({ t: "close" }); process.exit(0); });
+s.on("close", () => {
+  // two-connections：首连接关闭（§3.3 服务端收尾）不能退出 —— 第二连接尚未应答。
+  if (mode !== "two-connections") { send({ t: "close" }); process.exit(0); }
+});
 s.on("error", (e) => { send({ t: "error", code: e.code }); process.exit(0); });
 setTimeout(() => process.exit(0), 20000);
 `;
@@ -82,14 +108,15 @@ interface ChildHandle {
   kill(): void;
 }
 
-function spawnClientChild(options: { path: string; line: string }): ChildHandle {
+function spawnClientChild(options: { path: string; line: string; line2?: string; mode?: string }): ChildHandle {
   const child = spawn(process.execPath, ["-e", CHILD_SCRIPT], {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       PATH: process.env.PATH,
       PB_TEST_PATH: options.path,
       PB_TEST_LINE: options.line,
-      PB_TEST_MODE: "line",
+      PB_TEST_LINE_2: options.line2 ?? "",
+      PB_TEST_MODE: options.mode ?? "line",
     },
   });
   const events: ChildEvent[] = [];
@@ -231,8 +258,8 @@ function expectNullBoundRefusal(
 }
 
 /** request-attributed 业务拒绝 oracle（§7.3 三码）：验签通过，data 里是 typed refusal。 */
-function expectBusinessRefusal(line: string, expectedCode: string, entry: { instanceId: string }, sentLine: string, bootState: PayswapBrokerBootState): void {
-  const verdict = verifyResponseEnvelope(line, attemptFor(entry, sentLine), oracleMaterial(bootState));
+function expectBusinessRefusal(line: string, expectedCode: string, entry: { instanceId: string }, sentLine: string, bootState: PayswapBrokerBootState, seq = 1): void {
+  const verdict = verifyResponseEnvelope(line, attemptFor(entry, sentLine, "get_account_overview", seq), oracleMaterial(bootState));
   expect(verdict.ok).toBe(true);
   if (!verdict.ok) return;
   expect(verdict.body.ok).toBe(true);
@@ -453,18 +480,16 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker dispatch i
       const registry: PayswapInstanceRegistry = createPayswapInstanceRegistry();
       const { handle, bootState } = await startBroker({ registry, liveStateReader: () => ({ ...state }) });
       const entry = mintEntry();
-      handle.registerInstance({ ...entry, childPid: 4242 });
-      const send = async (): Promise<string> => {
-        const line = requestLine(entry, { params: {} });
-        const child = spawnClientChild({ path: handle.endpointPath, line });
-        const response = await child.waitFor((event) => event.t === "response");
-        return response.line as string;
-      };
-      expectBusinessRefusal(await send(), "not_connected", entry, requestLine(entry), bootState);
-      // flip：opt-out（S2→S1）不改注册表 —— 实例仍 live，答案变 not_opted_in。
-      state.financialWorkspace = false;
+      const line1 = requestLine(entry, { seq: 1, params: {} });
       const line2 = requestLine(entry, { seq: 2, params: {} });
-      expectBusinessRefusal(await send(), "not_opted_in", entry, line2, bootState);
+      const child = spawnClientChild({ path: handle.endpointPath, line: line1, line2, mode: "two-connections" });
+      handle.registerInstance({ ...entry, childPid: child.pid });
+      const first = await child.waitFor((event) => event.t === "response");
+      expectBusinessRefusal(first.line as string, "not_connected", entry, line1, bootState);
+      // flip：opt-out（S2→S1）不改注册表 —— 同一实例的下一次连接（新 seq）变 not_opted_in。
+      state.financialWorkspace = false;
+      const second = await child.waitFor((event) => event.t === "response" && event.line !== first.line);
+      expectBusinessRefusal(second.line as string, "not_opted_in", entry, line2, bootState, 2);
       expect(registry.lookup(entry.instanceId)).toEqual({ status: "live", entry: expect.objectContaining({ instanceId: entry.instanceId }) });
     },
     20000,
@@ -479,7 +504,8 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker dispatch i
         const entry = mintEntry();
         const line = requestLine(entry, { params: {} });
         const child = spawnClientChild({ path: handle.endpointPath, line });
-        registry.register({ ...entry, childPid: child.pid });
+        // 先经 handle 注册（spawn 表 + 注册表同批），再从注册表 tombstone（liveness 权威）。
+        handle.registerInstance({ ...entry, childPid: child.pid });
         registry.tombstone(entry.instanceId, reason);
         const response = await child.waitFor((event) => event.t === "response");
         expectNullBoundRefusal(response.line as string, "instance_unknown", bootState);
@@ -495,7 +521,7 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker dispatch i
       const entry = mintEntry();
       const line = requestLine(entry, { params: {} });
       const child = spawnClientChild({ path: handle.endpointPath, line });
-      registry.register({ ...entry, childPid: child.pid });
+      handle.registerInstance({ ...entry, childPid: child.pid });
       registry.tombstone(entry.instanceId, "disabled");
       const response = await child.waitFor((event) => event.t === "response");
       expectBusinessRefusal(response.line as string, "financial_mode_disabled", entry, line, bootState);
@@ -506,24 +532,29 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker dispatch i
   it(
     "request-envelope schema violations are null-bound request_invalid (pre-binding; §6.1 `.strict()`)",
     async () => {
+      const violationEntryPlaceholder = mintEntry();
       const { handle, bootState } = await startBroker();
-      const entry = mintEntry();
-      handle.registerInstance({ ...entry, childPid: 4242 });
       const violations: Array<{ label: string; line: string }> = [
-        { label: "unknown top-level key", line: requestLine(entry, { extra: { authorizationId: "g-1" } }) },
-        { label: "token wrong length", line: requestLine(entry, { token: "a".repeat(63) }) },
-        { label: "instanceId not a uuid", line: requestLine(entry, { extra: { instanceId: "not-a-uuid" } }) },
-        { label: "seq zero", line: requestLine(entry, { seq: 0 }) },
-        { label: "seq negative", line: requestLine(entry, { seq: -1 }) },
-        { label: "seq float", line: requestLine(entry, { seq: 1.5 }) },
-        { label: "op outside the closed table", line: requestLine(entry, { op: "ServiceChannels.call" }) },
-        { label: "op with plugin namespace prefix", line: requestLine(entry, { op: "payswap_compile_intent" }) },
-        { label: "sessionId empty", line: requestLine(entry, { sessionId: "" }) },
-        { label: "params not an object", line: requestLine(entry, { params: "nope" }) },
-        { label: "trace unknown key", line: requestLine(entry, { extra: { trace: { traceId: "t-1", bogus: 1 } } }) },
+        { label: "unknown top-level key", line: requestLine(violationEntryPlaceholder, { extra: { authorizationId: "g-1" } }) },
+        { label: "token wrong length", line: requestLine(violationEntryPlaceholder, { token: "a".repeat(63) }) },
+        { label: "instanceId not a uuid", line: requestLine(violationEntryPlaceholder, { extra: { instanceId: "not-a-uuid" } }) },
+        { label: "seq zero", line: requestLine(violationEntryPlaceholder, { seq: 0 }) },
+        { label: "seq negative", line: requestLine(violationEntryPlaceholder, { seq: -1 }) },
+        { label: "seq float", line: requestLine(violationEntryPlaceholder, { seq: 1.5 }) },
+        { label: "op outside the closed table", line: requestLine(violationEntryPlaceholder, { op: "ServiceChannels.call" }) },
+        { label: "op with plugin namespace prefix", line: requestLine(violationEntryPlaceholder, { op: "payswap_compile_intent" }) },
+        { label: "sessionId empty", line: requestLine(violationEntryPlaceholder, { sessionId: "" }) },
+        { label: "params not an object", line: requestLine(violationEntryPlaceholder, { params: "nope" }) },
+        { label: "trace unknown key", line: requestLine(violationEntryPlaceholder, { extra: { trace: { traceId: "t-1", bogus: 1 } } }) },
       ];
       for (const { label, line } of violations) {
-        const child = spawnClientChild({ path: handle.endpointPath, line });
+        // 每个子进程一个实例（§4.1：spawn 即 mint）；fresh entry → pid 进 spawn 表。
+        const violationEntry = mintEntry();
+        const violationLine = line
+          .replace(violationEntryPlaceholder.instanceId, violationEntry.instanceId)
+          .replace(violationEntryPlaceholder.token, violationEntry.token);
+        const child = spawnClientChild({ path: handle.endpointPath, line: violationLine });
+        handle.registerInstance({ ...violationEntry, childPid: child.pid });
         const response = await child.waitFor((event) => event.t === "response");
         expectNullBoundRefusal(response.line as string, "request_invalid", bootState);
         void label;
@@ -539,10 +570,10 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker dispatch i
         liveStateReader: () => ({ pluginEnabled: true, financialWorkspace: true }),
       });
       const entry = mintEntry();
-      handle.registerInstance({ ...entry, childPid: 4242 });
       // 信封 schema 通过（params 是 record），绑定完成后 per-op 校验拒绝 —— 绑定字段齐全。
       const line = requestLine(entry, { op: "get_account_overview", params: { connectionId: "c-1", extra: 1 } });
       const child = spawnClientChild({ path: handle.endpointPath, line });
+      handle.registerInstance({ ...entry, childPid: child.pid });
       const response = await child.waitFor((event) => event.t === "response");
       expectRequestAttributedError(response.line as string, "request_invalid", entry, line, bootState);
     },
@@ -574,8 +605,6 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker dispatch i
       const { handle, bootState } = await startBroker({
         liveStateReader: () => ({ pluginEnabled: true, financialWorkspace: true }),
       });
-      const entry = mintEntry();
-      handle.registerInstance({ ...entry, childPid: 4242 });
       const ops: Array<[string, unknown]> = [
         ["compile_intent", { description: "pay the electricity bill", amount: "120.50", currency: "GHS", recipient: "ECG", reference: "jan" }],
         ["check_eligibility", { intentId: "intent-9" }],
@@ -584,15 +613,16 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker dispatch i
         ["get_execution_status", { executionId: "exec-1", intentId: "intent-9" }],
         ["get_account_overview", { connectionId: "conn-1" }],
       ];
-      let seq = 0;
       for (const [op, params] of ops) {
-        seq += 1;
-        const line = requestLine(entry, { seq, op, params });
+        // 每个子进程一个实例；各操作独立行（seq=1 —— 实例内首个请求）。
+        const entry = mintEntry();
+        const line = requestLine(entry, { seq: 1, op, params });
         const child = spawnClientChild({ path: handle.endpointPath, line });
-        await child.waitFor((event) => event.t === "response");
+        handle.registerInstance({ ...entry, childPid: child.pid });
+        const response = await child.waitFor((event) => event.t === "response");
         const verdict = verifyResponseEnvelope(
-          line,
-          attemptFor(entry, line, op as never, seq),
+          response.line as string,
+          attemptFor(entry, line, op as never, 1),
           oracleMaterial(bootState),
         );
         expect(verdict.ok, `op ${op} must verify`).toBe(true);

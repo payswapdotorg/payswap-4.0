@@ -76,6 +76,14 @@ export async function listMcpServers(
     configuredMcpServers,
     pluginOutcome.mcpServers,
   );
+  // PaySwap 受信五键注入（契约 w2-01 §4.2，Step 4）：与 app 启动面同一协调器 ——
+  // per-workspace 稳定铸造让设置面与 session 工厂命中连接池的同一 entry（不重复 spawn）。
+  const configuredWithPayswap =
+    context.deps.payswapBroker !== undefined
+      ? await context.deps.payswapBroker.injectBrokerCredentials(configuredMcpServers, pluginOutcome.mcpServers, {
+          workspaceKey: params.workspace.workspaceIdentity?.trim() || params.workspace.workspacePath,
+        })
+      : configuredMcpServers;
   const authority = createWorkspaceMcpTrust({
     workingDirectory,
     workspaceIdentity: params.workspace.workspaceIdentity,
@@ -152,7 +160,7 @@ export async function listMcpServers(
     // 停掉的 HTTP MCP 会永远显示已连接（见 adapters/src/mcp/pool.ts revalidateEntry）。
     const connectPromise = mcpPort.connectConfiguredServers(
       omitMcpServers(
-        configuredMcpServers,
+        configuredWithPayswap,
         untrustedProjectMcpServers,
         trustedOfficialCuaServerNames,
       ),

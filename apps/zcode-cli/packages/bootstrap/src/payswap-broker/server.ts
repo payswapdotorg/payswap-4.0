@@ -5,10 +5,14 @@
  * 检查序（§5.5，normative，不可重排）：
  *   (1) 对等验证（§5.1 —— uid 等值 + pid ∈ host spawn 表；impostor 在**任何载荷字节被
  *       解析之前**丢弃）→ (shutting-down 检查：broker_unavailable，§6.3) → (2) 载荷解析 +
- *       1 MiB 上限（§3.3(2)）→ (3) token 时序安全比对（§4.5，比对对象是**对端 pid 映射的
- *       实例**的 token，不是线上 claim 的）→ (4) 实例/注册表绑定（§5.2(3)：claim 被核对，
- *       永不被采纳）→ (5) 重放检查（Step 6，未落地）→ (6) dispatch（Step 4；本步的临时
- *       dispatch = §7.3 S2 行的 not_connected 业务拒绝 —— Step 3 无账户模型，这是唯一真话）。
+ *       1 MiB 上限（§3.3(2)）+ §6.1 `.strict()` 请求 schema（Step 4：未知键/op 越枚举/
+ *       token 形状/seq/sessionId —— pre-binding，null-bound）→ (3) token 时序安全比对
+ *       （§4.5，比对对象是**对端 pid 映射的实例**的 token，不是线上 claim 的）→
+ *       (4) 实例/注册表绑定（§5.2(3)：claim 被核对，永不被采纳；tombstone 原因分裂：
+ *       exit/superseded → instance_unknown；disabled → D5.6 流通到 dispatch）→
+ *       (5) 重放检查（Step 6，未落地）→ (6) dispatch（Step 4：§7 闭集六操作表 +
+ *       §7.3 三码法则 live 读；per-op params 违例与 reader 故障为绑定后拒绝，
+ *       request-attributed）。
  *
  * fail-closed 纪律：
  * - degraded_refusing（§5.4）：socket 照常绑定（诊断可达），每个请求 peer gate 即拒
@@ -28,8 +32,8 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import {
-  PAYSWAP_BROKER_OPS,
   PAYSWAP_MAX_LINE_BYTES,
+  payswapBrokerRequestSchema,
   requestLineDigest,
   signResponseEnvelope,
   type PayswapBrokerBootState,
@@ -41,6 +45,12 @@ import {
 } from "@zcode/shared/payswap";
 import type { PeerCredentialReader } from "./peer-credentials.js";
 import { hostEffectiveUid } from "./peer-credentials.js";
+import {
+  createPayswapBrokerDispatch,
+  type PayswapBrokerDispatch,
+  type PayswapInstanceBinding,
+  type PayswapLiveStateReader,
+} from "./dispatch.js";
 
 /** 审计 ingress 事件（§11 —— Wave 2 形状：结构化本地审计，P7 ledger 的前芽）。 */
 export interface PayswapBrokerAuditEvent {
@@ -85,24 +95,19 @@ export interface PayswapBrokerServerOptions {
   idleTimeoutMs: number;
   closeGraceMs: number;
   auditSink: (event: PayswapBrokerAuditEvent) => void;
+  /** §7.3 live 状态 reader（Step 4；缺省 → S2 not_connected，见 dispatch.ts）。 */
+  liveStateReader?: PayswapLiveStateReader;
 }
 
-const OP_SET = new Set<string>(PAYSWAP_BROKER_OPS);
+// §6.1 `.strict()` 请求 schema（Step 4）—— 未知键/op 越枚举/token 形状/seq/sessionId
+// 的 pre-binding 拒绝全部经此（null-bound，§6.4(3)）；三码业务拒绝的单一事实源在
+// `@zcode/shared/payswap/operations.ts`（与插件契约同文的注释在那儿）。
 
 /** failPeer/refuseParsed 后的排空段封顶：半开 socket 最多再存活 5 s（防恶意无限流）。 */
 const DRAIN_CAP_MS = 5_000;
 
-// Step-3 临时 dispatch 的 not_connected 文案：与 payswap-plugin/src/contract.ts 的
-// snapshotRefusal 保持同文（bootstrap 不能 import 插件包 —— 方向相反；单一事实源注释在此）。
-const STEP3_NOT_CONNECTED_DATA = {
-  kind: "refused",
-  refusal: {
-    code: "not_connected",
-    message:
-      "PaySwap financial workspace is enabled, but no account is connected yet. " +
-      "Connect a provider account before using financial tools.",
-  },
-} as const;
+// Step-3 临时 dispatch 已随 Step 4 退役：三码业务拒绝的单一事实源现在在
+// `@zcode/shared/payswap/operations.ts`（payswapBusinessRefusal）。
 
 /** spawn 表条目：pid → {instanceId, token}（§5.2；注册表是 liveness 权威，本表是路由）。 */
 interface SpawnTableEntry {
@@ -130,10 +135,13 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
     idleTimeoutMs,
     closeGraceMs,
     auditSink,
+    liveStateReader,
   } = options;
   const endpointPath = bootState.endpointPath;
   const endpointDir = path.dirname(endpointPath);
   const privateKey = bootState.keyPair.privateKey;
+  // §7 闭集 dispatch 表（Step 4）—— per-request 调用，无共享可变状态。
+  const dispatch: PayswapBrokerDispatch = createPayswapBrokerDispatch({ liveStateReader });
 
   // §3.1(2)：per-boot 0700 目录（mkdir mode 受 umask 影响 → chmod 钉死）。
   fs.mkdirSync(endpointDir, { recursive: true, mode: 0o700 });
@@ -245,6 +253,60 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
       socket.resume();
     } catch {
       socket.destroy();
+    }
+  }
+
+  /**
+   * 绑定后拒绝（Step 4）：per-op params 违例 / dispatch 层 internal_error —— 绑定字段
+   * （instanceId/seq/op/digest）齐全且已验证，请求归属信封签名后回给对端（§6.4(3)
+   * 只对 pre-binding 拒绝要求 null-bound）。
+   */
+  async function respondRequestAttributedError(
+    socket: net.Socket,
+    code: PayswapBrokerErrorCode,
+    retryable: boolean,
+    fields: {
+      peerPid: number | null;
+      instanceId: string;
+      seq: number;
+      op: PayswapBrokerOp;
+      line: string;
+    },
+  ): Promise<void> {
+    audit("refused", {
+      code,
+      peerPid: fields.peerPid,
+      instanceId: fields.instanceId,
+      seq: fields.seq,
+      op: fields.op,
+    });
+    drainAfterEnd(socket);
+    try {
+      const signed = signResponseEnvelope(
+        {
+          instanceId: fields.instanceId,
+          seq: fields.seq,
+          op: fields.op,
+          requestDigest: requestLineDigest(fields.line),
+          response: {
+            ok: false,
+            seq: fields.seq,
+            error: { code, message: `payswap broker refusal: ${code}`, retryable },
+          },
+        },
+        privateKey,
+        bootState.hostId,
+      );
+      socket.end(`${JSON.stringify(signed)}\n`);
+      socket.resume();
+    } catch {
+      // 签名/序列化失败退到 null-bound（无细节外泄）。
+      try {
+        socket.end(signedNullBoundRefusal(code, retryable));
+        socket.resume();
+      } catch {
+        socket.destroy();
+      }
     }
   }
 
@@ -372,25 +434,18 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
         refuseParsed(socket, "request_invalid", false, { peerPid: verifiedPid });
         return;
       }
-      const request = parsed as Record<string, unknown>;
-      // §6.1 的最小形状抽取（完整 zod `.strict()` schema 属 Step 4；闭集 op 先行落地 ——
-      // envelope 绑定需要 op ∈ 六操作闭表，未知 op 在 schema 层就是 request_invalid）。
+      // §6.1 `.strict()` 请求 schema（Step 4）：未知键 / op 越枚举 / token 形状 / seq /
+      // sessionId / trace 形状 —— pre-binding 拒绝（null-bound，§6.4(3)）。
+      const parsedRequest = payswapBrokerRequestSchema.safeParse(parsed);
+      if (!parsedRequest.success) {
+        refuseParsed(socket, "request_invalid", false, { peerPid: verifiedPid });
+        return;
+      }
+      const request = parsedRequest.data;
       const claimedInstanceId = request.instanceId;
       const claimedToken = request.token;
       const seq = request.seq;
       const op = request.op;
-      if (
-        typeof claimedInstanceId !== "string" ||
-        typeof claimedToken !== "string" ||
-        typeof seq !== "number" ||
-        !Number.isInteger(seq) ||
-        seq <= 0 ||
-        typeof op !== "string" ||
-        !OP_SET.has(op)
-      ) {
-        refuseParsed(socket, "request_invalid", false, { peerPid: verifiedPid });
-        return;
-      }
 
       // (3) token 验证（§4.5）：长度检查 + 时序安全比对；比对对象 = **对端 pid 映射实例**
       // 的 token —— 跨实例 token（含偷来的 token）在此死亡（N20）。
@@ -406,33 +461,57 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
 
       // (4) 实例/注册表绑定（§5.2(3)/§10.1）：claim 被核对，永不被采纳。
       const lookup = registry.lookup(mapped.instanceId);
-      if (lookup === undefined || lookup.status !== "live") {
-        // tombstoned（任何原因）在 Step-3 桥一律 instance_unknown；§10.2(1) 的
-        // disable 臂 financial_mode_disabled 业务回答随 Step 4 的 §7.3 dispatch 升级。
+      // tombstone 原因分裂（§10.2 + ADR-5 D5.6，Step 4）：exit/superseded →
+      // instance_unknown（pid-reuse 竞态与 dead-child token 臂，§10.2(1)）；
+      // disabled → 绑定流通到 dispatch，按 financial_mode_disabled 业务拒绝回答
+      // （§7.3 row 1 —— 注册表撤销是权威，§10.2(2)）。tombstoned 查询无 entry 字段 ——
+      // childPid 一致性 belt 只对 live 条目执行；disabled 臂的 pid 归属由 spawn 表
+      // （pid → instance 路由，registerInstance 写入）+ claim 匹配共同保证。
+      let instanceBinding: PayswapInstanceBinding = "live";
+      if (lookup === undefined) {
         refuseParsed(socket, "instance_unknown", false, {
           peerPid: verifiedPid,
-          instanceId: typeof claimedInstanceId === "string" ? claimedInstanceId : null,
+          instanceId: claimedInstanceId,
         });
         return;
       }
-      if (claimedInstanceId !== mapped.instanceId || lookup.entry.childPid !== peer.pid) {
+      if (lookup.status === "tombstoned") {
+        if (lookup.reason !== "disabled" || claimedInstanceId !== mapped.instanceId) {
+          refuseParsed(socket, "instance_unknown", false, {
+            peerPid: verifiedPid,
+            instanceId: claimedInstanceId,
+          });
+          return;
+        }
+        instanceBinding = "disabled_revocation";
+      } else if (claimedInstanceId !== mapped.instanceId || lookup.entry.childPid !== peer.pid) {
         refuseParsed(socket, "instance_unknown", false, {
           peerPid: verifiedPid,
-          instanceId: typeof claimedInstanceId === "string" ? claimedInstanceId : null,
+          instanceId: claimedInstanceId,
         });
         return;
       }
 
       // (5) 重放检查 —— Step 6（§9），本步未落地（§12.1 顺序约束：水标引擎后行）。
 
-      // (6) dispatch —— Step 4（§7）未落地；Step-3 临时回答：§7.3 S2 行的 not_connected
-      // 业务拒绝（Step 3 无账户模型 —— not_connected 是唯一真话；§13：本 wave 无账户数据）。
-      const body: PayswapBrokerResponseBody = {
-        ok: true,
-        seq,
-        data: STEP3_NOT_CONNECTED_DATA,
-      };
+      // (6) dispatch（§7 闭集六操作表 + §7.3 三码法则，Step 4）。per-op params 违例与
+      // reader 故障是**绑定后**的桥接拒绝：request-attributed（绑定字段齐全，§6.4(3)
+      // 只对 pre-binding 拒绝要求 null-bound）。
       const opValue = op as PayswapBrokerOp;
+      const outcome = await dispatch.resolveRequest(
+        { instanceId: mapped.instanceId, seq, op: opValue, params: request.params },
+        { instanceBinding },
+      );
+      if (outcome.kind === "refused") {
+        await respondRequestAttributedError(socket, outcome.code, outcome.retryable, {
+          peerPid: verifiedPid,
+          instanceId: mapped.instanceId,
+          seq,
+          op: opValue,
+          line,
+        });
+        return;
+      }
       try {
         const signed = signResponseEnvelope(
           {
@@ -440,7 +519,7 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
             seq,
             op: opValue,
             requestDigest: requestLineDigest(line),
-            response: body,
+            response: outcome.body,
           },
           privateKey,
           bootState.hostId,

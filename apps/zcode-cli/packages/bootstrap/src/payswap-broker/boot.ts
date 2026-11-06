@@ -35,6 +35,7 @@ import {
   type PayswapBrokerHandle,
   type PayswapBrokerMode,
 } from "./server.js";
+import type { PayswapLiveStateReader } from "./dispatch.js";
 
 export interface PayswapBrokerBootOptions {
   /** P1.2 `mintBrokerBootState` 的产物：host id + Ed25519 钥对 + per-boot endpoint 路径。 */
@@ -51,6 +52,8 @@ export interface PayswapBrokerBootOptions {
   closeGraceMs?: number;
   /** §11 审计 ingress sink。 */
   auditSink?: (event: PayswapBrokerAuditEvent) => void;
+  /** §7.3 live 状态 reader（Step 4；缺省 → S2 not_connected，见 dispatch.ts）。 */
+  liveStateReader?: PayswapLiveStateReader;
 }
 
 export interface PayswapBrokerProbeResult {
@@ -163,6 +166,7 @@ export async function bootPayswapBroker(options: PayswapBrokerBootOptions): Prom
     idleTimeoutMs,
     closeGraceMs,
     auditSink,
+    liveStateReader: options.liveStateReader,
   });
   await listening;
   return handle;

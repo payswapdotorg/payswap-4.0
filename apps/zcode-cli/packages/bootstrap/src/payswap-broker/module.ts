@@ -5,7 +5,9 @@
  */
 export const payswapBrokerModule = {
   id: "payswap-broker",
-  requires: ["shared-payswap"],
+  // zcode-cli：宿主接线半边（spawn-wiring.ts）需要 mcp-config 的受信注入与
+  // @zcode/adapters/config 的 fresh config 读 —— cli-official-command-endpoint 先例。
+  requires: ["shared-payswap", "zcode-cli"],
   provides: ["payswap-broker"],
   publicEntrypoints: ["index.ts", "contract.ts"],
 } as const;

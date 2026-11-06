@@ -21,8 +21,9 @@
  * 幂等/持久化：全部内存态、无持久化（§10.3：重启即全新 instanceId 空间）；per-boot 目录
  * 随 close() 消亡。事件：auditSink 回调（boot / dispatched / refused / shutdown）。
  *
- * 后续（不在本步）：Step 4 的 zod `.strict()` 请求 schema 与六操作 dispatch（本步的
- * not_connected 临时回答随其升级）、Step 6 的重放引擎、P1.3b 的 Windows native helper。
+ * 后续（不在本步）：Step 6 的重放引擎（§9 水标）、Step 5 的权威 session 解析（§8）、
+ * P1.3b 的 Windows native helper（§5.3）。Step 4（请求 schema / 闭集 dispatch /
+ * 三码法则 / 宿主接线）已落地：dispatch.ts + payswap-broker/spawn-wiring.ts。
  */
 export interface PayswapBrokerContract {
   // 公共面即 index.ts 再导出的具名导出（见各文件 per-method 契约注释）；本接口保留为

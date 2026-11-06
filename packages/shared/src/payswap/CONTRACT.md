@@ -2,7 +2,8 @@
 
 PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical JSON（RFC 8785）、签名
 响应信封（Ed25519, RFC 8032）、请求行摘要（SHA-256, FIPS 180-4）、五键凭据组、per-boot
-身份铸造与 append-only 实例注册表。host 与 child 用同一份代码 —— 漂移即违约。
+身份铸造、append-only 实例注册表、六操作 per-op params schema + §6.1 请求 schema +
+三码业务拒绝（Step 4 的 `operations.ts`）。host 与 child 用同一份代码 —— 漂移即违约。
 
 ## 不变量
 
@@ -18,6 +19,11 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
 - 注册表 append/tombstone-only，tombstone 原因一次性设定（§10.2，F13）；未知 id 不产生
   状态（§10.1）。
 - G = 64 为冻结协议常量（§9.4/ADR-2）；本模块不含重放引擎（Step 6 落地）。
+- per-op params schema 与 Wave 1 工具面 1:1（§6.1(3)/§7.1，deliverable 05 §9）：
+  `.strict()`，无第七操作；`authorizationId` 不是 Wave 1 已知键 —— §7.4 的 dormant
+  grant hook 只存在于 dispatch 层预留设计（schema 层即拒，Step 7 断言其不到达 grant 逻辑）。
+- 三码业务拒绝（§7.3）的 broker 侧单一实现是 `payswapBusinessRefusal`；消息与
+  payswap-plugin 的 Wave 1 `snapshotRefusal` 同文（单一事实源注释在 operations.ts）。
 
 ## 模块交集
 

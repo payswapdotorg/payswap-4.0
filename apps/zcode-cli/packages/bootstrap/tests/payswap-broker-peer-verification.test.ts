@@ -517,7 +517,7 @@ describe.skipIf(process.platform !== "linux")("P1.3 Step 3 — Linux peer verifi
   );
 
   it(
-    "disable-tombstoned instance: the live child's residual call answers instance_unknown at the Step-3 bridge (§10.2(1); §7.3 dispatch upgrade lands with Step 4)",
+    "disable-tombstoned instance: the live child's residual call answers financial_mode_disabled (Step 4 D5.6 upgrade of the former Step-3 instance_unknown bridge; §10.2(2)/§7.3 row 1)",
     async () => {
       const registry = createPayswapInstanceRegistry();
       const { handle, bootState } = await startBroker({ registry });
@@ -533,7 +533,20 @@ describe.skipIf(process.platform !== "linux")("P1.3 Step 3 — Linux peer verifi
       handle.registerInstance({ ...entry, childPid: child.pid });
       registry.tombstone(entry.instanceId, "disabled");
       const response = await child.waitFor((event) => event.t === "response");
-      expectNullBoundRefusal(response.line as string, "instance_unknown", bootState);
+      // Step 4（ADR-5 D5.6）：disable tombstone 流通到 dispatch —— request-attributed 的
+      // financial_mode_disabled 业务拒绝（不再是 Step-3 桥的 null-bound instance_unknown）。
+      const verdict = verifyResponseEnvelope(
+        response.line as string,
+        attemptFor(entry, reqLine),
+        oracleMaterial(bootState),
+      );
+      expect(verdict.ok).toBe(true);
+      if (verdict.ok) {
+        expect(verdict.body.ok).toBe(true);
+        const data = verdict.body.data as { kind: string; refusal?: { code: string } };
+        expect(data.kind).toBe("refused");
+        expect(data.refusal?.code).toBe("financial_mode_disabled");
+      }
     },
     20000,
   );

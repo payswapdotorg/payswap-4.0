@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { ZCODE_PLUGIN_HOST_COMMAND } from "@zcode/contracts/plugins";
 import {
   getCapturedZCodeCuaBrokerCredentials,
+  readCapturedPayswapBrokerCredentials,
   ZCODE_CUA_BROKER_SOCKET_ENV_KEY,
   ZCODE_CUA_NODE_REPL_HOST_ENV_KEY,
 } from "@zcode/shared/runtime-env";
@@ -52,6 +53,11 @@ export async function runPluginHostCommand(ctx: RunContext, argv: string[]): Pro
     }
     const capturedBrokerCredentials = getCapturedZCodeCuaBrokerCredentials();
     assertCapturedBrokerLaunchIsAuthorized(capturedBrokerCredentials);
+    // PaySwap 五键组的 child 侧半边（§4.4(2) 的生产接线，Step 4）：捕获凭据只准服务
+    // 受信官方 PaySwap plugin host 上下文 —— 冒名插件在 import 之前拒绝（凭据不落入
+    // 不受信代码）。时效半边（hostId/instanceId/socket vs 当前 boot）在 host 侧铸造与
+    // broker §5.5 检查序执行 —— child 没有注册表/boot 状态，结构性不可达。
+    assertCapturedPayswapCredentialServingContext(readCapturedPayswapBrokerCredentials());
     const module = (await import(pathToFileURL(serverPath).href)) as HostedPluginModule;
     if (typeof module.main !== "function") {
       throw new Error("Plugin server does not export main().");
@@ -141,13 +147,7 @@ export function assertCapturedPayswapBrokerLaunchIsAuthorized(
   registry: PayswapInstanceRegistry,
 ): void {
   if (!captured) return;
-
-  const pluginId = process.env[ZCODE_PLUGIN_ID_ENV_KEY]?.trim().toLowerCase();
-  if (pluginId !== PAYSWAP_OFFICIAL_PLUGIN_ID) {
-    throw new PayswapBrokerLaunchAuthorizationError(
-      "Captured PaySwap broker credentials may only launch the trusted official PaySwap plugin host",
-    );
-  }
+  assertCapturedPayswapCredentialServingContext(captured);
   if (captured.hostId !== currentBootState.hostId) {
     // 时效（F2）：stale 完整组 —— host id 不属于当前 boot。
     throw new PayswapBrokerLaunchAuthorizationError(
@@ -165,6 +165,24 @@ export function assertCapturedPayswapBrokerLaunchIsAuthorized(
     // 时效（F2）：socket 不指向当前 endpoint（pre-plant / 旧 boot 残留）。
     throw new PayswapBrokerLaunchAuthorizationError(
       `Captured PaySwap broker credentials do not match the current broker endpoint socket (contract §4.4(2) rev 2a)`,
+    );
+  }
+}
+
+/**
+ * 捕获 PaySwap 凭据的上下文门（§4.4(2) 的 child 侧可执行半边；完整断言
+ * `assertCapturedPayswapBrokerLaunchIsAuthorized` 的第一个检查抽出复用）：
+ * 存在捕获凭据 + 非 PaySwap 插件上下文 → 拒绝。无捕获凭据 → 早退（不得阻塞非
+ * PaySwap 宿主，CUA 先例）。
+ */
+function assertCapturedPayswapCredentialServingContext(
+  captured: Readonly<PayswapBrokerCredentialTuple> | null | undefined,
+): void {
+  if (!captured) return;
+  const pluginId = process.env[ZCODE_PLUGIN_ID_ENV_KEY]?.trim().toLowerCase();
+  if (pluginId !== PAYSWAP_OFFICIAL_PLUGIN_ID) {
+    throw new PayswapBrokerLaunchAuthorizationError(
+      "Captured PaySwap broker credentials may only launch the trusted official PaySwap plugin host",
     );
   }
 }

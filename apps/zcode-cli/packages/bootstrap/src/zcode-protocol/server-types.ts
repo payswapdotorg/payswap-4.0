@@ -31,6 +31,7 @@ import {
   type ZCodeSessionPersistence,
   type ZCodeWorkspaceRef,
 } from "@zcode/shared";
+import type { PayswapBrokerCoordinator } from "../payswap-broker/index.js";
 import type { ZCodeApp, ZCodeAppOptions } from "../app/types.js";
 import type { V4InteractionRegistry } from "../zcode-protocol-v4/interaction-registry.js";
 import type { ConversationV4Gateway } from "../zcode-protocol-v4/v4-gateway.js";
@@ -54,6 +55,11 @@ export interface ZCodeProtocolAgentDependencies {
   mcpPort?: McpPort;
   /** 资源管理器：`process/childProcesses` 读取 MCP 子进程 pid 与插件归属 */
   mcpTelemetry?: Pick<McpTelemetryTracker, "listProcesses">;
+  /**
+   * 进程级 PaySwap broker 协调器（协议宿主注入）：设置面 mcp/list 的受信五键注入与
+   * 插件 disable/uninstall 的 §10.2(2) 撤销。缺席（旧嵌入/测试）→ 设置面不注入、不撤销。
+   */
+  payswapBroker?: PayswapBrokerCoordinator;
   platform?: NodeJS.Platform | string;
   /** 仅用于构造单个 CLI/app-server 的混合 resident 策略；生产默认值由 pool 定义。 */
   sessionResidentPoolOptions?: SessionResidentPoolOptions;

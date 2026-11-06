@@ -4,7 +4,9 @@
  *
  * 公共面：`bootPayswapBroker`（自探针 → peer_verified | degraded_refusing → 端点绑定）、
  * 对等凭据 reader 家族（linux ss+procfs / unavailable / 平台默认）、handle（注册表接线 +
- * spawn 表注册 + close）。host 侧专用 —— payswap-plugin（child 侧）不经此模块，child 只经
+ * spawn 表注册 + close）、闭集 dispatch（§7 六操作 + §7.3 三码法则）、宿主接线协调器
+ * （spawn-wiring.ts：lazy boot / 受信五键注入 / 进程观察 / disable 撤销）。
+ * host 侧专用 —— payswap-plugin（child 侧）不经此模块，child 只经
  * `@zcode/shared/payswap` 的 `verifyResponseEnvelope` 验签（§6.4(5) 单一实现）。
  */
 
@@ -13,6 +15,23 @@ export {
   type PayswapBrokerBootOptions,
   type PayswapBrokerProbeResult,
 } from "./boot.js";
+export {
+  createPayswapBrokerDispatch,
+  type PayswapBrokerDispatch,
+  type PayswapBrokerDispatchOptions,
+  type PayswapBrokerLiveState,
+  type PayswapDispatchRequest,
+  type PayswapDispatchResult,
+  type PayswapInstanceBinding,
+  type PayswapLiveStateReader,
+} from "./dispatch.js";
+export {
+  createPayswapBrokerCoordinator,
+  readPayswapLiveStateFromConfig,
+  type PayswapBrokerCoordinator,
+  type PayswapBrokerCoordinatorOptions,
+  type PayswapBrokerProcessObserver,
+} from "./spawn-wiring.js";
 export {
   createDefaultPeerCredentialReader,
   createLinuxPeerCredentialReader,

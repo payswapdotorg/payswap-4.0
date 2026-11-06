@@ -127,6 +127,15 @@ export interface CreateMcpAdapterOptions {
   env?: NodeJS.ProcessEnv;
   logger?: Logger;
   telemetry?: McpTelemetryTracker;
+  /**
+   * stdio 子进程生命周期观察者（host 侧 spawn 接线的通用钩子 —— 例如 PaySwap broker
+   * 实例注册/tombstone 的数据源；adapters 层保持业务无关）。onStarted 在连接成功
+   * （pid 已知）时触发；onClosed 在连接关闭（意外断连或主动回收）时触发。仅 stdio。
+   */
+  stdioProcessObserver?: {
+    onStarted(serverName: string, config: McpServerConfig, pid: number): void;
+    onClosed(serverName: string, config: McpServerConfig, pid: number): void;
+  };
   mcpOAuth?: McpOAuthRuntimeOptions;
   network?: NetworkEgressEnvPolicy;
   /**
@@ -268,6 +277,12 @@ class NodeMcpAdapter implements McpPort {
   private readonly nodeFallback?: McpNodeFallbackProvider;
   private readonly officialMcpAuth?: CreateMcpAdapterOptions["officialMcpAuth"];
   private readonly telemetry?: McpTelemetryTracker;
+  private readonly stdioProcessObserver?: CreateMcpAdapterOptions["stdioProcessObserver"];
+  /** serverName → 观察中的 stdio 进程（onStarted 记录，关闭路径消费后删除）。 */
+  private readonly stdioProcessByServer = new Map<
+    string,
+    { pid: number; config: McpServerConfig }
+  >();
   private readonly connectionGenerations = new Map<string, number>();
   private credentialStore?: SharedZCodeCredentialStore;
   /**
@@ -316,6 +331,7 @@ class NodeMcpAdapter implements McpPort {
     this.nodeFallback = options.nodeFallback;
     this.officialMcpAuth = options.officialMcpAuth;
     this.telemetry = options.telemetry;
+    this.stdioProcessObserver = options.stdioProcessObserver;
     this.workingDirectory = options.workingDirectory;
     this.elicitation = options.elicitation;
     this.notifications = options.notifications;
@@ -1638,6 +1654,11 @@ class NodeMcpAdapter implements McpPort {
       // A3：重连（同一 adapter 实例）后按登记表重放订阅；首次连接登记表为空，直接跳过。
       await this.replayResourceSubscriptions(name, client);
       const mcpTransportPid = getStdioTransportPid(transport);
+      if (mcpTransportPid != null && config.type === "stdio") {
+        // spawn 接线观察：pid 已知即通知（host 侧注册先于子进程首个业务请求）。
+        this.stdioProcessByServer.set(name, { pid: mcpTransportPid, config });
+        this.stdioProcessObserver?.onStarted(name, config, mcpTransportPid);
+      }
       const mcpProcessIdentity =
         mcpTransportPid != null && this.connectionContext
           ? this.telemetry?.recordProcessStarted({
@@ -1653,6 +1674,11 @@ class NodeMcpAdapter implements McpPort {
         const current = this.records.get(name);
         if (!current || current.client !== client) return;
         this.nextConnectionGeneration(name);
+        const observedProcess = this.stdioProcessByServer.get(name);
+        if (observedProcess && mcpTransportPid === observedProcess.pid) {
+          this.stdioProcessByServer.delete(name);
+          this.stdioProcessObserver?.onClosed(name, observedProcess.config, observedProcess.pid);
+        }
         const recentStderr = getRecentStderr?.();
         const processExit = getStdioTransportExitInfo(transport);
         current.status = this.createStatus(current.config, "disconnected", {
@@ -2169,6 +2195,11 @@ class NodeMcpAdapter implements McpPort {
   ): Promise<void> {
     const startedAt = Date.now();
     const mcpTransportPid = getStdioTransportPid(transport);
+    const observedProcess = this.stdioProcessByServer.get(name);
+    if (observedProcess && mcpTransportPid === observedProcess.pid) {
+      this.stdioProcessByServer.delete(name);
+      this.stdioProcessObserver?.onClosed(name, observedProcess.config, observedProcess.pid);
+    }
     // 主动关闭前先摘掉 connection_lost 监听，避免正常回收被误报为意外断连。
     if (client) client.onclose = undefined;
     // MCP SDK close 只保证直接 stdio 子进程退出，npx/npm wrapper 拉起的 MCP server
