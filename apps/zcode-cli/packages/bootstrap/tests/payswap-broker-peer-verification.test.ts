@@ -233,6 +233,10 @@ async function startBroker(
   const handle = await bootPayswapBroker({
     bootState,
     auditSink: (event) => audit.push(event),
+    // P1.5 Step 5（§8）：本套件唯一的 live 请求行（happy path）需要可解析会话才能到达
+    // Step-3 临时 dispatch 的 not_connected —— "sess-test" = 注册条目的 sessionScope。
+    // 其余行全部在 peer gate / schema / token 前置层拒绝（§8 不可达），不受影响。
+    sessionScopeResolver: (hint) => (hint === "sess-test" ? { workspaceKey: "sess-test" } : null),
     ...overrides,
   });
   activeBrokers.push(handle);

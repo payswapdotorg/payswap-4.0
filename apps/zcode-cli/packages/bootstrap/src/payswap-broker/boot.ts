@@ -36,6 +36,10 @@ import {
   type PayswapBrokerMode,
 } from "./server.js";
 import type { PayswapLiveStateReader } from "./dispatch.js";
+import type {
+  PayswapEntityWorkspaceResolver,
+  PayswapSessionScopeResolver,
+} from "./session-scope.js";
 
 export interface PayswapBrokerBootOptions {
   /** P1.2 `mintBrokerBootState` 的产物：host id + Ed25519 钥对 + per-boot endpoint 路径。 */
@@ -54,6 +58,10 @@ export interface PayswapBrokerBootOptions {
   auditSink?: (event: PayswapBrokerAuditEvent) => void;
   /** §7.3 live 状态 reader（Step 4；缺省 → S2 not_connected，见 dispatch.ts）。 */
   liveStateReader?: PayswapLiveStateReader;
+  /** §8.1 会话 resolver（Step 5；缺省 → fail-closed session_unresolvable，见 server.ts）。 */
+  sessionScopeResolver?: PayswapSessionScopeResolver;
+  /** §8.3 实体工作区 resolver（Step 5；Wave 2 生产不接线，§13）。 */
+  entityWorkspaceResolver?: PayswapEntityWorkspaceResolver;
 }
 
 export interface PayswapBrokerProbeResult {
@@ -167,6 +175,8 @@ export async function bootPayswapBroker(options: PayswapBrokerBootOptions): Prom
     closeGraceMs,
     auditSink,
     liveStateReader: options.liveStateReader,
+    sessionScopeResolver: options.sessionScopeResolver,
+    entityWorkspaceResolver: options.entityWorkspaceResolver,
   });
   await listening;
   return handle;

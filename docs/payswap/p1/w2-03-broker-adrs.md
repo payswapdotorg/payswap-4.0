@@ -482,3 +482,105 @@ throwing reader → `internal_error` (typed, no detail leaked): it is an
 unexpected host-side failure, not a business state. Production wiring always
 provides the config-reading reader; the default exists for module-level use
 and is documented as such.
+
+## ADR-8 — Step 5 session resolution, workspace isolation, and the wiring ports (§8)
+
+**Status:** accepted (as-built, P1.5 Step 5) · **Date:** 2026-11-06 · **Owner:** TL
+
+### D8.1 — §8 executes between §5.5 steps (4) and (5); pre-dispatch refusals do not burn sequences
+
+The §8 stage (session-scope re-resolution + entity isolation) sits after the
+instance/registry binding (step 4) and before the reserved replay slot (step
+5, Step 6). Two reasons, both structural: (a) addendum §3.5 item 5 makes the
+session scope part of the binding triple itself — the binding completes at
+(4.5), before request-level integrity checking; (b) §9.3(1)/(4) place the
+atomic accept-and-mark boundary at the dedupe step — an §8-refused request
+was never "accepted for dispatch", so its `seq` is unmarked and the child may
+re-send the same logical request or retire it (§9.3(5)/(6)). Had §8 run after
+the dedupe, either §8 refusals would burn sequences permanently (the
+retry-killer: a transient session unavailability could never be retried at
+the same `seq`) or the marking would have to defer past §8 and N35's atomic
+one-dispatch guarantee would break under concurrent duplicates. §9.3(6)'s
+rev-2a rule already processes retirements for carriers refused past step (4)
+— consistent with §8 refusing between (4) and (5). When Step 6 lands, the
+§5.5 literal order (4)→(5)→(6) is preserved with §8 inside step (4)'s
+completion.
+
+### D8.2 — Fail-closed default: no resolver wired → every live request is `session_unresolvable`
+
+The liveStateReader's lenient default (S2 `not_connected`, D7.7) does **not**
+extend to sessions. The session is the resolution root of every dispatch
+(§8.1 "resolved, not asserted"): a broker that cannot resolve sessions must
+not serve requests as if they had resolved. This forces the production wiring
+to be real — a lenient default would let §8 wiring debt hide indefinitely,
+which is precisely the debt Step 5 exists to close. Both faces therefore wire
+resolvers (D8.6); the default remains for module-level use and is pinned by
+the fail-closed rows.
+
+### D8.3 — The disable-revoked arm bypasses §8 (D5.6 preserved)
+
+A `disabled`-tombstoned instance's residual call answers
+`financial_mode_disabled` **without** session resolution or entity checks:
+the registry revocation is authoritative, and a revoked instance gets no
+session/entity oracle (least information — the mode answer is the whole
+truth). Exit/superseded tombstones still refuse `instance_unknown` at step
+(4), ahead of §8. This preserves §12's "`financial_mode_disabled` residual
+call reachability" row (the Step 2/5 suite) through the §8 insertion.
+
+### D8.4 — Ordering within §8 and the failure classes
+
+Session resolution (§8.2) precedes the entity check (§8.3); both precede the
+three-code law (§7.3) — bridge failures precede business answers (a business
+refusal presupposes successful resolution). A session resolver returning
+null **or throwing** is `session_unresolvable`: the requireSession pattern's
+typed `sessionUnavailable` is the domain answer ("cannot resolve"), not an
+internal error — no detail leaks either way. An entity resolver **throwing**
+is `internal_error` (unexpected host-side failure — the D7.7 classification;
+entity resolution is infrastructure, not a domain answer). Unknown entity ids
+name nothing (`null` → the three-code law): §8.3 punishes only **known**
+cross-workspace references; existence questions are the business layer's.
+
+### D8.5 — The broker enforces the binding law itself; the resolver only resolves
+
+The resolver port answers "what session does this hint name, and which
+workspace does it belong to" — the §8.2 comparison
+(`resolved.workspaceKey === registration.sessionScope`) is broker-side
+(`isSessionWithinBindingScope`), never delegated: the hint-can-narrow-never-
+widen law holds even with a sloppy resolver. The check binds to the
+registration's **`sessionScope`** field, not `workspace`: Wave 3's server-side
+operator-principal model may narrow `sessionScope` below the workspace, and
+the session check narrows with it without touching the entity side (which
+compares against `workspace`). The tests pin the field choice explicitly (a
+resolved session matching the workspace but outside a narrowed sessionScope
+is refused). Key-formula dependency: both the coordinator's injection scope
+(`identity||path`, mcp.ts/create-app.ts) and the session records'
+`ZCodeWorkspaceRef.workspaceKey` use the `resolveWorkspaceKey` convention —
+a mismatch fails closed (`session_unresolvable`), never widens.
+
+### D8.6 — Production wiring: a per-request facade slot, bound per face
+
+The coordinator's boot options carry a **facade** that reads a mutable slot
+at request time (not a boot snapshot), so `bindSessionScopeResolver` works
+before and after the lazy boot — the protocol face constructs its server
+after the coordinator and binds immediately after (`ZCodeProtocolAgentServer
+.payswapSessionScopeResolver`, a narrow port in the requireSession pattern:
+readiness + record lookup → the session's `workspaceKey`, null on either
+miss; `createPayswapSessionScopeResolver` in server-types.ts). The app face
+(owned coordinator in `createZCodeApp`) binds a single-session resolver at
+construction (`createSingleSessionScopeResolver`): a standalone app has
+exactly one session — its own `sessionId`, always present (create-app.ts) —
+and every other hint is null. The unbound window (boot before binding) is
+correctly fail-closed. The settings face (mcp/list) never calls tools, so it
+needs no resolver. The entity resolver (`entityWorkspaceResolver`) is a
+constructor-only option: nothing wires it in Wave 2 (no entity store exists,
+§13); the port and the law are proven by injected rows, and P2's account
+store wires the real one.
+
+### D8.7 — Audit shape: typed codes, full attribution, no hints
+
+§8 refusals are audited like the other post-binding refusals
+(`refused` + `session_unresolvable`/`workspace_mismatch` + instanceId/seq/
+op/peerPid). The session hint and the resolved workspace value are **not**
+logged — ids are not credential material, but the typed code suffices and
+hint logging would leak call patterns (§11(2)'s spirit; the least-log row
+asserts the serialized audit contains neither).

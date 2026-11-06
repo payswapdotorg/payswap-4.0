@@ -63,21 +63,26 @@ const net = require("node:net");
 const path = process.env.PB_TEST_PATH;
 const lineArg = process.env.PB_TEST_LINE || "";
 function send(o) { process.stdout.write(JSON.stringify(o) + "\\n"); }
-const s = net.connect(path, () => {
-  send({ t: "connected" });
-  s.write(lineArg + "\\n");
-});
-let acc = "";
-s.on("data", (d) => {
-  acc += d.toString("utf8");
-  let i;
-  while ((i = acc.indexOf("\\n")) >= 0) {
-    send({ t: "response", line: acc.slice(0, i) });
-    acc = acc.slice(i + 1);
-  }
-});
-s.on("close", () => { send({ t: "close" }); process.exit(0); });
-s.on("error", (e) => { send({ t: "error", code: e.code }); process.exit(0); });
+// 生产链路：host 的观察注册先于子进程首个 broker 请求 —— 测试模拟该顺序（延迟连接，
+// 留出 onStarted 注册窗口；spawn-wiring 套件同款）。
+const connect = () => {
+  const s = net.connect(path, () => {
+    send({ t: "connected" });
+    s.write(lineArg + "\\n");
+  });
+  let acc = "";
+  s.on("data", (d) => {
+    acc += d.toString("utf8");
+    let i;
+    while ((i = acc.indexOf("\\n")) >= 0) {
+      send({ t: "response", line: acc.slice(0, i) });
+      acc = acc.slice(i + 1);
+    }
+  });
+  s.on("close", () => { send({ t: "close" }); process.exit(0); });
+  s.on("error", (e) => { send({ t: "error", code: e.code }); process.exit(0); });
+};
+setTimeout(connect, Number(process.env.PB_TEST_CONNECT_DELAY_MS || 0));
 setTimeout(() => process.exit(0), 20000);
 `;
 
@@ -94,13 +99,14 @@ interface ChildHandle {
   kill(): void;
 }
 
-function spawnClientChild(options: { path: string; line: string }): ChildHandle {
+function spawnClientChild(options: { path: string; line: string; connectDelayMs?: number }): ChildHandle {
   const child = spawn(process.execPath, ["-e", CHILD_SCRIPT], {
     stdio: ["ignore", "pipe", "pipe"],
     env: {
       PATH: process.env.PATH,
       PB_TEST_PATH: options.path,
       PB_TEST_LINE: options.line,
+      PB_TEST_CONNECT_DELAY_MS: String(options.connectDelayMs ?? 0),
     },
   });
   const events: ChildEvent[] = [];
@@ -597,8 +603,8 @@ describe.skipIf(process.platform !== "linux")("P1.5 Step 5 — coordinator §8 w
         token,
         sessionId: "sess-c1",
       });
-      const child = spawnClientChild({ path: handle.endpointPath, line });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      const child = spawnClientChild({ path: handle.endpointPath, line, connectDelayMs: 300 });
+      // pid 在 spawn 即知 —— 观察注册先行；子进程 300ms 后才连接（生产同序）。
       coordinator.processObserver.onStarted(
         "plugin:payswap:gateway",
         injected["plugin:payswap:gateway"],
@@ -639,8 +645,8 @@ describe.skipIf(process.platform !== "linux")("P1.5 Step 5 — coordinator §8 w
         token: env[PAYSWAP_BROKER_TOKEN_ENV_KEY],
         sessionId: "sess-c2",
       });
-      const child = spawnClientChild({ path: handle.endpointPath, line });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      const child = spawnClientChild({ path: handle.endpointPath, line, connectDelayMs: 300 });
+      // pid 在 spawn 即知 —— 观察注册先行；子进程 300ms 后才连接（生产同序）。
       coordinator.processObserver.onStarted("plugin:payswap:gateway", injected["plugin:payswap:gateway"], child.pid);
       const response = await child.waitFor((event) => event.t === "response");
       const verdict = verifyResponseEnvelope(
@@ -675,8 +681,8 @@ describe.skipIf(process.platform !== "linux")("P1.5 Step 5 — coordinator §8 w
         token: env[PAYSWAP_BROKER_TOKEN_ENV_KEY],
         sessionId: "sess-c3",
       });
-      const child = spawnClientChild({ path: handle.endpointPath, line });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      const child = spawnClientChild({ path: handle.endpointPath, line, connectDelayMs: 300 });
+      // pid 在 spawn 即知 —— 观察注册先行；子进程 300ms 后才连接（生产同序）。
       coordinator.processObserver.onStarted("plugin:payswap:gateway", injected["plugin:payswap:gateway"], child.pid);
       const response = await child.waitFor((event) => event.t === "response");
       const verdict = verifyResponseEnvelope(
@@ -714,8 +720,8 @@ describe.skipIf(process.platform !== "linux")("P1.5 Step 5 — coordinator §8 w
         token: env[PAYSWAP_BROKER_TOKEN_ENV_KEY],
         sessionId: "sess-rogue",
       });
-      const child = spawnClientChild({ path: handle.endpointPath, line });
-      await new Promise((resolve) => setTimeout(resolve, 50));
+      const child = spawnClientChild({ path: handle.endpointPath, line, connectDelayMs: 300 });
+      // pid 在 spawn 即知 —— 观察注册先行；子进程 300ms 后才连接（生产同序）。
       coordinator.processObserver.onStarted("plugin:payswap:gateway", injected["plugin:payswap:gateway"], child.pid);
       coordinator.revokeForDisable();
       const response = await child.waitFor((event) => event.t === "response");

@@ -1,11 +1,13 @@
 /**
- * `payswap-broker`（bootstrap 侧）—— PaySwap broker 引导与 UDS 宿主（P1.3 Step 3；
- * 契约 w2-01 §3、§5、§10、§11）。
+ * `payswap-broker`（bootstrap 侧）—— PaySwap broker 引导与 UDS 宿主（P1.3 Step 3 +
+ * P1.4 Step 4 + P1.5 Step 5；契约 w2-01 §3、§5、§7、§8、§10、§11）。
  *
  * 公共面：`bootPayswapBroker`（自探针 → peer_verified | degraded_refusing → 端点绑定）、
  * 对等凭据 reader 家族（linux ss+procfs / unavailable / 平台默认）、handle（注册表接线 +
- * spawn 表注册 + close）、闭集 dispatch（§7 六操作 + §7.3 三码法则）、宿主接线协调器
- * （spawn-wiring.ts：lazy boot / 受信五键注入 / 进程观察 / disable 撤销）。
+ * spawn 表注册 + close）、闭集 dispatch（§7 六操作 + §7.3 三码法则）、§8 会话解析与
+ * 工作区隔离的端口与法则（session-scope.ts：resolver 类型 + 判定 + app 面单会话工厂）、
+ * 宿主接线协调器（spawn-wiring.ts：lazy boot / 受信五键注入 / 进程观察 / disable 撤销 /
+ * bindSessionScopeResolver 延迟绑定）。
  * host 侧专用 —— payswap-plugin（child 侧）不经此模块，child 只经
  * `@zcode/shared/payswap` 的 `verifyResponseEnvelope` 验签（§6.4(5) 单一实现）。
  */
@@ -27,11 +29,18 @@ export {
 } from "./dispatch.js";
 export {
   createPayswapBrokerCoordinator,
+  createSingleSessionScopeResolver,
   readPayswapLiveStateFromConfig,
   type PayswapBrokerCoordinator,
   type PayswapBrokerCoordinatorOptions,
   type PayswapBrokerProcessObserver,
 } from "./spawn-wiring.js";
+export {
+  isSessionWithinBindingScope,
+  type PayswapEntityWorkspaceResolver,
+  type PayswapResolvedSessionScope,
+  type PayswapSessionScopeResolver,
+} from "./session-scope.js";
 export {
   createDefaultPeerCredentialReader,
   createLinuxPeerCredentialReader,

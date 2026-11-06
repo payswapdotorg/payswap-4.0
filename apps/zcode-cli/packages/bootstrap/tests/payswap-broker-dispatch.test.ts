@@ -649,6 +649,9 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker dispatch i
         bootState,
         auditSink: (event) => audit.push(event),
         liveStateReader: () => ({ pluginEnabled: false, financialWorkspace: false }),
+        // P1.5 Step 5（§8）：本行直呼 boot（不经 startBroker 缺省）—— live 实例的
+        // dispatched 审计行需要可解析会话（"sess-test" = 注册条目的 sessionScope）。
+        sessionScopeResolver: (hint) => (hint === "sess-test" ? { workspaceKey: "sess-test" } : null),
       });
       activeBrokers.push(handle);
       const entry = mintEntry();
