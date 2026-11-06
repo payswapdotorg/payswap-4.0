@@ -19,6 +19,7 @@
 import { z } from "zod";
 import type { PayswapBrokerOp } from "./envelope.js";
 import { PAYSWAP_BROKER_OPS } from "./envelope.js";
+import { PAYSWAP_RETIRED_SEQS_MAX } from "./replay.js";
 
 // ---------------------------------------------------------------------------
 // per-op params schema（§6.1(3)/§7.1 —— Wave 1 工具面 1:1）
@@ -86,6 +87,9 @@ export const payswapBrokerRequestSchema = z
     params: z.record(z.string(), z.unknown()),
     token: z.string().length(64),
     sessionId: z.string().trim().min(1),
+    // §6.1(4)/§9.3(6)：有界传输簿记 —— 形状违例（>8 条、非正/非整数元素）在此即拒
+    // （request_invalid，pre-binding）；语义错报（非严格递增/≥载体 seq）由引擎容忍。
+    retiredSeqs: z.array(z.number().int().positive()).max(PAYSWAP_RETIRED_SEQS_MAX).optional(),
     trace: traceSchema.optional(),
   })
   .strict();

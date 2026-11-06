@@ -1,6 +1,7 @@
 /**
- * PaySwap broker server —— UDS 线路协议宿主（契约 w2-01 §3、§4.5、§5.5、§6.3、§8、§10、
- * §11；ADR-5/ADR-6/ADR-8）。host 侧专用：listener、accept 检查序、签名响应、生命周期。
+ * PaySwap broker server —— UDS 线路协议宿主（契约 w2-01 §3、§4.5、§5.5、§6.3、§8、§9、
+ * §10、§11；ADR-5/ADR-6/ADR-8/ADR-9）。host 侧专用：listener、accept 检查序、签名响应、
+ * 生命周期。
  *
  * 检查序（§5.5，normative，不可重排）：
  *   (1) 对等验证（§5.1 —— uid 等值 + pid ∈ host spawn 表；impostor 在**任何载荷字节被
@@ -14,8 +15,11 @@
  *       下游解析 sessionId hint，判定字段 = 注册条目 sessionScope；实体引用对照
  *       workspace；disable 撤销臂绕过 —— 无 resolver 即 fail-closed
  *       session_unresolvable，§8.1 resolved-not-asserted）→ (5) 重放检查（Step 6，
- *       未落地）→ (6) dispatch（Step 4：§7 闭集六操作表 + §7.3 三码法则 live 读；
- *       per-op params 违例与 reader 故障为绑定后拒绝，request-attributed）。
+ *       ADR-9：§9 连续水标/保留集引擎 + 冻结 G=64 —— 受理边界在此（accepted-for-
+ *       dispatch），重放/缺口先于 dispatch 拒绝；退役声明按载体命运独立处理（rev 2a），
+ *       调用点在载体判定之后（D9.1）→ (6) dispatch（Step 4：§7 闭集六操作表 +
+ *       §7.3 三码法则 live 读；per-op params 违例与 reader 故障为绑定后拒绝，
+ *       request-attributed）。
  *
  * fail-closed 纪律：
  * - degraded_refusing（§5.4）：socket 照常绑定（诊断可达），每个请求 peer gate 即拒
@@ -35,6 +39,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import {
+  createPayswapSeenRecords,
   PAYSWAP_MAX_LINE_BYTES,
   payswapBrokerRequestSchema,
   requestLineDigest,
@@ -45,6 +50,7 @@ import {
   type PayswapBrokerResponseBody,
   type PayswapInstanceRegistry,
   type PayswapInstanceRegistryEntry,
+  type PayswapSeenRecords,
 } from "@zcode/shared/payswap";
 import type { PeerCredentialReader } from "./peer-credentials.js";
 import { hostEffectiveUid } from "./peer-credentials.js";
@@ -63,10 +69,11 @@ import {
 /** 审计 ingress 事件（§11 —— Wave 2 形状：结构化本地审计，P7 ledger 的前芽）。 */
 export interface PayswapBrokerAuditEvent {
   ts: number;
-  outcome: "boot" | "dispatched" | "refused" | "shutdown";
-  /** 拒绝码（typed，闭集）或 degraded 原因；dispatched 时缺省。 */
+  outcome: "boot" | "dispatched" | "refused" | "retired" | "shutdown";
+  /** 拒绝码（typed，闭集）/ degraded 原因 / 退役效果（Step 6：resolved_missing | ignored_already_accepted | ignored_nonsensical）；dispatched 时缺省。 */
   code?: string;
   instanceId: string | null;
+  /** dispatched/refused：请求 seq；retired：被声明的条目 seq（§9.3(6) 逐条带效果）。 */
   seq: number | null;
   op: string | null;
   /** §5.2 已验证的对端 pid（验证失败前为 null）。 */
@@ -118,6 +125,12 @@ export interface PayswapBrokerServerOptions {
    * P2 接线。抽错 → internal_error（D7.7 同款分类）。
    */
   entityWorkspaceResolver?: PayswapEntityWorkspaceResolver;
+  /**
+   * §9 seen-record 引擎（Step 6，ADR-9）：dedupe scope = broker 实例（host 进程金融服务
+   * 生命周期，§9.2）。缺省 = 内部新建；测试/集成可注入共享实例做状态内省（与
+   * liveStateReader/sessionScopeResolver 同一注入面纪律）。
+   */
+  seenRecords?: PayswapSeenRecords;
 }
 
 // §6.1 `.strict()` 请求 schema（Step 4）—— 未知键/op 越枚举/token 形状/seq/sessionId
@@ -159,12 +172,16 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
     liveStateReader,
     sessionScopeResolver,
     entityWorkspaceResolver,
+    seenRecords,
   } = options;
   const endpointPath = bootState.endpointPath;
   const endpointDir = path.dirname(endpointPath);
   const privateKey = bootState.keyPair.privateKey;
   // §7 闭集 dispatch 表（Step 4）—— per-request 调用，无共享可变状态。
   const dispatch: PayswapBrokerDispatch = createPayswapBrokerDispatch({ liveStateReader });
+  // §9 seen-record 引擎（Step 6，ADR-9）：per-broker 实例（连接无关，§9.2）；同步纯内存
+  // —— accept 判定+插入与退役解析各自是事件循环内不可交错的一步（§9.3(4) 原子性）。
+  const replayRecords: PayswapSeenRecords = seenRecords ?? createPayswapSeenRecords();
 
   // §3.1(2)：per-boot 0700 目录（mkdir mode 受 umask 影响 → chmod 钉死）。
   fs.mkdirSync(endpointDir, { recursive: true, mode: 0o700 });
@@ -521,6 +538,33 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
       // （§6.3）—— 会话/实体失败先于三码法则（§7.3 是业务答案，预设解析成功）。
       // `lookup.status === "live"` ≡ `instanceBinding === "live"`（disabled 臂在上方
       // tombstoned 分支内改写并直落至此；exit/superseded 与 disabled 不匹配臂已 return）。
+      //
+      // Step-6 退役解析（§9.3(6) rev 2a —— 载体命运独立）：过了步 (1)-(4) 的载体，其
+      // retiredSeqs 在**一切**后续出路（§8 拒绝 / §9 拒绝 / 受理→dispatch）上都处理 ——
+      // 退役是传输簿记，不是 dispatch。调用点在载体自身命运判定**之后**（ADR-9 D9.1：
+      // 载体的受理/缺口判定对着其退役处理前的 W，个体失败语义不被自身声明自救）。
+      const settleCarrierRetirements = (): void => {
+        const retiredSeqs = request.retiredSeqs ?? [];
+        if (retiredSeqs.length === 0) {
+          return;
+        }
+        let effects: ReturnType<PayswapSeenRecords["resolveRetirements"]>;
+        try {
+          effects = replayRecords.resolveRetirements(mapped.instanceId, retiredSeqs, seq);
+        } catch {
+          // 引擎不变量违反（实现缺陷）：internal_error 语义，无细节外泄；效果丢弃。
+          return;
+        }
+        for (const effect of effects) {
+          // §9.3(6)/§11：退役条目逐条带效果入审计。
+          audit("retired", {
+            code: effect.effect,
+            instanceId: mapped.instanceId,
+            seq: effect.seq,
+            peerPid: verifiedPid,
+          });
+        }
+      };
       const opValue = op as PayswapBrokerOp;
       if (lookup.status === "live") {
         // §8.1/§8.2 会话解析：hint 经 resolver 权威解析后须落在注册条目的 sessionScope
@@ -539,6 +583,9 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
           resolvedSession === null ||
           !isSessionWithinBindingScope({ sessionScope: lookup.entry.sessionScope }, resolvedSession)
         ) {
+          // D8.1：§8 拒绝不烧序列（先于步 (5)，未达 accepted-for-dispatch 边界）；
+          // rev 2a：其退役声明仍处理。
+          settleCarrierRetirements();
           await respondRequestAttributedError(socket, "session_unresolvable", false, {
             peerPid: verifiedPid,
             instanceId: mapped.instanceId,
@@ -555,7 +602,8 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
           try {
             entityWorkspace = await entityWorkspaceResolver(opValue, request.params);
           } catch {
-            // 未预期的 host 侧失败：typed internal_error，无细节外泄（D7.7 同款）。
+            // 未预期的 host 侧失败：typed internal_error，无细节外泄（D7.7 同款）；rev 2a 退役仍处理。
+            settleCarrierRetirements();
             await respondRequestAttributedError(socket, "internal_error", false, {
               peerPid: verifiedPid,
               instanceId: mapped.instanceId,
@@ -566,6 +614,8 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
             return;
           }
           if (entityWorkspace !== null && entityWorkspace !== lookup.entry.workspace) {
+            // D8.1 同款：pre-dispatch 拒绝不烧序列；rev 2a 退役仍处理。
+            settleCarrierRetirements();
             await respondRequestAttributedError(socket, "workspace_mismatch", false, {
               peerPid: verifiedPid,
               instanceId: mapped.instanceId,
@@ -578,9 +628,36 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
         }
       }
 
-      // (5) 重放检查 —— Step 6（§9），本步未落地（§12.1 顺序约束：水标引擎后行）。
-      // §8 拒绝（步 4.5）不经此处 —— §9.3(1) 的 accepted-for-dispatch 边界在 dedupe，
-      // pre-dispatch 拒绝不烧序列（ADR-8 D8.1）。
+      // (5) 重放检查（§9，Step 6，ADR-9）：dedupe scope = broker 实例（连接无关，§9.2）；
+      // 受理边界在此（accepted-for-dispatch，§9.3(1)）—— 过界即入 R，与后续 dispatch 结局
+      // 无关（三码业务拒绝也烧序列）；§8 拒绝（步 4.5）在界前，不烧（D8.1）。disable
+      // 撤销臂同过本界（D5.6 残留调用照常消耗 seq —— 重放是重放）。判定与插入同一步
+      // （同步纯内存，§9.3(4) 原子）；退役解析在判定之后（D9.1），与载体结局无关（rev 2a）。
+      const replayVerdict = replayRecords.accept(mapped.instanceId, seq);
+      settleCarrierRetirements();
+      if (replayVerdict.kind === "sequence_duplicate") {
+        // §9.3(1)/§9.5：重放先于 dispatch 拒绝（N33/N34/N35/N39）—— 零再 dispatch。
+        await respondRequestAttributedError(socket, "sequence_duplicate", false, {
+          peerPid: verifiedPid,
+          instanceId: mapped.instanceId,
+          seq,
+          op: opValue,
+          line,
+        });
+        return;
+      }
+      if (replayVerdict.kind === "sequence_gap_exceeded") {
+        // §9.4：seq > W + G（冻结 G=64）—— retryable（§6.3：补缺后可重试；楔死恢复经
+        // 退役声明，本拒绝不烧 seq 且其退役已处理）。
+        await respondRequestAttributedError(socket, "sequence_gap_exceeded", true, {
+          peerPid: verifiedPid,
+          instanceId: mapped.instanceId,
+          seq,
+          op: opValue,
+          line,
+        });
+        return;
+      }
 
       // (6) dispatch（§7 闭集六操作表 + §7.3 三码法则，Step 4）。per-op params 违例与
       // reader 故障是**绑定后**的桥接拒绝：request-attributed（绑定字段齐全，§6.4(3)
