@@ -77,3 +77,5 @@ jobs:
           tests/payswap-host-launch.test.ts
           tests/payswap-broker-credentials.test.ts
           tests/payswap-broker-peer-verification.test.ts
+          tests/payswap-broker-dispatch.test.ts
+          tests/payswap-broker-spawn-wiring.test.ts
