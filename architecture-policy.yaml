@@ -1208,6 +1208,19 @@ modules:
     layers:
       app: .
     owner: plugin
+  # payswap-broker：由 architecture:adopt 登记
+  - id: payswap-broker
+    roots:
+      - apps/zcode-cli/packages/bootstrap/src/payswap-broker
+    managed: true
+    requires:
+      - shared-payswap
+    publicEntrypoints:
+      - apps/zcode-cli/packages/bootstrap/src/payswap-broker/index.ts
+      - apps/zcode-cli/packages/bootstrap/src/payswap-broker/contract.ts
+    layers:
+      app: .
+    owner: plugin
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
