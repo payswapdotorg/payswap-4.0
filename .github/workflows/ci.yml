@@ -76,3 +76,4 @@ jobs:
           tests/payswap-launch-path.test.ts
           tests/payswap-host-launch.test.ts
           tests/payswap-broker-credentials.test.ts
+          tests/payswap-broker-peer-verification.test.ts
