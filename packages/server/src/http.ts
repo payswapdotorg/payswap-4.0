@@ -44,6 +44,12 @@ import {
   type SourceServerWorkspaceIdentityMapper,
 } from "@zcode/services/node";
 import { createHostCapabilityStore } from "./hostCapability.js";
+import {
+  installPayswapOperatorAuth,
+  PAYSWAP_FINANCIAL_ACTIVATION_REFUSAL_CODE,
+  type PayswapOperatorAuthWiring,
+  type PayswapOperatorStore,
+} from "./payswap/index.js";
 
 function wrapWebSocket(ws: WebSocket): ISocket {
   const onData = new Emitter<VSBuffer>();
@@ -153,6 +159,12 @@ export interface HttpServerOptions {
   spaFallback?: boolean;
   staticRoot?: string;
   workspaces?: ServerRemoteWorkspaceInfo[];
+  /**
+   * PaySwap financial 部署（P1.6；addendum §1.6.3）：存在即启用两级握手。
+   * store 由调用方（entry-http/测试）创建并持有生命周期；authToken 必须同时
+   * 配置（N27 纵深防御：缺失 → 构造抛 typed 错误）。
+   */
+  payswapFinancial?: { store: PayswapOperatorStore };
 }
 
 function readTrimmedEnv(name: string): string | undefined {
@@ -261,6 +273,19 @@ function hasValidLiteToken(c: Context, token: string): boolean {
   return parseCookieHeader(c.req.header("cookie")).get(zcodeLiteTokenCookieName) === token;
 }
 
+// PaySwap §1.6.3 item 7：financial 部署禁用 ?token= URL 传输 —— URL 不承载任何
+// 一级/二级凭据（代理/访问日志）；仅保留 Bearer 头与 lite cookie 两个一级传输。
+function hasValidLiteTokenHeaderOrCookieOnly(c: Context, token: string): boolean {
+  const authorization = c.req.header("authorization");
+  if (
+    authorization?.startsWith("Bearer ") &&
+    authorization.slice("Bearer ".length).trim() === token
+  ) {
+    return true;
+  }
+  return parseCookieHeader(c.req.header("cookie")).get(zcodeLiteTokenCookieName) === token;
+}
+
 function isTokenProtectedPath(pathname: string): boolean {
   return pathname === "/ws" || pathname.startsWith("/ws/") || pathname.startsWith("/api/");
 }
@@ -351,10 +376,18 @@ export function createHttpServer(
   const hostCapabilities = createHostCapabilityStore();
 
   const authToken = options.authToken?.trim();
+  const payswapStore = options.payswapFinancial?.store;
+  // N27 纵深防御：financial 部署必须同时配置 deployment 凭据 —— 否则工厂拒绝
+  //（激活法则在 entry 侧先行；这里保证任何调用方都无法构造弱姿态 financial 服务器）。
+  if (payswapStore && !authToken) {
+    throw new Error(PAYSWAP_FINANCIAL_ACTIVATION_REFUSAL_CODE);
+  }
   if (authToken) {
     app.use("*", async (c, next) => {
       const pathname = new URL(c.req.url).pathname;
-      const validToken = hasValidLiteToken(c, authToken);
+      const validToken = payswapStore
+        ? hasValidLiteTokenHeaderOrCookieOnly(c, authToken)
+        : hasValidLiteToken(c, authToken);
       if (!isTokenProtectedPath(pathname) || validToken) {
         await next();
         return;
@@ -363,6 +396,12 @@ export function createHttpServer(
     });
   }
 
+  // PaySwap operator 认证装配（financial 部署专用）：/ws level-2 守卫 +
+  // operator-session 端点；必须在 /ws 路由注册之前装（Hono 按注册序执行）。
+  const payswapWiring: PayswapOperatorAuthWiring | undefined = payswapStore
+    ? installPayswapOperatorAuth(app, payswapStore)
+    : undefined;
+
   app.get("/api/server-info", (c) => c.json(createServerInfo(options)));
   app.post("/api/rpc-host-capability", (c) => c.json(hostCapabilities.issue()));
 
@@ -370,8 +409,12 @@ export function createHttpServer(
   // 都不能再把自己提升为 trusted host。
   app.get(
     "/ws",
-    upgradeWebSocket(() => ({
+    upgradeWebSocket((c) => ({
       onOpen(_event, ws) {
+        // PaySwap：认证升级在此绑定连接（撤销/过窗收尾时 server 侧关闭）。
+        if (payswapWiring) {
+          payswapWiring.bindUpgradedConnection(c.req.raw, ws.raw as WebSocket);
+        }
         setupChannelServer(
           ws.raw as WebSocket,
           services,
