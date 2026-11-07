@@ -265,18 +265,32 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
   }
 
   /**
+   * 终止行的安全写出（终止行鲁棒性 —— 审计闭合发现的真缺陷）：对端已消失时
+   * （allowHalfOpen=false 下 FIN 半关会把 writable 自动收尾；或 socket 已被 destroy），
+   * `socket.end(line)` 触发 ERR_STREAM_WRITE_AFTER_END 且**异步**逃逸 try/catch ——
+   * 死亡对端绝不能让宿主进程背上未捕获异常。已死即静默放弃（destroy 清理），否则写出。
+   */
+  function endLineSafely(socket: net.Socket, line: string): void {
+    if (socket.destroyed || socket.writableEnded) {
+      socket.destroy();
+      return;
+    }
+    try {
+      socket.end(line);
+      socket.resume();
+    } catch {
+      socket.destroy();
+    }
+  }
+
+  /**
    * failPeer（ADR-5/D5.4）：end+resume —— 错误行完整写出的半关，随后消费-丢弃剩余字节、
    * 绝不解析（§5.5：未知 pid 在任何载荷字节被解析之前丢弃）。剩余流由 idle timer 封顶。
    */
   function failPeer(socket: net.Socket, code: PayswapBrokerErrorCode, peerPid: number | null): void {
     audit("refused", { code, peerPid });
     drainAfterEnd(socket);
-    try {
-      socket.end(signedNullBoundRefusal(code, false));
-      socket.resume();
-    } catch {
-      socket.destroy();
-    }
+    endLineSafely(socket, signedNullBoundRefusal(code, false));
   }
 
   /** 解析后的拒绝（request_invalid / unauthorized / instance_unknown / broker_unavailable）。 */
@@ -288,12 +302,7 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
   ): void {
     audit("refused", { code, peerPid: fields.peerPid, instanceId: fields.instanceId ?? null, seq: fields.seq ?? null, op: fields.op ?? null });
     drainAfterEnd(socket);
-    try {
-      socket.end(signedNullBoundRefusal(code, retryable));
-      socket.resume();
-    } catch {
-      socket.destroy();
-    }
+    endLineSafely(socket, signedNullBoundRefusal(code, retryable));
   }
 
   /**
@@ -337,16 +346,10 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
         privateKey,
         bootState.hostId,
       );
-      socket.end(`${JSON.stringify(signed)}\n`);
-      socket.resume();
+      endLineSafely(socket, `${JSON.stringify(signed)}\n`);
     } catch {
       // 签名/序列化失败退到 null-bound（无细节外泄）。
-      try {
-        socket.end(signedNullBoundRefusal(code, retryable));
-        socket.resume();
-      } catch {
-        socket.destroy();
-      }
+      endLineSafely(socket, signedNullBoundRefusal(code, retryable));
     }
   }
 
@@ -359,8 +362,10 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
 
   /**
    * 单行读取（§3.3）：读到首个换行为止；行长（不含换行）> 1 MiB → oversize（停止缓冲，
-   * 继续排空到换行）；对端半关（end）→ 缓冲内容按行处理（JSON 尾随空白合法，digest 与
-   * child 侧 `requestLineDigest` 的换行规范化一致）；连接关闭/超时 → closed（无响应，无状态）。
+   * 继续排空到换行）；对端半关（end）→ 缓冲内容**无换行即非帧**：请求帧按 §3.3(1) 必须
+   * 换行终止，未终止的残余是对端写入中止的传输噪声，按 closed 丢弃（无响应、无状态、
+   * 零审计 outcome —— 也消除每次中止写铸造一个 Ed25519 拒绝信封的放大面）；连接
+   * 关闭/超时 → closed（无响应，无状态）。
    */
   function readOneLine(socket: net.Socket, idleTimer: NodeJS.Timeout): Promise<LineRead> {
     return new Promise<LineRead>((resolve) => {
@@ -406,7 +411,9 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
           settle({ kind: "closed" });
           return;
         }
-        settle({ kind: "line", line: buffer.toString("utf8") });
+        // 非空缓冲但从未见到换行 —— §3.3(1) 的帧定义未满足：不是请求，是对端写入中止
+        // （子进程终止/SIGKILL/半途中断）。按 closed 丢弃：不解析、不响应、不审计。
+        settle({ kind: "closed" });
       };
       const onClose = () => settle({ kind: "closed" });
       socket.on("data", onData);
@@ -419,6 +426,10 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
   async function handleConnection(socket: net.Socket): Promise<void> {
     liveConnections += 1;
     liveSockets.add(socket);
+    // 连接生命周期的永久 error 吞没器：settle 移除 readOneLine 的监听后、异步
+    // 写错误（如死亡对端的 write-after-end）仍可能发出 'error' —— 无监听即宿主进程
+    // 未捕获异常。每个连接的传输噪声在连接边界吞没，绝不外溢到宿主进程。
+    socket.on("error", () => {});
     // §3.3(4)：空闲上限（无状态的静默关闭；failPeer 的排空段也被它封顶）。
     const idleTimer = setTimeout(() => {
       socket.destroy();
@@ -689,20 +700,14 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
           bootState.hostId,
         );
         audit("dispatched", { instanceId: mapped.instanceId, seq, op: opValue, peerPid: verifiedPid });
-        socket.end(`${JSON.stringify(signed)}\n`); // §3.3(1)/(3)：应答后服务端收尾
-        socket.resume(); // 一请求一连接：首行之后的字节一律排空丢弃
+        endLineSafely(socket, `${JSON.stringify(signed)}\n`); // §3.3(1)/(3)：应答后服务端收尾；一请求一连接：首行之后的字节一律排空丢弃
       } catch {
         // canonicalization 失败 / emission cap（§6.4(4)）→ internal_error null-bound。
         refuseParsed(socket, "internal_error", false, { peerPid: verifiedPid, instanceId: mapped.instanceId, seq, op: opValue });
       }
     } catch {
       // 兜底（§6.3 internal_error）：未预期的 host 侧失败 —— 无细节外泄。
-      try {
-        socket.end(signedNullBoundRefusal("internal_error", false));
-        socket.resume();
-      } catch {
-        socket.destroy();
-      }
+      endLineSafely(socket, signedNullBoundRefusal("internal_error", false));
     } finally {
       // ADR-6：live count 无条件释放（含一切提前 return/异常路径）。
       clearTimeout(idleTimer);

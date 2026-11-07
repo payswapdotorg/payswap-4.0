@@ -64,6 +64,10 @@ const s = net.connect(path, () => {
   if (mode === "line") s.write(lineArg + "\\n");
   else if (mode === "two-lines") { s.write(lineArg + "\\n"); setTimeout(() => s.write(lineArg + "\\n"), 60); }
   else if (mode === "hold-then-send") { setTimeout(() => s.write(lineArg + "\\n"), 150); }
+  else if (mode === "partial") {
+    // 半行写入后挂起 —— 终止行（SIGKILL mid-line）的确定性载体。
+    s.write(lineArg.slice(0, Math.max(1, Math.floor(lineArg.length / 2))));
+  }
   else if (mode === "oversize-ok") { s.write(buildExactLengthLine(1024 * 1024) + "\\n"); }
   else if (mode === "oversize-bad") { s.write(buildExactLengthLine(1024 * 1024 + 1) + "\\n"); }
   else if (mode === "garbage") { s.write("{this is not json\\n"); }
@@ -781,6 +785,105 @@ describe.skipIf(process.platform !== "linux")("P1.3 Step 3 — UDS line protocol
       expect(Date.now() - start).toBeLessThan(3000);
       // 没有响应行 —— 空闲关闭不携带状态。
       expect(child.events.filter((event) => event.t === "response").length).toBe(0);
+    },
+    20000,
+  );
+
+  it(
+    "child termination during a connection (partial write): SIGKILL mid-line → no outcome event, no dispatch; the broker serves the next fresh child normally (handoff §5 termination row)",
+    async () => {
+      const { handle, bootState, audit } = await startBroker();
+      const entry = mintEntry();
+      const reqLine = requestLine(entry);
+      const child = spawnClientChild({
+        path: handle.endpointPath,
+        mode: "partial",
+        line: reqLine,
+        instanceId: entry.instanceId,
+        token: entry.token,
+      });
+      handle.registerInstance({ ...entry, childPid: child.pid });
+      // 连接建立且半行已写入（连接回调同步于 connect；留 300ms 让写入落地）。
+      await child.waitFor((event) => event.t === "connected", 5000);
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      child.kill(); // SIGKILL：对端在半行处消失 —— broker 侧 socket close/error
+      // 服务端事件循环消化掉 close（无直接可观测面 —— 稳定窗口后以行为断言）。
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // 半行从未成为完整请求：零 outcome 事件（无 dispatch、无 refused）。
+      const outcomes = audit.filter((event) => event.outcome === "dispatched" || event.outcome === "refused");
+      expect(outcomes).toHaveLength(0);
+
+      // broker 仍然健康：新子进程（新 pid + 新注册）的合法请求走完整 §5.5 序列，
+      // 拿到请求归属的签名信封（Step-3 interim dispatch = not_connected）。
+      const fresh = mintEntry();
+      const freshLine = requestLine(fresh);
+      const nextChild = spawnClientChild({
+        path: handle.endpointPath,
+        mode: "line",
+        line: freshLine,
+        instanceId: fresh.instanceId,
+        token: fresh.token,
+      });
+      handle.registerInstance({ ...fresh, childPid: nextChild.pid });
+      const response = await nextChild.waitFor((event) => event.t === "response");
+      const verdict = verifyResponseEnvelope(
+        response.line as string,
+        attemptFor(fresh, freshLine),
+        oracleMaterial(bootState),
+      );
+      expect(verdict.ok).toBe(true);
+      expect(audit.filter((event) => event.outcome === "dispatched" || event.outcome === "refused")).toHaveLength(1);
+      // close() 依然干净（终止未留下需要兜底的悬挂状态）。
+      await handle.close();
+    },
+    20000,
+  );
+
+  it(
+    "child termination during a connection (completed request, lingering connection): the killed peer's socket drops server-side without corrupting state — exactly one outcome, no duplicate on the next request",
+    async () => {
+      const { handle, bootState, audit } = await startBroker();
+      const entry = mintEntry();
+      const reqLine = requestLine(entry);
+      const child = spawnClientChild({
+        path: handle.endpointPath,
+        mode: "line",
+        line: reqLine,
+        instanceId: entry.instanceId,
+        token: entry.token,
+      });
+      handle.registerInstance({ ...entry, childPid: child.pid });
+      // 完整请求已回答（子进程收到信封后仍滞留到 20s 超时 —— 连接保持打开）。
+      const response = await child.waitFor((event) => event.t === "response");
+      const verdict = verifyResponseEnvelope(
+        response.line as string,
+        attemptFor(entry, reqLine),
+        oracleMaterial(bootState),
+      );
+      expect(verdict.ok).toBe(true);
+      // 连接仍打开时 SIGKILL 对端 —— 服务侧 socket error/close 路径。
+      child.kill();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      // 恰一个 outcome 事件；杀死对端不产生第二个事件（无重放、无重试、无重复 dispatch）。
+      expect(audit.filter((event) => event.outcome === "dispatched" || event.outcome === "refused")).toHaveLength(1);
+
+      // 下一个合法子进程照常服务；close() 干净。
+      const fresh = mintEntry();
+      const freshLine = requestLine(fresh);
+      const nextChild = spawnClientChild({
+        path: handle.endpointPath,
+        mode: "line",
+        line: freshLine,
+        instanceId: fresh.instanceId,
+        token: fresh.token,
+      });
+      handle.registerInstance({ ...fresh, childPid: nextChild.pid });
+      const next = await nextChild.waitFor((event) => event.t === "response");
+      expect(verifyResponseEnvelope(next.line as string, attemptFor(fresh, freshLine), oracleMaterial(bootState)).ok).toBe(true);
+      expect(audit.filter((event) => event.outcome === "dispatched" || event.outcome === "refused")).toHaveLength(2);
+      await handle.close();
     },
     20000,
   );
