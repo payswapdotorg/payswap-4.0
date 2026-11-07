@@ -191,6 +191,12 @@ export interface PluginConfig {
   extraKnownMarketplaces: Record<string, PluginMarketplaceConfig>;
   options: Record<string, PluginOptionValues>;
   suppressedBuiltins: string[];
+  /**
+   * Gate E1（addendum §5.1）：金融模式（S2）下允许跑 hook 的三方插件白名单 ——
+   * 权威 id（`<name>@<marketplace>`）精确匹配。缺省空集：门只对 official 放行；
+   * 金融模式关时本表不被读取（上游行为不变）。仅 hook 准入，不判插件生命周期。
+   */
+  financialHookTrust?: string[];
 }
 
 export interface PluginMetadata {

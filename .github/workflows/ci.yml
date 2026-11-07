@@ -85,6 +85,7 @@ jobs:
           tests/payswap-broker-chain.test.ts
           tests/payswap-operator-law.test.ts
           tests/payswap-grant-law.test.ts
+          tests/payswap-hook-admission.test.ts
 
       # PaySwap P1.6：server 侧 operator-principal 生产边界套件（真实 createHttpServer +
       # 真实 HTTP/WS 升级握手 + 0600 原子持久化；packages/server/vitest.config.ts 装配

@@ -25,6 +25,10 @@ import {
   ZCODE_OFFICIAL_PLUGIN_MARKETPLACE,
 } from "@zcode/contracts";
 import {
+  isPayswapFinancialModeActive,
+  isPayswapPluginHookAdmitted,
+} from "@zcode/shared/payswap";
+import {
   directoryExists,
   fileExists,
   isMissingPath,
@@ -183,7 +187,7 @@ export class NodePluginAdapter implements PluginPort {
       // 未启用插件的内置 MCP 就会在管理页完全不可见。这里先读取声明名给 UI 只读展示，
       // 实际 runtime 注入仍只使用 enabled 分支解析出的 component.mcpServers。
       const mcpServerDefinitions = loadPluginMcpServerDefinitions({ diagnostics, loaded });
-      const hooksRunnable = canRunPluginHooks(loaded);
+      const hooksRunnable = canRunPluginHooks(loaded, request.config);
       const hookInspection = inspectPluginHooks({
         dataPath,
         diagnostics,
@@ -368,11 +372,19 @@ function resolveEnabledComponents(input: {
   };
 }
 
-function canRunPluginHooks(_loaded: LoadedPlugin): boolean {
-  // 三方 marketplace 插件 hook 默认放行（与内置/官方一致）。
-  // 上限：放弃了「仅官方可执行 hook」的信任边界，三方插件 hook 会直接执行；
-  // 升级路径：需要逐插件 trust（如 user config 白名单）时，把判断收回这里。
-  return true;
+function canRunPluginHooks(loaded: LoadedPlugin, plugins: PluginConfig): boolean {
+  // Gate E1（addendum §5.1）：金融模式（S2）下的逐插件 hook 准入 —— 按本函数源注释
+  // 原记的升级路径（「需要逐插件 trust（如 user config 白名单）时，把判断收回这里」）
+  // 把判断收回这里；法则单一实现住 @zcode/shared/payswap（hook-admission），
+  // 法则级/发现边界级测试共用同一份代码。金融模式关 = 恒 true（上游行为不变，零
+  // 回归）；开 = 仅 official / 显式白名单（fail-closed）。只门 hook —— 插件的
+  // skills/commands/MCP servers 不受影响（E1 是 hook 准入，不是插件生命周期变更）。
+  return isPayswapPluginHookAdmitted({
+    financialModeActive: isPayswapFinancialModeActive(plugins),
+    pluginId: loaded.id,
+    source: loaded.source,
+    trustedPluginIds: plugins.financialHookTrust ?? [],
+  });
 }
 
 function warnUnsupportedComponents(loaded: LoadedPlugin, diagnostics: PluginDiagnostic[]): void {
