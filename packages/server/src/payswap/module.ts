@@ -5,8 +5,9 @@
  */
 export const serverPayswapModule = {
   id: "server-payswap",
-  // shared：@zcode/shared/node 的 privateFilePersistence（0600 原子落盘纪律）。
-  requires: ["shared-payswap", "shared"],
+  // shared：@zcode/shared/node 的 privateFilePersistence（0600 原子落盘纪律）；
+  // services：ServiceDescriptor（P1.7 批准通道的注册面 —— §1.6.2 item 5c 暴露策略）。
+  requires: ["shared-payswap", "shared", "services"],
   provides: ["server-payswap"],
   publicEntrypoints: ["index.ts", "contract.ts"],
 } as const;

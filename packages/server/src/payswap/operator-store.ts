@@ -31,8 +31,10 @@ import {
   type PayswapChallengeResolutionVerdict,
   type PayswapCredentialVerdict,
   type PayswapIssuedChallenge,
+  type PayswapOperatorAction,
   type PayswapOperatorRegistry,
   type PayswapOperatorRegistryOptions,
+  type PayswapOperatorRole,
   type PayswapOperatorUpgradeVerdict,
   type PayswapProvisionOperatorInput,
   type PayswapProvisionedOperator,
@@ -75,6 +77,15 @@ export interface PayswapOperatorStore {
   mintOperatorSessionCookie(token: string): PayswapOperatorSessionCookieMint | null;
   issueOperatorChallenge(input: PayswapChallengeIssueInput): PayswapIssuedChallenge | null;
   resolveOperatorChallenge(input: PayswapChallengeResolutionInput): PayswapChallengeResolutionVerdict;
+  /** P1.7 批准边界的角色法则面：approve 动作需要目标 workspace 的 approver 角色。 */
+  authorizeOperatorAction(input: {
+    operatorId: string;
+    ledgerId: string;
+    action: PayswapOperatorAction;
+  }):
+    | { status: "authorized"; role: PayswapOperatorRole }
+    | { status: "unknown_operator" }
+    | { status: "role_required" };
   /** 内省（测试/运维）：当前 session 记录及其存活态。 */
   activeSessions(): ReadonlyArray<{ sessionId: string; operatorId: string; live: boolean }>;
   /** 升级成功后绑定连接（撤销/过窗收尾时 server 侧关闭）。 */
@@ -212,6 +223,10 @@ export function createPayswapOperatorStore(
 
     resolveOperatorChallenge(input) {
       return registry.resolveChallenge(input);
+    },
+
+    authorizeOperatorAction(input) {
+      return registry.authorizeAction(input);
     },
 
     activeSessions() {

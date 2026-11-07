@@ -160,7 +160,7 @@ async function startApprovalServer(
 function wsApprovalClient(
   port: number,
   headers: Record<string, string>,
-): Promise<{ channel: PayswapApprovalChannel; close: Promise<void> }> {
+): Promise<{ channel: PayswapApprovalChannel; close(): Promise<void> }> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers });
     openSockets.push(ws);
@@ -198,12 +198,15 @@ function wsApprovalClient(
       const channel = ProxyChannel.toService<PayswapApprovalChannel>(
         client.getChannel(payswapApprovalChannelDescriptor.channelName),
       );
+      const closed = new Promise<void>((closeResolve) => {
+        ws.on("close", () => closeResolve());
+      });
       resolve({
         channel,
-        close: new Promise<void>((closeResolve) => {
-          ws.on("close", () => closeResolve());
+        close: () => {
           ws.close();
-        }),
+          return closed;
+        },
       });
     });
   });
@@ -303,12 +306,13 @@ describe("P1.7 server approval boundary (§1.6.2 item 5, §1.6.3 items 3/5/6/9)"
       }),
     ).toMatchObject({ status: "refused", code: "authorization_mismatch", reason: "grant_consumed" });
 
-    // N15 服务端臂：challenge 重放。
+    // N15 服务端臂：challenge 重放（proposal 已完成 —— 状态轴拒绝）。
     expect(await client.channel.resolveApproval(approveEvent(issued))).toMatchObject({
-      status: "challenge_consumed",
+      status: "proposal_not_pending",
+      statusWas: "approved",
     });
     expect(server.approval.grants()).toHaveLength(1);
-    await client.close;
+    await client.close();
   });
 
   it("N29: operator B cannot resolve A's challenge and cannot inspect A's pending cards", async () => {
@@ -342,8 +346,8 @@ describe("P1.7 server approval boundary (§1.6.2 item 5, §1.6.3 items 3/5/6/9)"
       status: "approved",
     });
     expect(server.approval.grants()).toHaveLength(1);
-    await clientA.close;
-    await clientB.close;
+    await clientA.close();
+    await clientB.close();
   });
 
   it("N30 (expiry arm): a resolution on an expired operator session is rejected", async () => {
@@ -362,7 +366,7 @@ describe("P1.7 server approval boundary (§1.6.2 item 5, §1.6.3 items 3/5/6/9)"
       status: "session_invalid",
     });
     expect(server.approval.grants()).toHaveLength(0);
-    await client.close;
+    await client.close();
   });
 
   it("N30 (revocation arm): revocation closes the connection and invalidates the pending challenge", async () => {
@@ -378,7 +382,7 @@ describe("P1.7 server approval boundary (§1.6.2 item 5, §1.6.3 items 3/5/6/9)"
 
     await server.store.revokeOperator(operatorA.operatorId);
     // 连接被 server 侧关闭（1008）。
-    await client.close;
+    await client.close();
     // 级联失效后的 challenge：任何后续解析 → challenge_invalidated（状态检查先于
     // principal 匹配 —— 注册表法则的顺序）。
     const operatorB = await server.store.provisionOperator({
@@ -390,7 +394,7 @@ describe("P1.7 server approval boundary (§1.6.2 item 5, §1.6.3 items 3/5/6/9)"
       status: "challenge_invalidated",
     });
     expect(server.approval.grants()).toHaveLength(0);
-    await clientB.close;
+    await clientB.close();
   });
 
   it("N31: an operator without the approver role is refused at the service boundary", async () => {
@@ -408,8 +412,13 @@ describe("P1.7 server approval boundary (§1.6.2 item 5, §1.6.3 items 3/5/6/9)"
     expect(await client.channel.resolveApproval(approveEvent(issued))).toMatchObject({
       status: "role_required",
     });
+    // 角色失败的 approve 已消耗 challenge（人的决定已花掉）—— 重试 →
+    // challenge_consumed（N15/N31 组合臂）；无 grant。
+    expect(await client.channel.resolveApproval(approveEvent(issued))).toMatchObject({
+      status: "challenge_consumed",
+    });
     expect(server.approval.grants()).toHaveLength(0);
-    await client.close;
+    await client.close();
   });
 
   it("N41: an approver bound in workspace A cannot approve for workspace B", async () => {
@@ -427,7 +436,7 @@ describe("P1.7 server approval boundary (§1.6.2 item 5, §1.6.3 items 3/5/6/9)"
       status: "role_required",
     });
     expect(server.approval.grants()).toHaveLength(0);
-    await client.close;
+    await client.close();
   });
 
   it("N28 client arm + §1.6.2 item 5c: unbound connections cannot reach the approval channel", async () => {
@@ -444,7 +453,7 @@ describe("P1.7 server approval boundary (§1.6.2 item 5, §1.6.3 items 3/5/6/9)"
       status: "approval_channel_unauthorized",
     });
     expect(server.approval.grants()).toHaveLength(0);
-    await client.close;
+    await client.close();
   });
 
   it("N14/N26 server arms: tuple-override fields and plugin-callback shapes are refused; the challenge survives", async () => {
@@ -488,6 +497,6 @@ describe("P1.7 server approval boundary (§1.6.2 item 5, §1.6.3 items 3/5/6/9)"
       status: "approved",
     });
     expect(server.approval.grants()).toHaveLength(1);
-    await client.close;
+    await client.close();
   });
 });

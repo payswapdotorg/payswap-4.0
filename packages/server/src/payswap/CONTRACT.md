@@ -23,6 +23,16 @@ handoff work package 5；ADR-11）：两级 `/ws` 握手的 server 侧状态 own
   N32 声明他人 principal → 拒绝；认证成功 → WeakMap 绑定，升级工厂 onOpen 取回）、
   `POST /api/payswap/operator-session`（浏览器路径 cookie 铸造端点 —— level-1 =
   lite cookie，level-2 = Authorization Bearer operator 凭据；拒绝路径零状态污染）。
+- `approval-service.ts`（P1.7，addendum §1.6.2 item 5 + §1.6.3 items 3/5/9）——
+  批准通道的 server 装配与 §1.6.2 item 5c 暴露策略 owner：registry challenge 适配器
+  （N29/N30 顺序法则在 P1.6 注册表内）+ 角色端口（approve 需要目标 workspace 的
+  approver 角色 —— N31/N41）+ grant ledger handle 装配 shared 批准流。**暴露策略**：
+  注册进 ServiceCollection 的默认实例是 fail-closed 拒绝 stub
+  （`approval_channel_unauthorized`）；只有 operator 绑定的 /ws 连接经
+  per-connection override 拿到 session-bound 真 service（`channelForSession` ——
+  inspect 臂按 session 过滤）；trusted-host face 与其它暴露面（stdio/
+  zcode-server-cli）永远拿到 stub。发卡（`issueProposal`）是 in-process host API
+  （D11.7 纪律 —— 无网络端点；生产由 P2+ 的 request_authorization 接线调用）。
 
 ## 不变量
 

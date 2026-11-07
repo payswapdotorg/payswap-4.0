@@ -46,7 +46,10 @@ import {
 import { createHostCapabilityStore } from "./hostCapability.js";
 import {
   installPayswapOperatorAuth,
+  PAYSWAP_APPROVAL_CHANNEL_NAME,
   PAYSWAP_FINANCIAL_ACTIVATION_REFUSAL_CODE,
+  type PayswapApprovalChannel,
+  type PayswapApprovalHost,
   type PayswapOperatorAuthWiring,
   type PayswapOperatorStore,
 } from "./payswap/index.js";
@@ -99,6 +102,10 @@ function setupChannelServer(
   clientMode: "desktop-continuous" | "web-remote-replayable",
   workspaceIdentityMapper?: SourceServerWorkspaceIdentityMapper,
   resourcePeers?: TopicResourcePeers,
+  payswapApprovalExposure?: {
+    /** P1.7 §1.6.2 item 5c：批准通道的 per-connection 暴露（undefined = 不改写）。 */
+    channel: PayswapApprovalChannel;
+  },
 ) {
   const socket = wrapWebSocket(ws);
   const protocol = new SocketProtocol(socket);
@@ -137,6 +144,12 @@ function setupChannelServer(
       },
     });
   }
+  // PaySwap P1.7（§1.6.2 item 5c 暴露策略）：批准通道只对 operator 绑定连接暴露
+  // session-bound 真 service；其余连接（含 trusted-host face）拿到注册时的
+  // fail-closed 拒绝 stub（或未注册时的 channel 缺失 —— 同样不可达）。
+  if (payswapApprovalExposure) {
+    overrides.set(PAYSWAP_APPROVAL_CHANNEL_NAME, payswapApprovalExposure.channel);
+  }
   services.exposeOnChannelServer(server, overrides);
   socket.onClose(() => {
     peer?.dispose();
@@ -162,9 +175,11 @@ export interface HttpServerOptions {
   /**
    * PaySwap financial 部署（P1.6；addendum §1.6.3）：存在即启用两级握手。
    * store 由调用方（entry-http/测试）创建并持有生命周期；authToken 必须同时
-   * 配置（N27 纵深防御：缺失 → 构造抛 typed 错误）。
+   * 配置（N27 纵深防御：缺失 → 构造抛 typed 错误）。P1.7：approval 存在即启用
+   * 批准通道（§1.6.2 item 5c 暴露策略 —— 调用方需同时把 channelDefault 注册进
+   * services；未注册时通道对该连接不可达，fail-closed）。
    */
-  payswapFinancial?: { store: PayswapOperatorStore };
+  payswapFinancial?: { store: PayswapOperatorStore; approval?: PayswapApprovalHost };
 }
 
 function readTrimmedEnv(name: string): string | undefined {
@@ -377,6 +392,7 @@ export function createHttpServer(
 
   const authToken = options.authToken?.trim();
   const payswapStore = options.payswapFinancial?.store;
+  const payswapApprovalHost = options.payswapFinancial?.approval;
   // N27 纵深防御：financial 部署必须同时配置 deployment 凭据 —— 否则工厂拒绝
   //（激活法则在 entry 侧先行；这里保证任何调用方都无法构造弱姿态 financial 服务器）。
   if (payswapStore && !authToken) {
@@ -415,11 +431,20 @@ export function createHttpServer(
         if (payswapWiring) {
           payswapWiring.bindUpgradedConnection(c.req.raw, ws.raw as WebSocket);
         }
+        // PaySwap P1.7（§1.6.2 item 5c）：operator 绑定连接拿到 session-bound 批准
+        // 通道；未绑定连接拿到 fail-closed 拒绝 stub（N28 client 臂）。
+        const operatorSessionId = payswapWiring?.getOperatorSessionId(c.req.raw);
         setupChannelServer(
           ws.raw as WebSocket,
           services,
           "web-remote-replayable",
           options.workspaceIdentityMapper,
+          undefined,
+          payswapApprovalHost && operatorSessionId !== undefined
+            ? { channel: payswapApprovalHost.channelForSession(operatorSessionId) }
+            : payswapApprovalHost
+              ? { channel: payswapApprovalHost.channelDefault }
+              : undefined,
         );
       },
     })),
@@ -433,6 +458,9 @@ export function createHttpServer(
         "desktop-continuous",
         options.workspaceIdentityMapper,
         options.topicResourcePeers,
+        // PaySwap P1.7：trusted-host face 无 operator 绑定 —— 批准通道永远拿到
+        // fail-closed 拒绝 stub（desktop 批准路径是 Class-B 卡，非 service channel）。
+        payswapApprovalHost ? { channel: payswapApprovalHost.channelDefault } : undefined,
       );
     },
   }));

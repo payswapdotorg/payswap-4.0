@@ -64,6 +64,9 @@ function controlledClock(startMs = 1_000_000) {
     advance: (ms: number) => {
       now += ms;
     },
+    set: (ms: number) => {
+      now = ms;
+    },
     now: () => now,
   };
 }
@@ -71,7 +74,10 @@ function controlledClock(startMs = 1_000_000) {
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 
-const TRUSTED_APP_ORIGIN = "app://zcode-shell/index.html";
+/** 受信 application origin（配置值 = origin，非页面 URL；三检的第 3 检比对此域）。 */
+const TRUSTED_APP_ORIGIN = "app://zcode-shell";
+/** 受信 shell 内页面的 frame URL（发送者描述携带完整 URL，法则提取 origin 比对）。 */
+const TRUSTED_FRAME_URL = `${TRUSTED_APP_ORIGIN}/index.html`;
 
 /** §1.3 合法 tuple 固定样本（law 级；生产 tuple 由 P4/P6 状态组装）。 */
 function sampleTuple(overrides: Partial<PayswapAuthorizationTuple> = {}): PayswapAuthorizationTuple {
@@ -139,7 +145,7 @@ async function issueAndApproveCard(flow: PayswapApprovalFlow, tuple: PayswapAuth
       kind: "desktop_frame",
       webContentsId: 7,
       isMainFrame: true,
-      frameUrl: TRUSTED_APP_ORIGIN,
+      frameUrl: TRUSTED_FRAME_URL,
     },
   });
   return { issued, verdict };
@@ -400,26 +406,27 @@ describe("P1.7 grant ledger — the single mint path and the enforcement seam (�
       }),
     ).toMatchObject({ status: "refused", code: "authorization_mismatch", reason: "grant_expired" });
 
-    // 已消耗 grant。
+    // 已消耗 grant（过期时钟推进之后铸造 —— 用远期 expiry 的 tuple，避免 issue 即过期）。
+    const liveTuple = sampleTuple({ expiresAt: clock.now() + HOUR });
     const consumedGrant = handle.ledger.appendApprovedGrant(
       handle.minter.mintApprovedGrant({
-        tuple,
-        tupleDigest: payswapTupleDigest(tuple),
-        principal: tuple.principal,
+        tuple: liveTuple,
+        tupleDigest: payswapTupleDigest(liveTuple),
+        principal: liveTuple.principal,
         workspaceId: "ws-a",
         issuedAt: clock.now(),
       }),
     );
     const firstUse = handle.ledger.authorizeOperation({
       authorizationId: consumedGrant.authorizationId,
-      presentedTuple: tuple,
+      presentedTuple: liveTuple,
       invocationContext: "interactive_default",
     });
     expect(firstUse.status).toBe("authorized");
     expect(
       handle.ledger.authorizeOperation({
         authorizationId: consumedGrant.authorizationId,
-        presentedTuple: tuple,
+        presentedTuple: liveTuple,
         invocationContext: "interactive_default",
       }),
     ).toMatchObject({ status: "refused", code: "authorization_mismatch", reason: "grant_consumed" });
@@ -613,7 +620,7 @@ describe("P1.7 approval sender verification (§1.6.2 item 3, N13/N16)", () => {
           kind: "desktop_frame",
           webContentsId: 7,
           isMainFrame: true,
-          frameUrl: TRUSTED_APP_ORIGIN,
+          frameUrl: TRUSTED_FRAME_URL,
         },
         expectedWebContentsId: 7,
         trustedAppOrigins: trusted,
@@ -629,7 +636,7 @@ describe("P1.7 approval sender verification (§1.6.2 item 3, N13/N16)", () => {
           kind: "desktop_frame",
           webContentsId: 8,
           isMainFrame: true,
-          frameUrl: TRUSTED_APP_ORIGIN,
+          frameUrl: TRUSTED_FRAME_URL,
         },
         expectedWebContentsId: 7,
         trustedAppOrigins: trusted,
@@ -643,7 +650,7 @@ describe("P1.7 approval sender verification (§1.6.2 item 3, N13/N16)", () => {
           kind: "desktop_frame",
           webContentsId: 7,
           isMainFrame: false,
-          frameUrl: TRUSTED_APP_ORIGIN,
+          frameUrl: TRUSTED_FRAME_URL,
         },
         expectedWebContentsId: 7,
         trustedAppOrigins: trusted,
@@ -700,7 +707,7 @@ describe("P1.7 approval sender verification (§1.6.2 item 3, N13/N16)", () => {
           kind: "desktop_frame",
           webContentsId: 7,
           isMainFrame: true,
-          frameUrl: TRUSTED_APP_ORIGIN,
+          frameUrl: TRUSTED_FRAME_URL,
         },
         expectedWebContentsId: 7,
         trustedAppOrigins: [],
@@ -855,7 +862,7 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
         kind: "desktop_frame",
         webContentsId: 7,
         isMainFrame: true,
-        frameUrl: TRUSTED_APP_ORIGIN,
+        frameUrl: TRUSTED_FRAME_URL,
       },
     });
     expect(verdict).toMatchObject({
@@ -886,7 +893,7 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
       kind: "desktop_frame" as const,
       webContentsId: 7,
       isMainFrame: true,
-      frameUrl: TRUSTED_APP_ORIGIN,
+      frameUrl: TRUSTED_FRAME_URL,
     };
     const approveEvent = (payload: { proposalId: string; challengeId: string; secret: string }) => ({
       proposalId: payload.proposalId,
@@ -921,7 +928,8 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
       }),
     ).toMatchObject({ status: "challenge_mismatch" });
 
-    // 未知 challengeId。
+    // 未知 challengeId（不属于本 proposal 的 challenge —— N15 foreign 臂覆盖；
+    // 绑定检查先于 port 解析，防跨 proposal 的 challenge 混淆/误消耗）。
     expect(
       flow.resolveApproval({
         event: {
@@ -932,7 +940,7 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
         },
         sender: goodSender,
       }),
-    ).toMatchObject({ status: "challenge_unknown" });
+    ).toMatchObject({ status: "challenge_mismatch" });
 
     // 未知 proposal。
     expect(
@@ -947,7 +955,8 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
       }),
     ).toMatchObject({ status: "proposal_unknown" });
 
-    // 有效解析后重放（已消耗）。
+    // 有效解析后重放（proposal 已完成 —— N15 的重放拒绝；challenge 由 port
+    // 一次性消耗，重放在 proposal 状态轴被拒）。
     expect(
       flow.resolveApproval({
         event: approveEvent({
@@ -967,7 +976,7 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
         }),
         sender: goodSender,
       }),
-    ).toMatchObject({ status: "challenge_consumed" });
+    ).toMatchObject({ status: "proposal_not_pending", statusWas: "approved" });
 
     // 过期（随 proposal）。
     clock.set(tuple.expiresAt + 1);
@@ -983,6 +992,50 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
     ).toMatchObject({ status: "proposal_expired" });
 
     expect(ledgerHandle.ledger.records()).toHaveLength(1);
+  });
+
+  it("N15 + N31/N41 law arms: a role-refused approve consumes the challenge; the retry is challenge_consumed", () => {
+    const clock = controlledClock();
+    const ledgerHandle = createPayswapGrantLedger({ now: clock.now });
+    const challengeStore = createPayswapCardInstanceChallengeStore({ now: clock.now });
+    const flow = createPayswapApprovalFlow({
+      now: clock.now,
+      challengePort: challengeStore,
+      ledger: ledgerHandle.ledger,
+      minter: ledgerHandle.minter,
+      trustedAppOrigins: [TRUSTED_APP_ORIGIN],
+      rolePort: { authorizeApprover: () => ({ status: "role_required" }) },
+    });
+    const tuple = sampleTuple();
+    const issued = flow.issueProposal({
+      tuple,
+      workspaceId: "ws-a",
+      target: { kind: "card_instance", webContentsId: 7, principal: tuple.principal },
+    });
+    if (issued.status !== "issued") throw new Error("fixture issuance failed");
+
+    const event = {
+      proposalId: issued.proposal.proposalId,
+      challengeId: issued.cardPayload.challenge.challengeId,
+      challengeSecret: issued.cardPayload.challenge.secret,
+      decision: "approve" as const,
+    };
+    const sender = {
+      kind: "desktop_frame" as const,
+      webContentsId: 7,
+      isMainFrame: true,
+      frameUrl: TRUSTED_FRAME_URL,
+    };
+
+    // 角色拒绝 → 无 grant。
+    expect(flow.resolveApproval({ event, sender })).toMatchObject({ status: "role_required" });
+    expect(ledgerHandle.ledger.records()).toHaveLength(0);
+    // 人的 approve 已消耗 challenge —— 重试 → challenge_consumed（N15 的
+    // “already consumed” 流级臂；重新批准需新卡/新 challenge）。
+    expect(flow.resolveApproval({ event, sender })).toMatchObject({
+      status: "challenge_consumed",
+    });
+    expect(ledgerHandle.ledger.records()).toHaveLength(0);
   });
 
   it("N13 through the flow: forged senders are rejected and do not consume the challenge", async () => {
@@ -1011,7 +1064,7 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
           kind: "desktop_frame",
           webContentsId: 99,
           isMainFrame: true,
-          frameUrl: TRUSTED_APP_ORIGIN,
+          frameUrl: TRUSTED_FRAME_URL,
         },
       }),
     ).toMatchObject({ status: "sender_rejected", reason: "sender_mismatch" });
@@ -1037,7 +1090,7 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
           kind: "desktop_frame",
           webContentsId: 7,
           isMainFrame: true,
-          frameUrl: TRUSTED_APP_ORIGIN,
+          frameUrl: TRUSTED_FRAME_URL,
         },
       }).status,
     ).toBe("approved");
@@ -1065,7 +1118,7 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
         kind: "desktop_frame",
         webContentsId: 7,
         isMainFrame: true,
-        frameUrl: TRUSTED_APP_ORIGIN,
+        frameUrl: TRUSTED_FRAME_URL,
       },
     });
     expect(deny).toMatchObject({ status: "denied" });
@@ -1083,7 +1136,7 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
         kind: "desktop_frame",
         webContentsId: 7,
         isMainFrame: true,
-        frameUrl: TRUSTED_APP_ORIGIN,
+        frameUrl: TRUSTED_FRAME_URL,
       },
     });
     expect(replay).toMatchObject({ status: "proposal_not_pending" });
@@ -1115,7 +1168,7 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
           kind: "desktop_frame",
           webContentsId: 7,
           isMainFrame: true,
-          frameUrl: TRUSTED_APP_ORIGIN,
+          frameUrl: TRUSTED_FRAME_URL,
         },
       }),
     ).toMatchObject({ status: "proposal_not_pending" });
@@ -1149,7 +1202,7 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
           kind: "desktop_frame",
           webContentsId: 7,
           isMainFrame: true,
-          frameUrl: TRUSTED_APP_ORIGIN,
+          frameUrl: TRUSTED_FRAME_URL,
         },
       }),
     ).toMatchObject({ status: "not_an_approval_event", reason: "plugin_callback_path" });
@@ -1162,7 +1215,7 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
           kind: "desktop_frame",
           webContentsId: 7,
           isMainFrame: true,
-          frameUrl: TRUSTED_APP_ORIGIN,
+          frameUrl: TRUSTED_FRAME_URL,
         },
       }),
     ).toMatchObject({ status: "not_an_approval_event", reason: "model_text" });

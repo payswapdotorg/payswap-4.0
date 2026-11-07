@@ -9,7 +9,11 @@
  * transport（UDS connect → 行写 → 验签接线 → 分配器重试环）随 Step 7 落地于此
  * （ADR-9 D9.7 + ADR-10）。P1.6 的 operator-principal 法则（凭据/注册表/两级握手，
  * addendum §1.6.3）也在此：server 侧（packages/server 的 operator 存储与 /ws 接线）
- * 与 law 级测试共用同一份实现（ADR-11）。
+ * 与 law 级测试共用同一份实现（ADR-11）。P1.7 的交易授权 grant 法则（tuple/digest/
+ * 绑定、单一铸造路径的 grant ledger 与 enforcement seam、Class-B 卡 payload、
+ * 批准 origin 三检与事件判别、批准流状态机 + 卡实例 challenge 存储，addendum
+ * §1.3/§1.6）同样在此：server 侧批准装配（packages/server 的 approval host）与
+ * law 级测试共用同一份实现（ADR-12）。
  */
 
 export * from "./canonical-json.js";
@@ -23,3 +27,8 @@ export * from "./bridge-client.js";
 export * from "./operator-credentials.js";
 export * from "./operator-registry.js";
 export * from "./operator-handshake.js";
+export * from "./authorization-tuple.js";
+export * from "./grant-ledger.js";
+export * from "./approval-card.js";
+export * from "./approval-origin.js";
+export * from "./approval-flow.js";

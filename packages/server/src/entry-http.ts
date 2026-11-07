@@ -10,9 +10,12 @@ import {
 } from "./bundledZCodeBuiltinProviderConfig.js";
 import { createHttpServer, resolveHttpServerId } from "./http.js";
 import {
+  createPayswapApprovalHost,
   createPayswapOperatorStore,
+  payswapApprovalChannelDescriptor,
   readPayswapFinancialModeRequested,
   resolvePayswapFinancialActivation,
+  type PayswapApprovalHost,
 } from "./payswap/index.js";
 
 async function main(): Promise<void> {
@@ -49,6 +52,22 @@ async function main(): Promise<void> {
       providerProvisioningTargetEnabled: Boolean(authToken),
     });
 
+  // PaySwap P1.7（addendum §1.6.2 item 5 + §1.6.3）：financial 部署装配批准通道 ——
+  // approval host 的 fail-closed 默认注册进 services（§1.6.2 item 5c 暴露策略：
+  // 只有 operator 绑定的 /ws 连接经 per-connection override 拿到 session-bound 真
+  // service；发卡是 in-process host API，无网络端点）。
+  let payswapApproval:
+    | { store: ReturnType<typeof createPayswapOperatorStore>; approval: PayswapApprovalHost }
+    | undefined;
+  if (payswapFinancialRequested && payswapActivation.status === "activated") {
+    const store = createPayswapOperatorStore({
+      stateFilePath: join(getAppConfigDir(), "payswap", "operators.json"),
+    });
+    const approval = createPayswapApprovalHost({ store });
+    services.register(payswapApprovalChannelDescriptor, approval.channelDefault);
+    payswapApproval = { store, approval };
+  }
+
   createHttpServer(services, port, {
     serverId,
     workspaceIdentityMapper,
@@ -58,15 +77,7 @@ async function main(): Promise<void> {
     ...(host ? { host } : {}),
     ...(staticRoot ? { staticRoot, spaFallback: true } : {}),
     ...(authToken ? { authToken, authRequired: true } : {}),
-    ...(payswapFinancialRequested && payswapActivation.status === "activated"
-      ? {
-          payswapFinancial: {
-            store: createPayswapOperatorStore({
-              stateFilePath: join(getAppConfigDir(), "payswap", "operators.json"),
-            }),
-          },
-        }
-      : {}),
+    ...(payswapApproval ? { payswapFinancial: payswapApproval } : {}),
   });
 }
 
