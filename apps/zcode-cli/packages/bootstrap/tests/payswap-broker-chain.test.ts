@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { readdirSync, readFileSync, statSync, existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -265,6 +265,8 @@ interface McpServerConfigLike {
 interface ChainChild {
   client: Client;
   transport: StdioClientTransport;
+  /** 子进程被 spawn 时拿到的完整 env（含注入五键 —— 扫描面：私钥材料不得出现）。 */
+  envRecord: Record<string, string | undefined>;
   tuple: {
     socket: string;
     token: string;
@@ -334,6 +336,7 @@ async function spawnChainChild(
   return {
     client,
     transport,
+    envRecord,
     tuple: {
       socket: envRecord.PAYSWAP_BROKER_SOCKET ?? "",
       token: envRecord.PAYSWAP_BROKER_TOKEN ?? "",
@@ -527,6 +530,51 @@ function errorBody(seq: number, code: PayswapBrokerErrorCode, retryable: boolean
 function privateKeyMaterial(bootState: PayswapBrokerBootState): string[] {
   const der = bootState.keyPair.privateKey.export({ format: "der", type: "pkcs8" });
   return [der.toString("base64"), der.toString("hex")];
+}
+
+/** 文件系统扫描的尺寸上限：超出上限的文件跳过（插件 dist / socket 都远小于此）。 */
+const SWEEP_MAX_FILE_BYTES = 16 * 1024 * 1024;
+
+/**
+ * 递归扫描根目录树，返回包含任一 needle（文本子串）的文件路径列表（空 = 零命中）。
+ * 同步 IO —— 树小（插件缓存 + workspace + 端点目录），一次扫描毫秒级。
+ */
+function sweepFilesFor(roots: string[], needles: string[]): string[] {
+  const hits: string[] = [];
+  const walk = (dir: string): void => {
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return; // 根不存在（未 boot 的 harness）或不可读 —— 无可扫描面。
+    }
+    for (const entry of entries) {
+      const full = join(dir, entry.name);
+      try {
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.isFile()) {
+          const stat = statSync(full);
+          if (stat.size > SWEEP_MAX_FILE_BYTES) continue;
+          const content = readFileSync(full);
+          const text = content.toString("utf8");
+          for (const needle of needles) {
+            if (content.includes(needle) || text.includes(needle)) {
+              hits.push(full);
+              break;
+            }
+          }
+        }
+      } catch {
+        continue; // 竞态消失的文件 / 不可读 —— 跳过。
+      }
+    }
+  };
+  for (const root of roots) {
+    if (!existsSync(root)) continue;
+    walk(root);
+  }
+  return hits;
 }
 
 // ---------------------------------------------------------------------------
@@ -1062,12 +1110,13 @@ server.listen(relayPath, () => process.stdout.write("listening\\n"));
     const harness = await makeHarness();
     const child = await spawnChainChild(harness);
 
-    // 一段对抗性序列：合法 → 翻转 → 撤销（residual）。
-    await callTool(child, "payswap_get_account_overview", {});
+    // 一段对抗性序列：合法 → 翻转 → 撤销（residual）—— 工具结果全部捕获为扫描面。
+    const results: Array<Record<string, unknown>> = [];
+    results.push((await callTool(child, "payswap_get_account_overview", {})) as Record<string, unknown>);
     harness.live.state = { pluginEnabled: true, financialWorkspace: false };
-    await callTool(child, "payswap_get_account_overview", {});
+    results.push((await callTool(child, "payswap_get_account_overview", {})) as Record<string, unknown>);
     harness.coordinator.revokeForDisable();
-    await callTool(child, "payswap_get_account_overview", {});
+    results.push((await callTool(child, "payswap_get_account_overview", {})) as Record<string, unknown>);
 
     // 每个请求恰一个 outcome 事件（dispatched / refused）—— 本行三次调用。
     const outcomes = harness.audit.filter((event) => event.outcome === "dispatched" || event.outcome === "refused");
@@ -1078,16 +1127,49 @@ server.listen(relayPath, () => process.stdout.write("listening\\n"));
       expect(typeof event.seq).toBe("number");
     }
 
-    // 零凭据材料扫描：token / 私钥 DER 不得出现在审计、工具结果或子进程 stderr。
+    // 零凭据材料扫描（handoff §4 / 契约 §12 gate 行 / 威胁模型 §9(3) 的完整面）：
+    // 私钥 DER（base64+hex）不得出现在审计、工具结果、子进程 stderr、子进程 env 或
+    // 运行产生的任何文件里；token 只准出现在它的受许位置（子进程 env + 请求 wire）——
+    // 工具结果与文件系统同样零容忍。
     const privateMaterial = privateKeyMaterial(harness.bootState);
+    const toolResultSurfaces = results
+      .map((result) => JSON.stringify(result))
+      .concat(results.map((result) => toolResultText(result as Parameters<typeof toolResultText>[0])));
     const auditText = JSON.stringify(harness.audit);
+    const envValues = Object.values(child.envRecord).filter((value): value is string => typeof value === "string");
+
     expect(auditText).not.toContain(child.tuple.token);
     for (const material of privateMaterial) {
       expect(auditText).not.toContain(material);
       expect(child.stderrText()).not.toContain(material);
+      for (const surface of toolResultSurfaces) {
+        expect(surface).not.toContain(material);
+      }
+      for (const value of envValues) {
+        expect(value).not.toContain(material);
+      }
+    }
+    // token 不得经工具面外露（凭据只服务于 bridge 传输，不进任何工具结果）。
+    for (const surface of toolResultSurfaces) {
+      expect(surface).not.toContain(child.tuple.token);
     }
     // 端点路径不入审计（§11(2) 纪律的保守面：server.ts 注释钉住的三条之一）。
     expect(auditText).not.toContain(child.tuple.socket);
+
+    // 文件系统足印扫描：运行写入/落盘的全部树 —— 官方插件缓存（storageRoot）、workspace、
+    // 以及本 boot 的端点目录（per-boot 0700 目录 + socket 文件本体）。私钥永不落盘；
+    // token 也不得落盘（token 只存在于受信注入 env 与 broker 内存）。
+    const fsRoots = [
+      storageRoot,
+      workspace,
+      dirname(harness.bootState.endpointPath),
+    ];
+    const swept = await sweepFilesFor(fsRoots, [...privateMaterial, child.tuple.token]);
+    expect(
+      swept,
+      `private material / token must never be written to the run's filesystem footprint (roots: ${fsRoots.join(", ")})`,
+    ).toEqual([]);
+
     await child.close();
   });
 });
