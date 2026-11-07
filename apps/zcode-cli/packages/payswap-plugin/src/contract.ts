@@ -42,10 +42,26 @@ export interface PayswapRefusal {
   message: string;
 }
 
-/** 所有 `payswap_*` 工具的统一响应信封：业务数据或 typed refusal，永不裸错误。 */
+/**
+ * bridge 失败（契约 w2-01 §6.2/§6.3 + ADR-10）：已验签的 §6.3 桥接错误与 child 侧
+ * typed 失败（验签整封拒绝/无 hint/超限/连接失败/预算耗尽/取消）。`code` 的闭集单一
+ * 事实源在 `@zcode/shared/payswap`（`PayswapBrokerErrorCode | PayswapBridgeClientFailureCode`）；
+ * 桥接码与三码业务拒绝**永不混淆**（§6.2）。
+ */
+export interface PayswapBridgeFailure {
+  code: string;
+  message: string;
+  retryable: boolean;
+}
+
+/**
+ * 所有 `payswap_*` 工具的统一响应信封：业务数据、typed refusal 或 typed bridge 失败，
+ * 永不裸错误。`bridge_failure` 是 Wave-2 Step 7 起的第三种面（ADR-10）。
+ */
 export type PayswapToolEnvelope<T = unknown> =
   | { kind: "ok"; data: T }
-  | { kind: "refused"; refusal: PayswapRefusal };
+  | { kind: "refused"; refusal: PayswapRefusal }
+  | { kind: "bridge_failure"; failure: PayswapBridgeFailure };
 
 /** Class A 信息性表面（附录 §1.6.0）：全部为 informational；authorization 卡是 Class B，
  * 由 host 渲染，永不声明在 `ui.surfaces[]`（N25）。 */

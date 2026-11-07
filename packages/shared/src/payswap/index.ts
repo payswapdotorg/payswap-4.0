@@ -5,7 +5,9 @@
  * canonical JSON、信封签名/验签、重放两侧引擎（seen-record 引擎 + 发送边界分配器）的
  * **唯一**实现住在这里：host（签名/受理）与 child（验签/分配）用同一份代码，两份实现
  * 漂移即违约。五键凭据组常量/校验、host-boot 身份铸造、实例注册表一并在此
- * （P1.2 Step 2；契约 §4、§6.5(1)、§10；重放 §9 = P1.6 Step 6）。
+ * （P1.2 Step 2；契约 §4、§6.5(1)、§10；重放 §9 = P1.6 Step 6）；子进程侧 bridge
+ * transport（UDS connect → 行写 → 验签接线 → 分配器重试环）随 Step 7 落地于此
+ * （ADR-9 D9.7 + ADR-10）。
  */
 
 export * from "./canonical-json.js";
@@ -15,3 +17,4 @@ export * from "./envelope.js";
 export * from "./instance-registry.js";
 export * from "./operations.js";
 export * from "./replay.js";
+export * from "./bridge-client.js";

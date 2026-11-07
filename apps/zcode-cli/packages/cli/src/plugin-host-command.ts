@@ -14,7 +14,7 @@ import type {
   PayswapBrokerCredentialTuple,
   PayswapInstanceRegistry,
 } from "@zcode/shared/payswap";
-import { PAYSWAP_OFFICIAL_PLUGIN_ID } from "@zcode/shared/payswap";
+import { PAYSWAP_BROKER_ENV_KEYS, PAYSWAP_OFFICIAL_PLUGIN_ID } from "@zcode/shared/payswap";
 import type { RunContext } from "@zcode/shared-types";
 
 const HOST_USAGE = `${ZCODE_PLUGIN_HOST_COMMAND} <server-path> [-- <server-arg>...]`;
@@ -57,7 +57,8 @@ export async function runPluginHostCommand(ctx: RunContext, argv: string[]): Pro
     // 受信官方 PaySwap plugin host 上下文 —— 冒名插件在 import 之前拒绝（凭据不落入
     // 不受信代码）。时效半边（hostId/instanceId/socket vs 当前 boot）在 host 侧铸造与
     // broker §5.5 检查序执行 —— child 没有注册表/boot 状态，结构性不可达。
-    assertCapturedPayswapCredentialServingContext(readCapturedPayswapBrokerCredentials());
+    const capturedPayswapTuple = readCapturedPayswapBrokerCredentials();
+    assertCapturedPayswapCredentialServingContext(capturedPayswapTuple);
     const module = (await import(pathToFileURL(serverPath).href)) as HostedPluginModule;
     if (typeof module.main !== "function") {
       throw new Error("Plugin server does not export main().");
@@ -65,6 +66,11 @@ export async function runPluginHostCommand(ctx: RunContext, argv: string[]): Pro
 
     const originalArgv = process.argv;
     const originalBrokerSocket = process.env[ZCODE_CUA_BROKER_SOCKET_ENV_KEY];
+    // PaySwap 五键恢复（Step 7，ADR-10）：CLI 入口的 sanitize 把五键从 process.env 剔除进
+    // 进程内 capture（§4.3(1) 双表纪律 —— 交付面恰好一个进程）；本派发链是恢复的最后一道
+    // 宿主边界，且仅在受信官方 PaySwap 上下文（上方上下文门已过）恢复 —— server.mjs 的
+    // bridge 在 main() 内读取五键武装；finally 还原（CUA socket 恢复同款纪律）。
+    const previousPayswapEnv = restoreCapturedPayswapEnv(capturedPayswapTuple);
     // shared node_repl 把同一凭据组恢复到环境，由 broker bridge 读取；旧的独立 CUA
     // MCP 不再拥有执行入口。
     process.argv = [process.execPath, serverPath, ...serverArgs];
@@ -75,6 +81,7 @@ export async function runPluginHostCommand(ctx: RunContext, argv: string[]): Pro
       await module.main();
     } finally {
       process.argv = originalArgv;
+      previousPayswapEnv();
       if (originalBrokerSocket === undefined) {
         delete process.env[ZCODE_CUA_BROKER_SOCKET_ENV_KEY];
       } else {
@@ -185,4 +192,42 @@ function assertCapturedPayswapCredentialServingContext(
       "Captured PaySwap broker credentials may only launch the trusted official PaySwap plugin host",
     );
   }
+}
+
+/**
+ * 把捕获的五键组恢复进本进程 env（仅受信官方 PaySwap 上下文 —— 调用前上下文门已过；
+ * CUA socket 恢复的 Step 7 推广，ADR-10）。返回还原函数（finally 调用）：恢复前的值
+ * 逐一还原（undefined → delete）。无捕获组 → no-op。server.mjs 在 main() 内读取五键
+ * 武装 bridge —— 恢复仅存在于 module.main() 生命周期内，交付面恰好是本进程（§4.3）。
+ */
+function restoreCapturedPayswapEnv(
+  captured: Readonly<PayswapBrokerCredentialTuple> | null | undefined,
+): () => void {
+  if (!captured) return () => {};
+  const pluginId = process.env[ZCODE_PLUGIN_ID_ENV_KEY]?.trim().toLowerCase();
+  if (pluginId !== PAYSWAP_OFFICIAL_PLUGIN_ID) {
+    // 上下文门已拒绝过 —— 此处结构性不可达；保持独立检查以防将来重构移序。
+    return () => {};
+  }
+  const values: readonly [string, string][] = [
+    [PAYSWAP_BROKER_ENV_KEYS[0], captured.socket],
+    [PAYSWAP_BROKER_ENV_KEYS[1], captured.token],
+    [PAYSWAP_BROKER_ENV_KEYS[2], captured.instanceId],
+    [PAYSWAP_BROKER_ENV_KEYS[3], captured.hostId],
+    [PAYSWAP_BROKER_ENV_KEYS[4], captured.verifyKeyBase64],
+  ];
+  const previous = values.map(([key]) => process.env[key]);
+  for (const [key, value] of values) {
+    process.env[key] = value;
+  }
+  return () => {
+    values.forEach(([key], index) => {
+      const before = previous[index];
+      if (before === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = before;
+      }
+    });
+  };
 }

@@ -61,6 +61,12 @@ export interface PayswapBrokerCoordinatorOptions {
   workingDirectory?: string;
   /** 实例注册表（缺省 = 协调器自有；协议进程可注入共享实例）。 */
   registry?: PayswapInstanceRegistry;
+  /**
+   * 预铸造 boot 状态（缺省 = lazy boot 时自铸；测试/集成注入以持有钥对 —— 与 boot 缝
+   * 同款纪律，Step 7 链套件的私钥扫描/跨 boot 行需要）。注入时五键组与 broker 签名
+   * 同源（hostId/verifyKey 来自同一 bootState）。
+   */
+  bootState?: PayswapBrokerBootState;
   /** §7.3 live 状态 reader（缺省 = fresh config 读，见 readPayswapLiveStateFromConfig）。 */
   liveStateReader?: PayswapLiveStateReader;
   /**
@@ -147,7 +153,7 @@ export function createPayswapBrokerCoordinator(
 
   function ensureBooted(): Promise<PayswapBrokerHandle> {
     bootPromise ??= (async () => {
-      const state = mintBrokerBootState();
+      const state = options.bootState ?? mintBrokerBootState();
       const broker = await boot({
         bootState: state,
         registry,
