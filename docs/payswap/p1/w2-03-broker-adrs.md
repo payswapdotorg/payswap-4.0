@@ -913,3 +913,142 @@ credential generic + no-level-1 upstream, session expiry at the upgrade, N32
 foreign-claim refusals at both faces, revocation closing a live connection
 (code 1008) + challenge invalidation + re-upgrade refusal, 0600 digest-only
 persistence + principal restore across restart).
+
+## ADR-12 — P1.7 transaction grants and trusted Class-B approval: the law set, the mint capability, the resolution order, and the exposure policy
+
+**Context.** The playbook's P1.7 work package (addendum §1.3 + §1.6, closing
+D11.8's tracked arms) binds the transaction-authorization grant mechanism with
+its refusal path and the trusted Class-B approval origin: the exact tuple/digest
+binding, the single-use challenge, expiry, the trusted renderer origin, the
+model/plugin forgery rows, and the material-change reauthorization — with
+N1–N17's law-level arms, N28's client arm, N29/N30/N31/N41's
+approval-resolution arms, and the §1.6.2 item 5c exposure policy. The addendum
+specifies the semantics; this ADR records the as-built decisions.
+
+**Decision.**
+
+1. **D12.1 — The grant law is a shared single implementation, five modules;
+   the server module owns only assembly and exposure.**
+   `packages/shared/src/payswap/` gains `authorization-tuple.ts` (the §1.3
+   strict schema, the canonical-JSON SHA-256 digest, the exact-binding law with
+   a stable first-deviation report order), `grant-ledger.ts` (records, the
+   single mint entry, the enforcement seam, the refusal audit),
+   `approval-card.ts` (the Class-B payload schema and the single derivation
+   path), `approval-origin.ts` (the §1.6.2 item 3 three-check sender law and
+   the item 4 event discrimination), and `approval-flow.ts` (the
+   proposal→challenge→resolution→mint state machine plus the card-instance
+   challenge store). `packages/server/src/payswap/approval-service.ts` (same
+   managed module) owns the registry challenge adapter, the role port, the
+   grant-ledger handle wiring, and the exposure policy — the D11.1 discipline
+   applied to the grant machinery.
+
+2. **D12.2 — Exactly the addendum's two caller-visible refusal codes; the
+   reason discrimination is audit-only.** N1/N3–N9 name `authorization_required`
+   (nothing presented, in every bypass context); N2 explicitly maps
+   presented-but-forged/expired/consumed ids to `authorization_mismatch`, as
+   N10 maps tuple deviation. The seam therefore exposes two codes
+   (`authorization_required` | `authorization_mismatch` — §7.4's family) and
+   records `no_grant`/`grant_unknown`/`grant_expired`/`grant_consumed`/
+   `tuple_deviation` in the refusal audit with the invocation context: the
+   caller cannot enumerate grant states; the auditor can. The N1–N9
+   context-invariance row proves the context is an annotation that never
+   changes a verdict.
+
+3. **D12.3 — The single mint path is a per-instance capability pair, and the
+   ledger is memory-resident until P7.** `createPayswapGrantLedger` returns
+   `{ ledger, minter }`; the minter closes over a per-instance CSPRNG nonce,
+   and `appendApprovedGrant` verifies the nonce **and** independently recomputes
+   the tuple digest — a hand-forged mint, a foreign ledger's mint, or an
+   internally drifted digest all throw `unauthorized_mint` with the ledger
+   unchanged. The approval flow is the only minter holder (§1.3's "no other
+   code path"). `authorizationId` and the sequence are host-allocated — the
+   mint command has no fields to supply them. Persistence (the §4 financial
+   ledger, N23/N24) is P7 work; P1.7's ledger is append-only in memory with
+   the discipline (single writer, monotonic sequences, single-use consumption)
+   proven from day one.
+
+4. **D12.4 — The resolution order is: event discrimination → sender/proposal
+   state → challenge binding → port authentication → decision → role → mint.
+   Two load-bearing placements.** First, the challenge-binding check (the
+   presented challenge must be the proposal's own — N15) precedes the port:
+   otherwise a foreign-but-valid challenge could be *consumed* through the
+   wrong proposal's resolution. Second, the role check runs **after** the port
+   and before the mint: the P1.6 registry law authenticates first (session →
+   principal → secret), so cross-user attempts fail on the principal axis
+   without leaking the issuing principal's role state (N29), and the role gate
+   evaluates the authenticated rightful resolver. A role-refused approve has
+   already consumed the challenge — the human's decision is spent, and
+   re-approval requires a fresh challenge and a host-rederived card; the
+   retry row proves `challenge_consumed`. The addendum's "enforced at the
+   service boundary before approval processing" is read as *before the
+   approval completes into a grant*; the boundary is the mint.
+
+5. **D12.5 — The §1.6.2 item 5c exposure policy is a fail-closed default plus
+   a per-connection override, not a static allowlist.** The channel registered
+   in the ServiceCollection **is** the refusing stub
+   (`approval_channel_unauthorized`); only an operator-bound `/ws` connection
+   (the two-level handshake's binding, read at `onOpen`) receives the
+   session-bound facade via the per-connection overrides map — the exact
+   `IProviderProvisioningTargetService` precedent. Consequence: the
+   trusted-host face, the stdio face, and the zcode-server-cli face
+   structurally receive the stub; a deployment that never registers the
+   channel exposes nothing. The upstream `ServiceExposurePolicy` mechanism is
+   static per call and cannot express per-connection authentication state —
+   the override composition is stricter and observable (N28's client arm gets
+   a typed refusal, not a channel-not-found error).
+
+6. **D12.6 — Issuance is an in-process host API; the operator-client surface
+   is resolve + session-filtered inspect.** Following D11.7: no network
+   endpoint mints proposals — the P2+ `request_authorization` wiring calls
+   `issueProposal` from the trusted host path. The card (with its challenge)
+   reaches the operator client through `listPendingProposals`, filtered to the
+   caller's session: §1.6.3 item 6's "resolve, inspect, or mint" isolation —
+   B's session never sees A's pending cards. The pendingInteraction/v4-snapshot
+   rendering integration and the desktop card component are P1.8 surface work.
+
+7. **D12.7 — The desktop arms are law-level in P1.7; the Electron wiring lands
+   with P1.8.** The three-check sender law (N13/N16: expected webContents,
+   main frame, trusted application origin with zcode-sandbox:// and ui://
+   explicitly untrusted, fail-closed on an empty allowlist) and the
+   card-instance challenge store (§1.6.2 item 1: 256-bit CSPRNG, single-use,
+   bound to the proposal and the issuing card instance, expiring with the
+   proposal) are pure modules proven in the law suite; the real IPC mapping,
+   the production trusted-origin value, and N18's full plugin-handle teardown
+   arm arrive with the surface work. N8's arm is structural here: no
+   subagent/automation origination API exists (issuance is host-in-process;
+   resolution must pass the sender law), and the wrong-channel row proves an
+   operator-connection sender cannot resolve a card-instance proposal.
+
+8. **D12.8 — The dormant dispatch hook stays dormant; the mechanism ships
+   ahead of its callers.** §7.4's reserved `authorizationId` param remains
+   schema-rejected on the six ops — P1.7 lands the grant machinery and the
+   enforcement seam (`authorizeOperation`) that P7's executor calls; the
+   dispatch-layer wiring activates with P2+/P7 when a caller exists. The
+   playbook's "material-change reauthorization" emphasis is the tuple-binding
+   law plus single-use: any deviation refuses, and a changed plan needs a new
+   grant because the old one cannot authorize it.
+
+**Evidence.** Law suite `tests/payswap-grant-law.test.ts` (30 rows: tuple
+strictness/malformed-money/digest canonicality + collision sensitivity, the
+binding law across amount/recipient/leg/fee/purpose/source/principal/expiry
+deviations, host-allocated ids and sequences, forged + foreign-mint
+unauthorized_mint, the N1–N9 bypass-context exhaustion with the audit
+annotation proof, N2's three invalid-id arms, context invariance in both
+directions, N10/N11/N12 through the seam, the N14 byte-equal payload and the
+no-display delta, the challenge/secret shape, N13's five rejection rows plus
+the fail-closed default and the operator-connection acceptance, N26/N17
+classification, the positive flow with the recomputed digest and the
+seam-composition closure, the tuple-override and foreign/consumed/expired
+challenge family, sender-rejection non-consumption, deny consumption, the
+N18 stale-replay arm, dead-on-arrival issuance, the N8 wrong-channel arm, and
+the role-refused-consumes retry). Boundary suite
+`packages/server/test/payswap-approval.test.ts` (8 rows through the real
+`createHttpServer` + real two-level WebSocket upgrades + the real channel rpc
+(`ChannelClient`/`ProxyChannel`, the web-remote transport path): the positive
+mint with the server-resolved principal, the (principal, workspace, approver)
+record, the N11/N15 seam/replay arms, N29's resolve + inspect arms with
+non-consumption on the impersonation refusal, N30's expiry and revocation arms
+(connection closed server-side, cascade-invalidated challenge), N31/N41
+service-boundary role refusals with the consumed-retry arm, N28's client arm
+behind the exposure-policy stub, and the N14/N26 server arms with challenge
+survival).

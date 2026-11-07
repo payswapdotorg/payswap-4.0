@@ -26,6 +26,21 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
   grant hook 只存在于 dispatch 层预留设计（schema 层即拒，Step 7 断言其不到达 grant 逻辑）。
 - 三码业务拒绝（§7.3）的 broker 侧单一实现是 `payswapBusinessRefusal`；消息与
   payswap-plugin 的 Wave 1 `snapshotRefusal` 同文（单一事实源注释在 operations.ts）。
+- P1.7 grant 法则（addendum §1.3/§1.6）：tuple schema `.strict()`（无任何自报 display
+  位）；digest = canonical JSON 的 SHA-256（键序无关）；绑定法则按固定字段序报告首个
+  偏差。grant ledger 单一铸造入口只接受本实例配对 minter 的 mint（per-instance CSPRNG
+  nonce + digest 一致性重算 —— 伪造/异源/漂移 mint = `unauthorized_mint` 抛错，ledger
+  不动）；authorizationId/sequence 全部 host 分配。拒绝码族两枚（§7.4）：无呈现 =
+  `authorization_required`；呈现而不获授权（unknown/expired/consumed/偏差）=
+  `authorization_mismatch`（审计 reason 区分）—— N1–N9 的上下文全集只是审计注记，
+  裁决永不变。批准卡 payload 单一派生路径（`buildPayswapAuthorizationCardPayload`），
+  展示投影与 proposal 记录 byte-equal（N14），schema 无 display 位（permission prompt
+  的有意 delta）。发送者三检 fail-closed（空受信 origin 集 = 全拒）。批准事件形状
+  strict（无 tuple 呈现位）；plugin 回调形状/`ui://`/模型文本不是批准事件（N26/N17）。
+  批准流解析顺序固定：事件判别 → 发送者/proposal 状态 → challenge 绑定 → port 解析
+  （认证法则先行）→ deny → 角色端口 → 铸造（digest 从 host 自身状态重算）。
+- `authorizationId` 仍不是六操作 params 的已知键（§7.4 dormant hook 维持）—— P1.7
+  落地的是 grant 机制与批准边界，dispatch 层的 grant 校验接线在 P2+/P7 激活。
 
 ## 模块交集
 
@@ -38,3 +53,7 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
 - payswap-plugin（child 侧）：Step 4+ 的 bridge client 消费 `verifyResponseEnvelope`
   与受信注入的五键 env；本模块不 import 插件包（方向：插件侧经 `@zcode/shared/payswap`
   子路径取用，与 host 侧同一份代码）。
+- `@zcode/server` payswap（P1.7）：approval host 以 registry challenge 适配器
+  （issue/resolve 经 P1.6 法则）+ 角色端口（`authorizeAction`）+ grant ledger handle
+  装配 `createPayswapApprovalFlow`；challenge 的 proposal 失效在 server 侧由注册表
+  级联拥有（适配器 no-op，流状态轴兜底）。

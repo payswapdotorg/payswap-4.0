@@ -153,6 +153,7 @@
   "packages/desktop/test/signWindowsHook.test.ts",
   "packages/server/test/tsupConfig.test.ts",
   "packages/server/test/payswap-operator-auth.test.ts",
+  "packages/server/test/payswap-approval.test.ts",
   "packages/web/test/viteConfigLoad.test.ts",
   "packages/zcode-server-cli/test/packaging.test.ts",
   "packages/zcode-server-cli/test/stageRemoteAssetsCli.test.ts",

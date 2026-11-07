@@ -26,6 +26,8 @@ import type { PayswapClosableSocket, PayswapOperatorStore } from "./operator-sto
 export interface PayswapOperatorAuthWiring {
   /** /ws 升级成功后绑定连接（由路由 onOpen 调用；未认证连接为 no-op）。 */
   bindUpgradedConnection(request: Request, socket: PayswapClosableSocket): void;
+  /** P1.7：该升级请求的 operator session 绑定（未认证 → undefined —— 暴露策略输入）。 */
+  getOperatorSessionId(request: Request): string | undefined;
 }
 
 /** 从请求头/cookie 提取 N32 声明字段（operatorId / principal / onBehalfOf）。 */
@@ -104,6 +106,9 @@ export function installPayswapOperatorAuth(
       if (binding) {
         store.bindConnection(binding.sessionId, socket);
       }
+    },
+    getOperatorSessionId(request) {
+      return upgradeBindings.get(request)?.sessionId;
     },
   };
 }

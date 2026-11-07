@@ -1233,6 +1233,7 @@ modules:
     requires:
       - shared-payswap
       - shared
+      - services
     publicEntrypoints:
       - packages/server/src/payswap/index.ts
       - packages/server/src/payswap/contract.ts

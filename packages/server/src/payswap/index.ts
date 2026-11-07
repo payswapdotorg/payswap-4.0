@@ -22,6 +22,15 @@ export {
   type PayswapOperatorSessionCookieMint,
 } from "./operator-store.js";
 export { installPayswapOperatorAuth, type PayswapOperatorAuthWiring } from "./http-wiring.js";
+export {
+  PAYSWAP_APPROVAL_CHANNEL_NAME,
+  PAYSWAP_APPROVAL_CHANNEL_UNAUTHORIZED,
+  createPayswapApprovalHost,
+  payswapApprovalChannelDescriptor,
+  type PayswapApprovalChannel,
+  type PayswapApprovalHost,
+  type PayswapProposalIssueVerdict,
+} from "./approval-service.js";
 export { serverPayswapModule } from "./module.js";
 export {
   PAYSWAP_FINANCIAL_ACTIVATION_REFUSAL,

@@ -84,9 +84,15 @@ jobs:
           tests/payswap-broker-bridge-client.test.ts
           tests/payswap-broker-chain.test.ts
           tests/payswap-operator-law.test.ts
+          tests/payswap-grant-law.test.ts
 
       # PaySwap P1.6：server 侧 operator-principal 生产边界套件（真实 createHttpServer +
       # 真实 HTTP/WS 升级握手 + 0600 原子持久化；packages/server/vitest.config.ts 装配
       # 包内入口 —— 根配置的 projects 相对路径从包目录启动会错位）。
       - name: Payswap server operator-auth tests (production boundary)
         run: pnpm --filter @zcode/server exec vitest run test/payswap-operator-auth.test.ts
+
+      # PaySwap P1.7：server 侧批准边界生产套件（真实 /ws channel + 两级握手 +
+      # N28/N29/N30/N31/N41 批准路径臂 + §1.6.2 item 5c 暴露策略）。
+      - name: Payswap server approval tests (production boundary)
+        run: pnpm --filter @zcode/server exec vitest run test/payswap-approval.test.ts
