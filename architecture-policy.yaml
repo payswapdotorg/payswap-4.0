@@ -1224,6 +1224,21 @@ modules:
     layers:
       app: .
     owner: plugin
+  # server-payswap：由 architecture:adopt 登记（P1.6 operator-principal 的 server 侧
+  # 状态 owner 与 /ws 两级握手接线；法则实现住 shared-payswap —— ADR-11）
+  - id: server-payswap
+    roots:
+      - packages/server/src/payswap
+    managed: true
+    requires:
+      - shared-payswap
+      - shared
+    publicEntrypoints:
+      - packages/server/src/payswap/index.ts
+      - packages/server/src/payswap/contract.ts
+    layers:
+      app: .
+    owner: plugin
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
@@ -1280,6 +1295,10 @@ exceptions:
     rule: unmanaged-new-file
     paths: [ packages/zcode-cua/vitest.config.ts ]
     reason: 该文件只装配测试项目，开源占位版本用于保持根单测入口可运行；不包含 producer 运行逻辑，不为同目录实现文件开放例外。
+  - id: payswap-server-test-project-config
+    rule: unmanaged-new-file
+    paths: [ packages/server/vitest.config.ts ]
+    reason: 该文件只装配 packages/server 的包内 vitest 入口（与 apps/zcode-cli/vitest.config.ts 同式——根配置的 projects 相对路径以根 cwd 解析，从包目录启动会错位）；PaySwap P1.6 的服务端边界套件经它运行（ADR-11）；不为同目录实现文件开放例外。
   - id: project-location-cache-recovery-existing-edit
     rule: unmanaged-new-file
     paths:

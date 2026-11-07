@@ -797,3 +797,119 @@ in-full, and the zero-credential scan over audit/stderr/results. The Wave-1
 no-credential arm (S0b/S1 snapshot refusals) is preserved verbatim — the
 bridge arms only when the five-key tuple is present, which only the trusted
 injection provides.
+
+## ADR-11 — P1.6 operator-principal: the law's home, the store's scope, and the upgrade's observable surface
+
+**Context.** The P1 completion handoff (work package 5) binds the server
+operator-principal model: addendum §1.6.3 items 1–9 with rows N27–N32, N40 and
+N41. The addendum specifies the model (two-level `/ws` handshake, per-operator
+credentials, stable principals, workspace-scoped roles, credential lifecycle,
+challenge binding) but leaves five integration decisions to this work package:
+where the law lives, what the server store owns, how the upgrade handshake is
+observable, how revocation reaches live connections, and what the deployment
+activation gate looks like. This ADR records those decisions as-built.
+
+**Decision.**
+
+1. **D11.1 — The law lives in the shared protocol module; the server keeps a
+   thin state owner.** Credential minting/parsing (digest-only, constant-time),
+   the registry (operators, credential records, sessions, challenges,
+   workspace-scoped role bindings, the rotation/revocation cascades), and the
+   two-level handshake evaluation are single-implementation modules in
+   `packages/shared/src/payswap/` (`operator-credentials.ts`,
+   `operator-registry.ts`, `operator-handshake.ts`) — the same discipline as
+   the envelope/replay/bridge modules (§6.4(5): one implementation, drift is a
+   violation). `packages/server/src/payswap/` (managed module `server-payswap`,
+   adopted) owns only what is inherently server-side: the persisted state file,
+   connection registration/closure, and the Hono wiring (guard, endpoint,
+   bind-helper).
+
+2. **D11.2 — Session lifetime and cookie lifetime are one knob; rotation grace
+   is the second.** The addendum gives cookie "default 15 min" and session "a
+   bounded, deployment-configured lifetime" — two sentences for one concept
+   (the cookie *carries* the session id; its Max-Age is the session lifetime,
+   default 15 min, `sessionLifetimeMs`). Rotation grace is the independent
+   knob (default 24 h, `rotationGraceMs`). Both are injectable for the test
+   clock.
+
+3. **D11.3 — Explicit revocation is principal-scoped; rotation-end closure is
+   record-scoped; both are timer-free.** `revokeOperatorCredential` closes
+   *all* of the principal's sessions and invalidates their pending challenges
+   (the addendum item 6 text: "the principal's active sessions"); an operator
+   holding a second live credential must be re-issued deliberately — admins
+   rotate, they do not revoke, when they only want to cycle credentials.
+   Rotation-end closure is record-scoped ("sessions it authenticated"): the
+   session liveness law re-evaluates the minting credential on every
+   verification (lazy death, no timers), and `sweepRotationWindows()` — called
+   on every upgrade evaluation and cookie mint — eagerly closes the affected
+   connections and invalidates their challenges.
+
+4. **D11.4 — The upgrade handshake's credential precedence is
+   header-over-cookie with no fallback.** When both an operator token header
+   and a session cookie are presented, the header wins and its failure is
+   final — there is no credential shopping between level-2 transports. An
+   absent credential is not a failure: the client upgrades as an ordinary
+   unbound connection (no financial principal; financial operations on it
+   refuse — the N28 session-level arm). Only a *presented-but-invalid*
+   credential refuses the upgrade.
+
+5. **D11.5 — Upgrade refusals are bodyless bare 401s; typed codes ride the
+   observable HTTP face.** The `@hono/node-ws` adapter writes every non-101
+   response to an upgrade-intent request as a bare status line with
+   `Content-Length: 0` — no middleware can attach a body. As-built, every
+   `/ws` upgrade refusal (level-1 or level-2, any failure class) is
+   byte-identical to the client: the single-generic-failure law
+   (`operator_authentication_failed`) holds a fortiori on this surface. The
+   typed code is observable where the adapter carries bodies: the
+   operator-session endpoint (real HTTP responses — proven byte-equal across
+   unknown/malformed/rotated-out/revoked in the boundary suite) and the law
+   verdicts. The level-1-before-level-2 order is structural (middleware
+   registration order) and proven at the law level by the throwing-getter row.
+
+6. **D11.6 — Financial activation is a typed two-site gate.**
+   `resolvePayswapFinancialActivation` (entry face) refuses financial mode
+   requested without `ZCODE_SERVER_AUTH_TOKEN` (N27; the entry exits non-zero
+   — a financially-requested deployment never serves in a weaker posture), and
+   `createHttpServer` independently refuses `payswapFinancial` without an
+   `authToken` (defense in depth — no caller can construct a weak financial
+   server). The financial middleware variant disables the upstream `?token=`
+   query branch (§1.6.3 item 7 — no credential of either level in URLs) while
+   keeping Bearer and the lite cookie; non-financial deployments keep the
+   upstream middleware verbatim (S-preservation row).
+
+7. **D11.7 — Provisioning is an in-process admin API, not a network
+   endpoint.** Operator provisioning/rotation/revocation are store methods
+   (persisted under the private-persistence discipline: 0600, atomic rename,
+   digest-only state; sessions/challenges are memory-only — restart revokes
+   them by construction). A network endpoint guarded only by the shared
+   deployment token would let any token holder mint approver credentials —
+   exactly what §1.6.3 item 1 forbids. An operator CLI wrapper over these
+   methods is deployment sugar (P1.8 or later); the P1.6 boundary is the
+   store's own API exercised by the suites.
+
+8. **D11.8 — Challenge rows close at the law level in P1.6; the approval-path
+   closure lands with P1.7.** N29/N30's full semantics (cross-principal
+   resolution, expired/revoked-session resolution, cascade invalidation) and
+   N31/N41's service-boundary role law are proven against the registry law
+   (bootstrap suite) and the server store (issue/invalidate observable at
+   revocation through the real server). The rows' *approval-resolution* arms
+   (a resolution arriving on the approval channel producing/not producing a
+   grant) require P1.7's grant machinery and are tracked there — the register
+   entry states this split explicitly. The exposure-policy allowlist
+   (§1.6.2 item 5c) lands with the approval channel it guards (P1.7).
+
+**Evidence.** Law suite `tests/payswap-operator-law.test.ts` (20 rows:
+credential format/digest-only/constant-time, stable principal, rotation grace
+window + audit flag, rotation-end sweep, principal-scoped revocation cascade,
+session lifetime + lazy credential law, N29/N30 challenge rows, single-use/
+expiry/secret-match, N31/N41 role rows, N32 claim law, handshake order +
+generic-collapse + both transports). Boundary suite
+`packages/server/test/payswap-operator-auth.test.ts` (14 rows through real
+`createHttpServer` + real HTTP + raw WebSocket upgrade handshakes: N27 both
+sites, query disable + upstream preservation, level-1-first order, bare-401
+collapse across four failure classes, ordinary-client unbound upgrade, native
+authenticated upgrade + live session, cookie endpoint attributes + wrong-
+credential generic + no-level-1 upstream, session expiry at the upgrade, N32
+foreign-claim refusals at both faces, revocation closing a live connection
+(code 1008) + challenge invalidation + re-upgrade refusal, 0600 digest-only
+persistence + principal restore across restart).
