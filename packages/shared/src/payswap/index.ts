@@ -33,3 +33,4 @@ export * from "./approval-card.js";
 export * from "./approval-origin.js";
 export * from "./approval-flow.js";
 export * from "./hook-admission.js";
+export * from "./browser-admission.js";

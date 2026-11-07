@@ -105,6 +105,7 @@ import {
   type NodeReplBrowserBroker,
 } from "./node-repl-browser-broker.js";
 import { resolveBuiltInNodeReplMcpServers } from "./built-in-node-repl.js";
+import { wrapBrowserControlPortWithPayswapBrowserAdmission } from "./payswap-browser-admission.js";
 import {
   createPayswapBrokerCoordinator,
   createSingleSessionScopeResolver,
@@ -306,7 +307,19 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         workingDirectory,
         workspaceIdentity: options.runtimeConfig?.memory?.workspaceIdentity,
       });
-    const browserControlPort = options.browserControlPort;
+    // PaySwap Gate E3（addendum §5.3，P1.8）：app 装配处一次性包上浏览器准入门 ——
+    // 模型控制的 navigate 过 shared 的 browser-admission 法则（金融模式开 = PSP API
+    // host 拒绝，typed navigation_blocked，无上游 dispatch；关 = 逐字节直通），下游
+    // 的 runtime 浏览器工具、node_repl browser broker、forChildSession 子端口全部经
+    // 此（模型控制的浏览器命令在本 app 的唯一汇合点）。per-command fresh config 读
+    // （spawn-wiring 的 broker live reader 同款纪律）。
+    const browserControlPort = options.browserControlPort
+      ? wrapBrowserControlPortWithPayswapBrowserAdmission({
+          port: options.browserControlPort,
+          env: options.env,
+          workingDirectory,
+        })
+      : undefined;
     if (
       browserControlPort &&
       pluginRuntimeFeatures.browserUse === true &&
