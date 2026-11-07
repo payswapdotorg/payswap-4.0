@@ -1183,12 +1183,14 @@ modules:
     layers:
       adapters: .
     owner: desktop
-  # payswap-plugin：由 architecture:adopt 登记
+  # payswap-plugin：由 architecture:adopt 登记（Step 7 起依赖 shared-payswap —— 子进程侧
+  # bridge transport/验签/分配器经共享协议模块，ADR-9 D9.7 + ADR-10 D10.1）
   - id: payswap-plugin
     roots:
       - apps/zcode-cli/packages/payswap-plugin
     managed: true
-    requires: []
+    requires:
+      - shared-payswap
     publicEntrypoints:
       - apps/zcode-cli/packages/payswap-plugin/index.ts
       - apps/zcode-cli/packages/payswap-plugin/contract.ts

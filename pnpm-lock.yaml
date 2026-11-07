@@ -744,6 +744,9 @@ importers:
       '@types/node':
         specifier: ^24.0.0
         version: 24.12.2
+      '@zcode/shared':
+        specifier: workspace:*
+        version: link:../../../../packages/shared
       esbuild:
         specifier: ^0.25.0
         version: 0.25.12

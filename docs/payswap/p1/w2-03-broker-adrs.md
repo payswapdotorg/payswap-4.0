@@ -711,3 +711,89 @@ the production host launch path and needs exactly that client. Step 6
 proves the discipline it will ride: the allocator rows (send-boundary only,
 uncertain-delivery retention, provable-non-delivery dual arm, abandonment,
 never-reuse) and both broker-integration delivery-situation rows.
+
+---
+
+## ADR-10 — Step 7 as-built: the child-side transport, the session-hint channel, the bridge-failure surface, and the credential restore
+
+**Context.** D9.7 scoped the child-side bridge transport to Step 7. The
+contract pins the protocol pieces (§3.3 one-request-per-connection, §6.1(5)
+child-side size pre-check, §6.5(3) per-attempt read deadline and full-envelope
+verification, §9.3(5)/(6) allocation/retry/retirement discipline) but four
+integration decisions were Step 7's to make: where the transport lives, where
+the session hint comes from, how bridge failures surface on the tool envelope,
+and how the five-key tuple reaches the plugin server past the CLI entry's
+sanitization. This ADR records those decisions as-built.
+
+**Decision.**
+
+1. **D10.1 — The transport lives in the shared protocol module**
+   (`packages/shared/src/payswap/bridge-client.ts`). The child is its only
+   consumer, but §6.4(5)'s single-implementation discipline (host and child
+   share one envelope/replay/canonical implementation) extends naturally: the
+   transport wires exactly those modules, and colocating it keeps the protocol
+   from drifting into two trees. The plugin bundles it via esbuild
+   (`@zcode/shared: workspace:*` devDependency, the zcode-site-plugin
+   precedent); `dist/server.mjs` stays self-contained.
+
+2. **D10.2 — The session hint is the host-namespaced `_meta`**
+   (`com.zcode/request-context` → `session_id`), never a top-level `_meta` key
+   — the node_repl browser-bridge boundary discipline, verbatim: the top-level
+   `_meta` is third-party extensible and must not become a session-routing
+   credential. The hint remains a routing hint only (§8.1
+   resolved-not-asserted); a missing/blank hint is a typed child-side failure
+   (`session_hint_missing`) because §6.1's `sessionId` is `min(1)` — no valid
+   request can be formed, so nothing is sent and no sequence is consumed.
+
+3. **D10.3 — Bridge failures surface as a third tool-envelope kind**
+   (`{kind:"bridge_failure", failure:{code,message,retryable}}`). §6.2's
+   "never conflated with business refusals" forces the three-code
+   `kind:"refused"` surface to stay untouched; verified §6.3 bridge errors and
+   child-side typed failures (the closed set in
+   `PayswapBridgeClientFailureCode`) ride the new kind. A verified success
+   body's `data` is the tool envelope itself (§6.2: the business envelope
+   rides inside `data`), serialized verbatim.
+
+4. **D10.4 — Verification rejection is never retried; delivery failures
+   retry the same sequence within a bounded budget (default 1).** §6.5(3)
+   permits retry on rejection; Step 7 declines it: a response that was
+   received and failed authentication means the endpoint is adversarial or
+   substituted — re-sending the same request only widens the suppression
+   window and cannot produce a verifiable answer that was not already
+   available. The rejected attempt's sequence and its carried retirement
+   declarations are re-queued (broker-side declaration handling is
+   idempotent-tolerant, §9.3(6)). Delivery-failure situations follow §9.3(5)
+   exactly: provable non-delivery (connect failure, failed write callback)
+   and uncertain delivery (bytes handed over, closed or deadline) retry the
+   same `seq` byte-for-byte; budget exhaustion surfaces the last failure's
+   category (`connect_failed` / `response_deadline_exceeded` /
+   `retry_budget_exhausted`) with `retryable: true` — re-issuing the logical
+   request is the caller's decision (§6.5(3)).
+
+5. **D10.5 — The `__zcode-plugin-host` dispatch restores the captured tuple
+   around `module.main()`** (the CUA socket restore, promoted to five keys).
+   The CLI entry's sanitization captures the tuple before stripping it
+   (§4.3(1)); the restore happens only after the serving-context gate
+   (impostor plugin ids never reach the import), only in the official PaySwap
+   context, and is reverted in `finally`. The delivery surface remains
+   exactly one process — the intended child (§4.2): the plugin server reads
+   the five keys at construction inside `main()`, arms the bridge, and never
+   logs them.
+
+6. **D10.6 — The §6.1(5) size pre-check uses a maximal-width sequence
+   placeholder.** The pre-check must precede allocation, but the serialized
+   line embeds the sequence. A 16-digit placeholder (≥ any safe integer's
+   width) with the next retirement batch (mirroring `takeRetirements`'
+   semantics: ascending, ≤ 8, below the carrier) yields an exact upper bound:
+   if the probe line fits, the real line fits. With more than eight pending
+   retirements the probe can exceed the cap while the real line would not —
+   an over-conservative refusal in an extreme edge, chosen in the fail-closed
+   direction.
+
+**Consequences.** The chain suite proves each decision on the real path:
+same-seq byte-identical retries (suppression relay), retirement declarations
+riding the next carrier, the null-bound sibling-relay refusal rejected
+in-full, and the zero-credential scan over audit/stderr/results. The Wave-1
+no-credential arm (S0b/S1 snapshot refusals) is preserved verbatim — the
+bridge arms only when the five-key tuple is present, which only the trusted
+injection provides.
