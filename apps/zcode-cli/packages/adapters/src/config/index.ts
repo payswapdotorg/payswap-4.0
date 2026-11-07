@@ -155,6 +155,9 @@ class ConfigStore {
       if (config.plugins.suppressedBuiltins !== undefined) {
         this.set(ConfigKey.PluginsSuppressedBuiltins, config.plugins.suppressedBuiltins, scope);
       }
+      if (config.plugins.financialHookTrust !== undefined) {
+        this.set(ConfigKey.PluginsFinancialHookTrust, config.plugins.financialHookTrust, scope);
+      }
     }
     if (config.skills) {
       if (config.skills.enabled !== undefined)
@@ -306,6 +309,9 @@ export class ConfigPortImpl implements ConfigPort {
         suppressedBuiltins:
           this.store.get(ConfigKey.PluginsSuppressedBuiltins) ??
           DefaultConfig.plugins.suppressedBuiltins,
+        financialHookTrust:
+          this.store.get(ConfigKey.PluginsFinancialHookTrust) ??
+          DefaultConfig.plugins.financialHookTrust,
       },
       skills: {
         enabled: this.store.get(ConfigKey.SkillsEnabled) ?? true,
@@ -421,6 +427,8 @@ function getDefaultValue(key: ConfigKey): unknown {
       return defaults.plugins.options;
     case ConfigKey.PluginsSuppressedBuiltins:
       return defaults.plugins.suppressedBuiltins;
+    case ConfigKey.PluginsFinancialHookTrust:
+      return defaults.plugins.financialHookTrust;
     case ConfigKey.SkillsEnabled:
       return defaults.skills.enabled;
     case ConfigKey.SkillsIncludeInstructions:

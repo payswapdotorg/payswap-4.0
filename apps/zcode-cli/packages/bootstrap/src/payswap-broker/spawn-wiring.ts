@@ -33,6 +33,7 @@ import {
   mintBrokerBootState,
   PAYSWAP_OFFICIAL_PLUGIN_ID,
   readPayswapBrokerCredentialTupleFromEnv,
+  readPayswapFinancialModeFromConfig,
   type PayswapBrokerBootState,
   type PayswapBrokerCredentialTuple,
   type PayswapInstanceRegistry,
@@ -315,17 +316,12 @@ export function createSingleSessionScopeResolver(
 }
 
 /**
- * §7.3 live 状态的纯读：enabled map（payswap defaultEnabled=false —— P1.0 种子）+
- * financialWorkspace opt-in。其它插件的配置永不串扰。
+ * §7.3 live 状态的纯读：委托 shared 的单一投影（readPayswapFinancialModeFromConfig
+ * —— P1.8 起 Gate E1 的 hook 准入门与 broker live reader 共用同一实现，两处投影
+ * 永不漂移）。其它插件的配置永不串扰（投影只读官方 PaySwap 插件两键）。
  */
 export function readPayswapLiveStateFromConfig(
   config: PayswapLiveConfigShape,
 ): { pluginEnabled: boolean; financialWorkspace: boolean } {
-  const pluginConfig = config.plugins;
-  const enabledPlugins = pluginConfig?.enabledPlugins;
-  const pluginOptions = pluginConfig?.options?.[PAYSWAP_OFFICIAL_PLUGIN_ID];
-  return {
-    pluginEnabled: enabledPlugins?.[PAYSWAP_OFFICIAL_PLUGIN_ID] ?? false,
-    financialWorkspace: pluginOptions?.financialWorkspace === true,
-  };
+  return readPayswapFinancialModeFromConfig(config.plugins ?? {});
 }

@@ -50,6 +50,7 @@ export const ConfigKey = {
   PluginsExtraKnownMarketplaces: "plugins.extraKnownMarketplaces",
   PluginsOptions: "plugins.options",
   PluginsSuppressedBuiltins: "plugins.suppressedBuiltins",
+  PluginsFinancialHookTrust: "plugins.financialHookTrust",
 
   // Skills
   SkillsEnabled: "skills.enabled",
@@ -134,7 +135,9 @@ export type ConfigValue<K extends ConfigKey> = K extends "modelStream.idleTimeou
                                   ? Record<string, PluginOptionValues>
                                   : K extends "plugins.suppressedBuiltins"
                                     ? string[]
-                                    : K extends "logging.level"
+                                    : K extends "plugins.financialHookTrust"
+                                      ? string[]
+                                      : K extends "logging.level"
                                       ? "debug" | "info" | "warn" | "error"
                                       : K extends "logging.format"
                                         ? "text" | "json"
@@ -324,6 +327,7 @@ export const DefaultRuntimeConfig: RuntimeConfig = {
     enabled: true,
     enabledPlugins: {},
     extraKnownMarketplaces: {},
+    financialHookTrust: [],
     options: {},
     suppressedBuiltins: [],
   },

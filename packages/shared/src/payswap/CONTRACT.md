@@ -41,6 +41,12 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
   （认证法则先行）→ deny → 角色端口 → 铸造（digest 从 host 自身状态重算）。
 - `authorizationId` 仍不是六操作 params 的已知键（§7.4 dormant hook 维持）—— P1.7
   落地的是 grant 机制与批准边界，dispatch 层的 grant 校验接线在 P2+/P7 激活。
+- Gate E1 hook 准入（addendum §5.1，P1.8；`hook-admission.ts`）：金融模式关 =
+  恒放行（上游行为不变）；开（S2）= 仅 official / 显式白名单（`plugins.financialHookTrust`，
+  权威 id 精确匹配，无通配/前缀/跨市场）。金融模式投影（`readPayswapFinancialModeFromConfig`
+  pair + `isPayswapFinancialModeActive` AND）是单一实现—— broker live reader
+  （spawn-wiring）自 P1.8 起委托本模块，hook 门与三码法则的「金融模式」永不漂移。
+  只门 hook，不判插件生命周期（skills/commands/MCP servers 不受影响）。
 
 ## 模块交集
 
@@ -53,6 +59,10 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
 - payswap-plugin（child 侧）：Step 4+ 的 bridge client 消费 `verifyResponseEnvelope`
   与受信注入的五键 env；本模块不 import 插件包（方向：插件侧经 `@zcode/shared/payswap`
   子路径取用，与 host 侧同一份代码）。
+- `@zcode/adapters` plugins（P1.8）：Gate E1 的接线点 —— `canRunPluginHooks` 按源注释
+  命名的升级路径收回判断并调用 `isPayswapPluginHookAdmitted`；白名单键
+  `plugins.financialHookTrust` 的 schema/装配在 adapters config（contracts 的
+  PluginConfig/ConfigKey 声明形状）。判定在插件解析期，随上游 per-session 快照语义。
 - `@zcode/server` payswap（P1.7）：approval host 以 registry challenge 适配器
   （issue/resolve 经 P1.6 法则）+ 角色端口（`authorizeAction`）+ grant ledger handle
   装配 `createPayswapApprovalFlow`；challenge 的 proposal 失效在 server 侧由注册表

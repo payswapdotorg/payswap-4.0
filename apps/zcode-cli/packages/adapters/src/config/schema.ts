@@ -172,6 +172,8 @@ const pluginsSchema = z.object({
     .optional(),
   options: z.record(z.string(), z.record(z.string(), pluginOptionValueSchema)).optional(),
   suppressedBuiltins: z.array(z.string().min(1)).optional(),
+  // Gate E1（addendum §5.1）：金融模式下允许跑 hook 的三方插件白名单（权威 id 精确匹配）。
+  financialHookTrust: z.array(z.string().min(1)).optional(),
 });
 
 export const LEGACY_CUA_PLUGIN_ID = "zcode-cua@zcode-plugins-official";
