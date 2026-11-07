@@ -47,6 +47,32 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
   pair + `isPayswapFinancialModeActive` AND）是单一实现—— broker live reader
   （spawn-wiring）自 P1.8 起委托本模块，hook 门与三码法则的「金融模式」永不漂移。
   只门 hook，不判插件生命周期（skills/commands/MCP servers 不受影响）。
+- Gate E3 受控 provider-authorization Browser 流（addendum §5.3，P1.8；
+  `browser-admission.ts`）三条款决策表：
+  - **条款 1（模型臂）**：金融模式开（S2，同一 `isPayswapFinancialModeActive` 投影——
+    与 E1/broker 永不漂移）时，模型控制的导航到 PSP API host 一律拒绝
+    （`psp_api_host_blocked`）；URL 不可解析 = 无法证明非 PSP host → fail-closed 拒绝。
+  - **条款 2（host-initiated 臂）**：provider 授权流（OAuth redirect / dashboard
+    onboarding）只导航到**该 provider** authSpec 派生的官方授权 host 白名单
+    （`derivePayswapProviderAuthorizationHosts`，authorizeUrl/tokenUrl/rotationUrl 的
+    host），白名单外一律拒绝（`authorization_host_not_allowed`）—— allowlist，不是
+    blocklist；空白名单 = 全拒（approval-origin 空受信集同款 fail-closed）。URL 永远
+    不来自模型。
+  - **条款 3（保真臂）**：金融模式关 = 与上游完全一致（零回归，E1 臂 1 同款）；开时
+    非 PSP host 照常放行 —— Browser 行为只按 host 分类变化，非 PSP 域不变。
+  - **host 匹配纪律**：精确 host 等值（小写规范化 + 去单个尾点——DNS 等价），无通配/
+    无后缀/无子域传播；端口无关（`api.stripe.com:8443` 仍是该 host）；userinfo 不参与
+    （`https://evil.test@api.stripe.com/` 的目标是 api.stripe.com；反向亦然）。与 E1
+    的权威 id 精确匹配同款纪律。
+  - **种子记录（数据驱动，非代码分支）**：`PAYSWAP_SEED_PSP_PROVIDER_HOSTS` ——
+    API host denylist = deliverable 04 §195 记录的三家四 host（api.stripe.com /
+    api.paystack.co / api-m.paypal.com / api-m.sandbox.paypal.com，doc 04 的 dated
+    evidence；P2/P3 按 dated-evidence 纪律复验扩表）；authorizationHosts P1 为空
+    （P1 无 host-initiated provider flow —— account service 是 P2 落地，空表 =
+    fail-closed 全拒是正确生产行为），P2 的 authSpec 派生填充。
+  - **判定时机**：per-command live 读（fresh config → `isPayswapFinancialModeActive`），
+    与 broker §7.3 三码法则、T2 拒绝码即时翻转同款纪律；包装层只对 URL 携带的
+    导航命令（`navigate`）求值，其余命令零开销直通（保真面最小化）。
 
 ## 模块交集
 
@@ -63,6 +89,14 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
   命名的升级路径收回判断并调用 `isPayswapPluginHookAdmitted`；白名单键
   `plugins.financialHookTrust` 的 schema/装配在 adapters config（contracts 的
   PluginConfig/ConfigKey 声明形状）。判定在插件解析期，随上游 per-session 快照语义。
+- `@zcode/bootstrap` create-app（P1.8）：Gate E3 的接线点 —— `options.browserControlPort`
+  在 app 装配处一次性包上准入包装（`wrapBrowserControlPortWithPayswapBrowserAdmission`，
+  `src/app/payswap-browser-admission.ts`）：模型控制的 `navigate` 命令过
+  `admitPayswapModelBrowserNavigation`，拒绝映射为 Browser 面已有的 typed
+  `navigation_blocked` 错误码（上游 managed-browser URL 检查同码），内层端口不被调用；
+  其余命令/方法直通；`forChildSession` 派生的子端口同样过门（子代理导航不得绕过）。
+  host-initiated 臂（条款 2）的法则与派生在 shared，驱动方是 P2 的 account service
+  （authSpec）—— P1 只落法则与 fail-closed 空白名单语义。
 - `@zcode/server` payswap（P1.7）：approval host 以 registry challenge 适配器
   （issue/resolve 经 P1.6 法则）+ 角色端口（`authorizeAction`）+ grant ledger handle
   装配 `createPayswapApprovalFlow`；challenge 的 proposal 失效在 server 侧由注册表
