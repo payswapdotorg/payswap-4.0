@@ -81,3 +81,5 @@ jobs:
           tests/payswap-broker-spawn-wiring.test.ts
           tests/payswap-broker-session-scope.test.ts
           tests/payswap-broker-replay.test.ts
+          tests/payswap-broker-bridge-client.test.ts
+          tests/payswap-broker-chain.test.ts
