@@ -132,7 +132,14 @@ async function startApprovalServer(
     now: clock.now,
     sessionLifetimeMs: options.sessionLifetimeMs ?? 15 * 60_000,
   });
-  const approval = createPayswapApprovalHost({ store, now: clock.now });
+  // P1.8 T3 卡臂：生产装配（entry-http）在 N27 activated 分支内以 env 投影供给
+  // financialMode reader —— 本套件的生产边界形态 = 激活部署（发卡路径可达），故供给
+  // active reader；法则臂（非 active 拒发）由 bootstrap 的 surface-lifecycle 电池钉住。
+  const approval = createPayswapApprovalHost({
+    store,
+    now: clock.now,
+    financialMode: () => ({ active: true }),
+  });
   const services = new ServiceCollection();
   // 暴露策略的 fail-closed 默认：channel 注册的就是拒绝 stub；只有 operator 绑定
   // 连接（/ws per-connection override）才换到 session-bound 真 service。

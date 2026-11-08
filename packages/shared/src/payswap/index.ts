@@ -13,7 +13,11 @@
  * 绑定、单一铸造路径的 grant ledger 与 enforcement seam、Class-B 卡 payload、
  * 批准 origin 三检与事件判别、批准流状态机 + 卡实例 challenge 存储，addendum
  * §1.3/§1.6）同样在此：server 侧批准装配（packages/server 的 approval host）与
- * law 级测试共用同一份实现（ADR-12）。
+ * law 级测试共用同一份实现（ADR-12）。P1.8 的表面生命周期法则（T3 卡臂的
+ * financialMode live 读门 + T7 item 3 的 revokePendingProposals；§2.3 item 1 臂 (b)
+ * 的表面内容注册表与 opt-out 撤销执行器，surface-revocation.ts）也在此：桌面卡
+ * 接线（D12.7）以 runPluginUiHostTeardown / clearPluginUiSurfaceFeed /
+ * clearPluginUiWidgetState 接线本模块的端口。
  */
 
 export * from "./canonical-json.js";
@@ -34,3 +38,4 @@ export * from "./approval-origin.js";
 export * from "./approval-flow.js";
 export * from "./hook-admission.js";
 export * from "./browser-admission.js";
+export * from "./surface-revocation.js";

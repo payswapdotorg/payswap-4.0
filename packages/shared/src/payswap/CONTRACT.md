@@ -73,6 +73,31 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
   - **判定时机**：per-command live 读（fresh config → `isPayswapFinancialModeActive`），
     与 broker §7.3 三码法则、T2 拒绝码即时翻转同款纪律；包装层只对 URL 携带的
     导航命令（`navigate`）求值，其余命令零开销直通（保真面最小化）。
+- **T 系表面生命周期法则（addendum §2.2 T3 卡臂 + §2.3 item 1 臂 (b)/item 3，P1.8；
+  `approval-flow.ts` 的两个新臂 + `surface-revocation.ts`）：
+  - **T3 卡臂**：`issueProposal` 装配 `financialMode: () => { active }` live 读
+    （每次发卡现读）；非 S2 一律拒发 typed `financial_mode_inactive`，门在最外层
+    （先于 tuple 过期评估，零副作用）；缺省 reader = 无法证明 S2 → fail-closed
+    拒发（`readPayswapFinancialModeFromConfig` 的缺省姿态同款）。S2 行为不变。
+  - **T7 item 3**：`revokePendingProposals()` 批量失效 pending proposal 及其
+    一次性 challenge（只扫 pending —— approved/denied 审计历史不重写）；事后到达的
+    approve/deny → `proposal_not_pending`（N15 无 live challenge 臂）。
+  - **表面内容注册表**（`surface-revocation.ts`）：实例按捕获租约
+    （sandboxId/initId + appIdentity 租约三元组；token 不入册）+
+    has-ever-received-protected-data 标记追踪；注册面 fail-closed —— 仅结构上属于
+    官方插件的键（buildPluginUiSurfaceKey 同构：[sessionKey, pluginId, server,
+    resourceUri, scopeId]，pluginId === PAYSWAP_OFFICIAL_PLUGIN_ID）可入册，外来/
+    畸形键抛错（恰自有键纪律）。计划：标记 → dispose；标记 + 锚点占位 →
+    dispose_and_replace；未标记 → best_effort_event（无安全属性依赖，§2.3 item 5）；
+    已关闭实例无拆除动作但键仍在清除集（feed 快照跨关闭存留）。
+  - **撤销执行器**（`runPayswapSurfaceOptOutRevocation`）：串行（首注册序）、每实例
+    有界守护窗（`teardownGuardMs` 必填 —— D12.7 以上游 MCP_APPS_TEARDOWN_TIMEOUT_MS
+    同源值供给）—— 页面永不合作 → 窗到期推进；
+    teardown 拒绝不中止整批；替换租约的 **sandboxId 必须新**（复用 = fail-closed
+    抛错；initId 不是新鲜性信号 —— 上游注册表每次新登记铸造常量 initId=1）；
+    替换实例重新入册；retention 恰按计划键集两 store 都清。接线缝（D12.7）：
+    teardownInstance ↔ runPluginUiHostTeardown；clearSurfaceFeed/clearWidgetState ↔
+    clearPluginUiSurfaceFeed/clearPluginUiWidgetState。
 
 ## 模块交集
 
@@ -100,4 +125,6 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
 - `@zcode/server` payswap（P1.7）：approval host 以 registry challenge 适配器
   （issue/resolve 经 P1.6 法则）+ 角色端口（`authorizeAction`）+ grant ledger handle
   装配 `createPayswapApprovalFlow`；challenge 的 proposal 失效在 server 侧由注册表
-  级联拥有（适配器 no-op，流状态轴兜底）。
+  级联拥有（适配器 no-op，流状态轴兜底）。P1.8：host 透传 `financialMode` reader
+  （entry-http 在 N27 activated 分支内以同一 env 投影供给 —— T3 卡臂）并暴露
+  `revokePendingProposals`（T7 item 3 的 in-process host API）。
