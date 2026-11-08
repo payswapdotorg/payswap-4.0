@@ -72,6 +72,14 @@ function originOf(url: string): string {
   return pathSeparator === -1 ? url : url.slice(0, separator + 3 + pathSeparator);
 }
 
+/**
+ * frame URL → origin（scheme://host[:port] 前缀域；无路径分隔符时整个 URL）。单一实现 ——
+ * 法则三检的第 3 检与 D12.7 接线的生产受信 origin 派生共用（字节一致才可比）。
+ */
+export function payswapFrameOriginOf(url: string): string {
+  return originOf(url);
+}
+
 function normalizeTrustedOrigins(
   origins: ReadonlySet<string> | readonly string[],
 ): ReadonlySet<string> {

@@ -88,6 +88,7 @@ jobs:
           tests/payswap-hook-admission.test.ts
           tests/payswap-browser-admission.test.ts
           tests/payswap-surface-lifecycle.test.ts
+          tests/payswap-approval-desktop.test.ts
 
       # PaySwap P1.6：server 侧 operator-principal 生产边界套件（真实 createHttpServer +
       # 真实 HTTP/WS 升级握手 + 0600 原子持久化；packages/server/vitest.config.ts 装配

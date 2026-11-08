@@ -1240,6 +1240,34 @@ modules:
     layers:
       app: .
     owner: plugin
+  # ui-payswap：由 architecture:adopt 登记
+  - id: ui-payswap
+    roots:
+      - packages/ui/src/payswap
+    managed: true
+    requires:
+      - mcp-apps-protocol
+      - plugin-ui
+      - shared-payswap
+    publicEntrypoints:
+      - packages/ui/src/payswap/index.ts
+      - packages/ui/src/payswap/contract.ts
+    layers:
+      app: .
+    owner: plugin
+  # desktop-payswap：由 architecture:adopt 登记
+  - id: desktop-payswap
+    roots:
+      - packages/desktop/src/main/payswap
+    managed: true
+    requires:
+      - shared-payswap
+    publicEntrypoints:
+      - packages/desktop/src/main/payswap/index.ts
+      - packages/desktop/src/main/payswap/contract.ts
+    layers:
+      app: .
+    owner: plugin
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
