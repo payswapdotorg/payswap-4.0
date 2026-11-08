@@ -30,9 +30,11 @@
  *   （恰自有键纪律 —— 「clears exactly its own surface keys (its pluginId/server),
  *   touching no other plugin's entries」）。
  * - **执行器**：串行（注册序）、每实例有界拆除窗（默认上游 MCP_APPS_TEARDOWN_TIMEOUT_MS
- *   纪律）；页面永不合作 → 窗到期推进；替换租约必须 sandboxId/initId 皆新（复用旧
- *   sandboxId = fail-closed 抛错 —— disposeSandbox 契约「new pages use new credentials
- *   and sandboxIds」）；retention 清除恰按计划键集、两 store 都清。
+ *   纪律）；页面永不合作 → 窗到期推进；替换租约的 sandboxId 必须新（复用旧 sandboxId =
+ *   fail-closed 抛错 —— disposeSandbox 契约「new pages use new credentials and
+ *   sandboxIds」的新鲜性信号是 sandboxId/新凭证；initId 不是新鲜性信号：上游注册表
+ *   对每次新登记都铸造常量 initId=1，desktop/src/main/pluginSandbox/registry.ts:155 ——
+ *   合法的新替换实例 initId 与旧实例相同）；retention 清除恰按计划键集、两 store 都清。
  * - **S 系投影**（§2）：S0b = installed-but-disabled 贡献**零运行时组件**（上游
  *   emptyComponents 纪律），metadata 保留供管理页展示连续性；S1 = 恰为标准启用增量
  *   （delta-equivalence：与同形状对照插件的增量种类完全一致，仅名字参数化 ——
@@ -537,8 +539,9 @@ function createRevocationDeps(input: {
         input.replacementLease
           ? input.replacementLease(surfaceKey, leaseOf(1))
           : {
+              // 生产同构的新鲜租约：新 sandboxId + 常量 initId（上游铸造恒为 1）。
               sandboxId: `sbx-fresh-${replacementCounter}`,
-              initId: 10_000 + replacementCounter,
+              initId: 1,
               runtimeId: `rt-fresh-${replacementCounter}`,
               generation: 1,
               appIdentity: "b".repeat(64),
