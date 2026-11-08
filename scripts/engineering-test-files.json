@@ -154,6 +154,7 @@
   "packages/server/test/tsupConfig.test.ts",
   "packages/server/test/payswap-operator-auth.test.ts",
   "packages/server/test/payswap-approval.test.ts",
+  "packages/ui/test/payswap-surface-revocation-wiring.test.ts",
   "packages/web/test/viteConfigLoad.test.ts",
   "packages/zcode-server-cli/test/packaging.test.ts",
   "packages/zcode-server-cli/test/stageRemoteAssetsCli.test.ts",
