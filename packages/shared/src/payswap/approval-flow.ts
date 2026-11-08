@@ -28,6 +28,17 @@
  *      （server 侧解析、host 验证 —— 永不由客户端声明）。
  * - **N18 流级臂**：invalidateProposal（卡实例 teardown/失效）后的陈旧 challenge
  *   重放 → proposal_not_pending（challenge 已失效）。
+ * - **T3 卡臂（P1.8）**：issueProposal 装配金融模式 live 读（`financialMode` option，
+ *   每次发卡现读 —— spawn-wiring per-request 纪律）；非 S2 一律拒发（typed
+ *   `financial_mode_inactive`，门在最外层 —— 未 opt-in 时先于 tuple 过期评估，
+ *   「no card can be pending」是结构性保证而非引申）；缺省 reader = 无法证明 S2 →
+ *   fail-closed 拒发（readPayswapFinancialModeFromConfig 的缺省姿态同款）。S2 行为
+ *   不变（保真臂）。
+ * - **T7 item 3（P1.8）**：`revokePendingProposals` 批量失效所有 pending proposal 及其
+ *   一次性 challenge（opt-out 转移时 host 调用）；只扫 pending —— approved/denied
+ *   审计历史不重写、已铸 grant 不回收；事后到达的 approve/deny 事件 →
+ *   proposal_not_pending（N15 无 live challenge 臂）；重新 opt-in 后的新发卡用全新
+ *   challenge（旧一次性 challenge 永不复活）。
  * - **单一铸造路径**：flow 是 minter 的唯一持有者 —— grant-ledger 的
  *   appendApprovedGrant 只接受本流配对的 mint（伪造/异源 mint = unauthorized_mint）。
  */
@@ -86,7 +97,10 @@ export type PayswapProposalIssueVerdict =
       proposal: PayswapProposalRecord;
       cardPayload: PayswapAuthorizationCardPayload;
     }
-  | { status: "issue_refused"; reason: "tuple_expired" | "bearer_unavailable" };
+  | {
+      status: "issue_refused";
+      reason: "tuple_expired" | "bearer_unavailable" | "financial_mode_inactive";
+    };
 
 // ---------------------------------------------------------------------------
 // challenge 端口（单一解析顺序法则的 challenge 段 —— 两个实现：卡实例存储（本模块）
@@ -163,6 +177,12 @@ export interface PayswapApprovalFlowOptions {
   rolePort?: PayswapApprovalRolePort;
   /** 受信 application origins（§1.6.2 item 3 三检的第 3 检；空集 = fail-closed）。 */
   trustedAppOrigins?: ReadonlySet<string> | readonly string[];
+  /**
+   * T3 卡臂的金融模式 live 读（addendum §2.2 T3）：每次 issueProposal 现读（非构造期
+   * 快照）；非 active → 拒发 financial_mode_inactive。缺省 = 无法证明 S2 → fail-closed
+   * 拒发（与 readPayswapFinancialModeFromConfig 的缺省姿态同款）。
+   */
+  financialMode?: () => { active: boolean };
 }
 
 export interface PayswapApprovalFlow {
@@ -176,12 +196,20 @@ export interface PayswapApprovalFlow {
     sender: PayswapApprovalSender;
   }): PayswapApprovalResolutionVerdict;
   invalidateProposal(proposalId: string): void;
+  /**
+   * T7 item 3：批量失效所有 pending proposal 及其一次性 challenge（opt-out 转移时
+   * host 调用；返回被撤销记录 —— 卡面消除接线的输入）。只扫 pending：approved/denied
+   * 原状保留（审计历史不重写）。
+   */
+  revokePendingProposals(): readonly PayswapProposalRecord[];
   proposals(): readonly PayswapProposalRecord[];
 }
 
 export function createPayswapApprovalFlow(options: PayswapApprovalFlowOptions): PayswapApprovalFlow {
   const now = options.now ?? Date.now;
   const proposals = new Map<string, PayswapProposalRecord>();
+  // T3 卡臂的金融模式 live 读：缺省 = 无法证明 S2 → fail-closed 拒发。
+  const readFinancialMode = options.financialMode ?? (() => ({ active: false }));
 
   function invalidateProposal(proposalId: string): void {
     const proposal = proposals.get(proposalId);
@@ -190,8 +218,24 @@ export function createPayswapApprovalFlow(options: PayswapApprovalFlowOptions): 
     options.challengePort.invalidateProposal(proposalId);
   }
 
+  function revokePendingProposals(): readonly PayswapProposalRecord[] {
+    const revoked: PayswapProposalRecord[] = [];
+    for (const proposal of proposals.values()) {
+      if (proposal.status !== "pending") continue;
+      proposal.status = "invalidated";
+      options.challengePort.invalidateProposal(proposal.proposalId);
+      revoked.push(proposal);
+    }
+    return revoked;
+  }
+
   return {
     issueProposal({ tuple, workspaceId, target }) {
+      // 0. 金融模式门（最外层 —— T3 卡臂）：非 S2 → 无卡可 pending（零副作用：
+      // 不评估 tuple、不签 challenge、不写 ledger）。
+      if (!readFinancialMode().active) {
+        return { status: "issue_refused", reason: "financial_mode_inactive" };
+      }
       const at = now();
       if (at >= tuple.expiresAt) {
         return { status: "issue_refused", reason: "tuple_expired" };
@@ -323,6 +367,8 @@ export function createPayswapApprovalFlow(options: PayswapApprovalFlowOptions): 
     },
 
     invalidateProposal,
+
+    revokePendingProposals,
 
     proposals() {
       return [...proposals.values()];

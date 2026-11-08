@@ -120,6 +120,9 @@ function createCardInstanceFlow(options: { now: () => number } = { now: () => 1_
     ledger: ledgerHandle.ledger,
     minter: ledgerHandle.minter,
     trustedAppOrigins: [TRUSTED_APP_ORIGIN],
+    // P1.8 T3 卡臂：law 级 grant 套件的发卡路径假定 S2（法则面与模式门正交）——
+    // fail-closed 缺省下必须显式供给 active reader。
+    financialMode: () => ({ active: true }),
   });
   return { ledgerHandle, challengeStore, flow };
 }
@@ -1005,6 +1008,8 @@ describe("P1.7 approval flow — the card-instance bearer (§1.6.2 items 1–3)"
       minter: ledgerHandle.minter,
       trustedAppOrigins: [TRUSTED_APP_ORIGIN],
       rolePort: { authorizeApprover: () => ({ status: "role_required" }) },
+      // P1.8 T3 卡臂：同上 —— 显式 S2 reader。
+      financialMode: () => ({ active: true }),
     });
     const tuple = sampleTuple();
     const issued = flow.issueProposal({

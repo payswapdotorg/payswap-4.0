@@ -135,10 +135,13 @@ function createGatedFlow(input: { mode: () => boolean }) {
     challengePort: challengeStore,
     ledger: ledgerHandle.ledger,
     minter: ledgerHandle.minter,
+    trustedAppOrigins: [TRUSTED_APP_ORIGIN],
     financialMode: () => ({ active: input.mode() }),
   });
   return { ledgerHandle, challengeStore, flow };
 }
+
+const TRUSTED_APP_ORIGIN = "app://zcode-shell";
 
 const CARD_TARGET = { kind: "card_instance", webContentsId: 7, principal: "human-a" } as const;
 
@@ -146,7 +149,7 @@ const TRUSTED_SENDER = {
   kind: "desktop_frame",
   webContentsId: 7,
   isMainFrame: true,
-  frameUrl: "app://zcode-shell/index.html",
+  frameUrl: `${TRUSTED_APP_ORIGIN}/index.html`,
 } as const;
 
 /** 对一张已发卡的批准/拒绝事件（T7 item 3 行复用）。 */
@@ -181,7 +184,7 @@ describe("payswap approval flow — T3 card arm: financial-mode gate at the prop
     // 「no card can be pending」：零 proposal 记录、零 challenge 签发、零 grant。
     expect(flow.proposals()).toEqual([]);
     expect(challengeStore.pendingCount()).toBe(0);
-    expect(ledgerHandle.ledger.grants()).toEqual([]);
+    expect(ledgerHandle.ledger.records()).toEqual([]);
   });
 
   it("门在最外层：未 opt-in 时过期 tuple 也报 financial_mode_inactive（模式拒绝先于一切发卡评估）", () => {
@@ -275,7 +278,7 @@ describe("payswap approval flow — T7 item 3: batch revocation of pending propo
     // opt-out 后到达的批准事件（旧 proposalId + 旧一次性 challenge）。
     const verdict = flow.resolveApproval(approvalEvent(issued, "approve"));
     expect(verdict).toEqual({ status: "proposal_not_pending", statusWas: "invalidated" });
-    expect(ledgerHandle.ledger.grants()).toEqual([]);
+    expect(ledgerHandle.ledger.records()).toEqual([]);
   });
 
   it("事后 deny 点击同样拒绝：状态检查先于决定（deny 也不是撤销后的合法事件）", () => {
@@ -304,7 +307,7 @@ describe("payswap approval flow — T7 item 3: batch revocation of pending propo
 
     expect(flow.resolveApproval(approvalEvent(approveMe, "approve")).status).toBe("approved");
     expect(flow.resolveApproval(approvalEvent(denyMe, "deny")).status).toBe("denied");
-    const grantsBefore = ledgerHandle.ledger.grants().length;
+    const grantsBefore = ledgerHandle.ledger.records().length;
 
     const revoked = flow.revokePendingProposals();
     expect(revoked.map((record) => record.proposalId)).toEqual([stayPending.proposal.proposalId]);
@@ -313,7 +316,7 @@ describe("payswap approval flow — T7 item 3: batch revocation of pending propo
     expect(statuses.get(approveMe.proposal.proposalId)).toBe("approved");
     expect(statuses.get(denyMe.proposal.proposalId)).toBe("denied");
     expect(statuses.get(stayPending.proposal.proposalId)).toBe("invalidated");
-    expect(ledgerHandle.ledger.grants()).toHaveLength(grantsBefore);
+    expect(ledgerHandle.ledger.records()).toHaveLength(grantsBefore);
     expect(challengeStore.pendingCount()).toBe(0);
   });
 

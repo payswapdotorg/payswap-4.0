@@ -63,7 +63,19 @@ async function main(): Promise<void> {
     const store = createPayswapOperatorStore({
       stateFilePath: join(getAppConfigDir(), "payswap", "operators.json"),
     });
-    const approval = createPayswapApprovalHost({ store });
+    const approval = createPayswapApprovalHost({
+      store,
+      // P1.8 T3 卡臂（addendum §2.2 T3）：发卡门的金融模式 live 读 —— 复用 N27 激活
+      // 法则的同一 env 投影，逐次现读（broker §7.3 / E1 / E3 的 fresh-read 纪律同款；
+      // 本装配点已在 activated 分支内，env 是部署级常量，但投影不硬编码 true）。
+      financialMode: () => ({
+        active:
+          resolvePayswapFinancialActivation({
+            requested: readPayswapFinancialModeRequested(process.env),
+            deploymentAuthToken: process.env["ZCODE_SERVER_AUTH_TOKEN"]?.trim(),
+          }).status === "activated",
+      }),
+    });
     services.register(payswapApprovalChannelDescriptor, approval.channelDefault);
     payswapApproval = { store, approval };
   }

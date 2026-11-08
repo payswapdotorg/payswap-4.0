@@ -65,7 +65,10 @@ export type PayswapProposalIssueVerdict =
       proposalId: string;
       cardPayload: PayswapAuthorizationCardPayload;
     }
-  | { status: "issue_refused"; reason: "tuple_expired" | "bearer_unavailable" };
+  | {
+      status: "issue_refused";
+      reason: "tuple_expired" | "bearer_unavailable" | "financial_mode_inactive";
+    };
 
 export interface PayswapApprovalHost {
   /** 暴露策略的 fail-closed 默认（注册进 ServiceCollection 的就是这个）。 */
@@ -89,6 +92,11 @@ export interface PayswapApprovalHost {
   }): PayswapAuthorizeOperationVerdict;
   /** 审计/测试观察面：proposal 记录。 */
   proposals(): readonly PayswapProposalRecord[];
+  /**
+   * T7 item 3（P1.8）：批量撤销 pending proposal 及其一次性 challenge（opt-out 转移时
+   * host 调用；返回被撤销记录 —— 卡面消除接线的输入）。只扫 pending。
+   */
+  revokePendingProposals(): readonly PayswapProposalRecord[];
 }
 
 /** registry challenge 适配器：经 P1.6 法则（N29/N30 顺序法则在注册表内）。 */
@@ -140,6 +148,12 @@ function createOperatorRolePort(store: PayswapOperatorStore): PayswapApprovalRol
 export function createPayswapApprovalHost(options: {
   store: PayswapOperatorStore;
   now?: () => number;
+  /**
+   * T3 卡臂（P1.8，addendum §2.2 T3）：金融模式 live 读，透传给 flow（缺省 =
+   * fail-closed 拒发 —— entry-http 装配点在 N27 activated 分支内，以同一 env 投影
+   * 供给 reader）。
+   */
+  financialMode?: () => { active: boolean };
 }): PayswapApprovalHost {
   const { store } = options;
   const ledgerHandle: PayswapGrantLedgerHandle = createPayswapGrantLedger({
@@ -151,6 +165,7 @@ export function createPayswapApprovalHost(options: {
     rolePort: createOperatorRolePort(store),
     ledger: ledgerHandle.ledger,
     minter: ledgerHandle.minter,
+    ...(options.financialMode !== undefined ? { financialMode: options.financialMode } : {}),
   });
 
   /** 发卡时的完整卡面（challenge 骑卡 —— host↔受信 renderer/operator 客户端层）。 */
@@ -223,6 +238,9 @@ export function createPayswapApprovalHost(options: {
     },
     proposals() {
       return flow.proposals();
+    },
+    revokePendingProposals() {
+      return flow.revokePendingProposals();
     },
   };
 
