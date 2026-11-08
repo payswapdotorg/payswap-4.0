@@ -515,16 +515,22 @@ describe("P1.8 D12.7 — N18's full plugin-handle teardown arm through a real co
     registry.markProtectedDataDelivered(ownKey);
 
     // 页面永不合作：真实 runPluginUiHostTeardown 的有界窗（timeout + 100）推进。
+    // （执行器守护窗与上游内窗同源同宽 —— 两者同时到期；断言前先等拆除链收尾。）
+    let disposal: Promise<void> | null = null;
     const report = await runPayswapSurfaceOptOutRevocation(
       registry,
       bindPayswapSurfaceRevocationDeps({
         target: {
-          teardownLiveInstance: () => fixture.controller.dispose(),
+          teardownLiveInstance: () => {
+            disposal = fixture.controller.dispose();
+            return disposal;
+          },
           createReplacementInstance: async () => fakeLease("sbx-new"),
         },
         teardownTimeoutMs: 20,
       }),
     );
+    await disposal;
 
     expect(report.disposed).toEqual([ownKey]);
     // 真实 ui/resource-teardown 清理窗确实开过（带超时参数），只是页面没有回包。

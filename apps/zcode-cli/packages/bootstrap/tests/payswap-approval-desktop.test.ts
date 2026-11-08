@@ -119,7 +119,7 @@ function subframeIpcEvent(input: { webContentsId: number; frameUrl: string }) {
   return { sender: { id: input.webContentsId, mainFrame }, senderFrame: { url: input.frameUrl } };
 }
 
-/** 装配被测 host（law 级默认：S2 金融模式 + dev 主窗口 URL）。 */
+/** 装配被测 host（law 级默认：S2 金融模式 + dev 主窗口 URL + 固定时钟 —— tuple 在窗内）。 */
 function createHostUnderTest(
   overrides: {
     financialMode?: () => { active: boolean };
@@ -130,7 +130,7 @@ function createHostUnderTest(
   return createPayswapDesktopApprovalHost({
     getMainWindowFrameUrl: overrides.getMainWindowFrameUrl ?? (() => DEV_WINDOW_URL),
     ...(overrides.financialMode ? { financialMode: overrides.financialMode } : {}),
-    ...(overrides.now ? { now: overrides.now } : {}),
+    now: overrides.now ?? (() => 1_000_000),
   });
 }
 

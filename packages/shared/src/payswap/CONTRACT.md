@@ -98,6 +98,22 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
     替换实例重新入册；retention 恰按计划键集两 store 都清。接线缝（D12.7）：
     teardownInstance ↔ runPluginUiHostTeardown；clearSurfaceFeed/clearWidgetState ↔
     clearPluginUiSurfaceFeed/clearPluginUiWidgetState。
+- **桌面批准卡接线法则（addendum §1.6.2 items 1–4 的接线半，P1.8 D12.7；
+  `approval-desktop.ts`）：
+  - **真实 IPC 映射**：`mapPayswapDesktopApprovalSender` 把 Electron ipcMain 事件的
+    结构面（sender.id / senderFrame / sender.mainFrame 的**对象同一性**）映射到
+    `PayswapDesktopFrameSender`（不 import electron —— 真实 `IpcMainInvokeEvent`
+    结构满足该面；缺 senderFrame / 缺 mainFrame = 无法证明主框架 → fail-closed）。
+    三检本体仍在 approval-origin 法则内执法。
+  - **生产受信 origin 值**：`derivePayswapTrustedAppOrigins` 从主窗口自身当前 URL
+    派生（`payswapFrameOriginOf` 单一实现 —— 与三检第 3 检的提取字节一致）；
+    空/空白 = 空集 fail-closed。
+  - **桌面批准 host**（`createPayswapDesktopApprovalHost`）：flow + 卡实例 challenge
+    存储 + ledger/minter 配对装配；发卡 = card_instance bearer（operator_session 是
+    server host 形状）；解析 = 映射 + `flow.resolveApproval`，**每次解析前现读主窗口
+    URL** 刷新受信 origin 集（per-event live read）；N18 `invalidateProposal` 与
+    T7 item 3 `revokePendingProposals` 透传流法则。通道常量
+    `PAYSWAP_DESKTOP_APPROVAL_IPC_CHANNEL`（desktop main 的 ipcMain.handle 注册名）。
 
 ## 模块交集
 
@@ -128,3 +144,14 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
   级联拥有（适配器 no-op，流状态轴兜底）。P1.8：host 透传 `financialMode` reader
   （entry-http 在 N27 activated 分支内以同一 env 投影供给 —— T3 卡臂）并暴露
   `revokePendingProposals`（T7 item 3 的 in-process host API）。
+- `@zcode/ui` payswap（P1.8 D12.7，`packages/ui/src/payswap` managed 模块）：
+  表面撤销接线的绑定 owner —— `bindPayswapSurfaceRevocationDeps` 把执行器 deps 绑到
+  真实原语（两 store 逐键清除经 plugin-ui 公开入口 hostPrimitives；守护窗 =
+  teardownTimeoutMs + 100 与上游拆除内窗同源同式）；`buildPayswapOwnSurfaceKey`
+  字节等价委托真实 `buildPluginUiSurfaceKey`（T-series 电池登记的复验欠条）；
+  `leaseFromPluginSandboxHandle` 提取捕获租约（token 不入册）。
+- `@zcode/desktop` main payswap（P1.8 D12.7，`packages/desktop/src/main/payswap`
+  managed 模块）：桌面批准通道的 Electron main 装配 —— `installPayswapDesktopApprovalIpc`
+  把真实 `IpcMainInvokeEvent` 交给 `host.handleApprovalResolution`（结构满足映射面，
+  typecheck 即证明）；`getMainWindowFrameUrl` 供给生产受信 origin 值；真实窗口的
+  注册与 `financialMode` reader 由 desktop Browser E2E 臂接线。
