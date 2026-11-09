@@ -62,18 +62,18 @@ interface ResolutionVerdict {
 
 /**
  * webdriverio 9 断言收窄辅助：expect().toBe() 无法收窄 IssueVerdict 联合，
- * 集中一处 throw-on-refuse，使后续 proposalId/cardPayload 访问通过 typecheck。
+ * 集中一处 assertion 签名（asserts verdict is ...），调用点语句本身即完成
+ * 收窄，使后续 proposalId/cardPayload 访问通过 typecheck。
  * 断言语义等价（refuse 即测试失败），零行为变化。
  */
 function assertIssued(
   verdict: IssueVerdict,
-): Extract<IssueVerdict, { status: "issued" }> {
+): asserts verdict is Extract<IssueVerdict, { status: "issued" }> {
   if (verdict.status !== "issued") {
     throw new Error(
       `expected proposal to be issued, got refusal: ${verdict.reason}`,
     );
   }
-  return verdict;
 }
 
 function buildTuple(legId: string, value: string): PayswapAuthorizationTuple {
