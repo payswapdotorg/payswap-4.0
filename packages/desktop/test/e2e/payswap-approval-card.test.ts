@@ -60,6 +60,22 @@ interface ResolutionVerdict {
   grant?: { authorizationId: string };
 }
 
+/**
+ * webdriverio 9 断言收窄辅助：expect().toBe() 无法收窄 IssueVerdict 联合，
+ * 集中一处 throw-on-refuse，使后续 proposalId/cardPayload 访问通过 typecheck。
+ * 断言语义等价（refuse 即测试失败），零行为变化。
+ */
+function assertIssued(
+  verdict: IssueVerdict,
+): Extract<IssueVerdict, { status: "issued" }> {
+  if (verdict.status !== "issued") {
+    throw new Error(
+      `expected proposal to be issued, got refusal: ${verdict.reason}`,
+    );
+  }
+  return verdict;
+}
+
 function buildTuple(legId: string, value: string): PayswapAuthorizationTuple {
   const now = Date.now();
   return {
@@ -187,7 +203,11 @@ async function setFinancialWorkspace(active: boolean): Promise<void> {
 
 async function waitForCardCount(count: number): Promise<void> {
   await browser.waitUntil(
-    async () => (await $$(`[data-testid="${TID_CARD}"]`)).length === count,
+    async () => {
+      const cards = await $$(`[data-testid="${TID_CARD}"]`);
+      // webdriverio 9：ElementArray.length 的类型是 Promise<number>。
+      return (await cards.length) === count;
+    },
     { timeout: 15_000, timeoutMsg: `授权卡数量应变为 ${count}` },
   );
 }
@@ -245,7 +265,7 @@ describe("P1.8 D12.7：PaySwap 桌面批准通道真实窗口臂", () => {
 
     await setFinancialWorkspace(true);
     const issued = await payswapBridge<IssueVerdict>("issue", issueInput);
-    expect(issued.status).toBe("issued");
+    assertIssued(issued);
     await waitForCardCount(1);
 
     // host-derived 内容（§1.6.0：展示值来自 host 的 proposal 记录）。
@@ -275,7 +295,7 @@ describe("P1.8 D12.7：PaySwap 桌面批准通道真实窗口臂", () => {
       workspaceId: "e2e-workspace",
       target: { kind: "card_instance", webContentsId: mainWebContentsId, principal: "e2e-operator" },
     });
-    expect(issued.status).toBe("issued");
+    assertIssued(issued);
     await waitForCardCount(1);
 
     const event = {
@@ -303,7 +323,7 @@ describe("P1.8 D12.7：PaySwap 桌面批准通道真实窗口臂", () => {
       workspaceId: "e2e-workspace",
       target: { kind: "card_instance", webContentsId: mainWebContentsId, principal: "e2e-operator" },
     });
-    expect(issued.status).toBe("issued");
+    assertIssued(issued);
     await waitForCardCount(1);
 
     // 错误 secret：typed 拒绝；卡仍在（challenge 未被错误尝试消费）。
@@ -336,7 +356,7 @@ describe("P1.8 D12.7：PaySwap 桌面批准通道真实窗口臂", () => {
       workspaceId: "e2e-workspace",
       target: { kind: "card_instance", webContentsId: mainWebContentsId, principal: "e2e-operator" },
     });
-    expect(issued.status).toBe("issued");
+    assertIssued(issued);
     await waitForCardCount(1);
 
     const event = {
@@ -386,7 +406,7 @@ describe("P1.8 D12.7：PaySwap 桌面批准通道真实窗口臂", () => {
       workspaceId: "e2e-workspace",
       target: { kind: "card_instance", webContentsId: mainWebContentsId, principal: "e2e-operator" },
     });
-    expect(issued.status).toBe("issued");
+    assertIssued(issued);
     await waitForCardCount(1);
 
     const revoked = await payswapBridge<{ proposalId: string }[]>("revoke");
