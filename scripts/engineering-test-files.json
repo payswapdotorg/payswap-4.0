@@ -38,6 +38,7 @@
   "packages/desktop/test/e2eAtomicJsonFile.test.ts",
   "packages/desktop/test/e2eBashPrefixPermissionShim.test.ts",
   "packages/desktop/test/e2eBeforeSessionSetup.test.ts",
+  "packages/desktop/test/e2eBrowserPaneToggleModifiers.test.ts",
   "packages/desktop/test/e2eChromedriverServer.test.ts",
   "packages/desktop/test/e2eConversationPreparation.test.ts",
   "packages/desktop/test/e2eCoverageHeatmap.test.ts",

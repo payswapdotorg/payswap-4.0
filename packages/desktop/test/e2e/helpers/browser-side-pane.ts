@@ -6,6 +6,8 @@
  * “一个 spec 绿另一个红”的假信号。
  */
 
+import { browserPaneToggleModifiersForPlatform } from "./browserPaneToggleModifiers.js";
+
 export async function openFirstBrowserTab(): Promise<void> {
   if (await clickOpenTabBrowserItem()) {
     await waitForTabCount(1);
@@ -45,10 +47,12 @@ export async function ensureSidePaneEntryVisible(): Promise<void> {
       );
       if (visible) return true;
       // 与产品 ⌥⌘B 共用真实 workspace shortcut；初始收起态与已展开态都兼容。
-      // Linux/Windows 上 cmdOrCtrl 绑定解析为 Ctrl（shortcuts/bindings 的平台分支），
-      // 只派发 Apple 形态（metaKey）永远不命中；两种形态都派发，E2E 跨平台可用。
-      await browser.execute(() => {
-        const dispatchSidePaneShortcut = (modifiers: KeyboardEventInit) =>
+      // 简报 §7：按运行平台选择正确的修饰键形态（macOS → Meta+Alt；Linux/Windows
+      // → Ctrl+Alt）——E2E 运行器与应用同机，process.platform 即应用平台；
+      // 402366c2 的双形态兜底由平台正确选择取代，映射由
+      // e2eBrowserPaneToggleModifiers.test.ts 的 6 行锁死。
+      await browser.execute(
+        (modifiers: { metaKey: boolean; ctrlKey: boolean; altKey: boolean }) => {
           window.dispatchEvent(
             new KeyboardEvent("keydown", {
               key: "b",
@@ -58,9 +62,9 @@ export async function ensureSidePaneEntryVisible(): Promise<void> {
               ...modifiers,
             }),
           );
-        dispatchSidePaneShortcut({ metaKey: true, altKey: true });
-        dispatchSidePaneShortcut({ ctrlKey: true, altKey: true });
-      });
+        },
+        browserPaneToggleModifiersForPlatform(process.platform),
+      );
       return false;
     },
     {
