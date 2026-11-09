@@ -197,8 +197,10 @@ async function grantCount(): Promise<number> {
 }
 
 describe("P1.8 D12.7：PaySwap 桌面批准通道真实窗口臂", () => {
-  before(async () => {
-    await waitForDefaultWorkspaceReady(60_000);
+  before(async function () {
+    // 冷启动 + 延迟静态服务（沙箱 wide-module-tree 缓解）下工作区就绪可超过 60s。
+    this.timeout(180_000);
+    await waitForDefaultWorkspaceReady(120_000);
   });
 
   after(async () => {
@@ -210,12 +212,11 @@ describe("P1.8 D12.7：PaySwap 桌面批准通道真实窗口臂", () => {
     const status = await payswapBridge<{
       installed: boolean;
       mainWebContentsId: number | null;
-      channelRegistered: boolean;
     }>("status");
     expect(status.installed).toBe(true);
-    expect(status.channelRegistered).toBe(true);
-    expect(status.mainWebContentsId).toBeTypeOf("number");
+    expect(typeof status.mainWebContentsId).toBe("number");
 
+    // 通道注册的证明是解析本身：真实 renderer invoke 能拿到法则的 typed 拒绝。
     const unknown = await invokeFromRenderer<ResolutionVerdict>({
       proposalId: "does-not-exist",
       challengeId: "nope",
@@ -283,16 +284,16 @@ describe("P1.8 D12.7：PaySwap 桌面批准通道真实窗口臂", () => {
       challengeSecret: issued.cardPayload.challenge.secret,
       decision: "approve" as const,
     };
+    const grantsBeforeClick = await grantCount();
     await $(`[data-testid="${TID_CARD_APPROVE}"]`).click();
-    const beforeReplay = await grantCount();
     await browser.waitUntil(
-      async () => (await grantCount()) === beforeReplay + 1,
-      { timeout: 15_000, timeoutMsg: "第一枚 grant 应已铸造" },
+      async () => (await grantCount()) === grantsBeforeClick + 1,
+      { timeout: 15_000, timeoutMsg: "approve 后 grant 应已铸造" },
     );
 
     const replay = await invokeFromRenderer<ResolutionVerdict>(event);
     expect(replay).toMatchObject({ status: "proposal_not_pending" });
-    expect(await grantCount()).toBe(beforeReplay + 1);
+    expect(await grantCount()).toBe(grantsBeforeClick + 1);
   });
 
   it("deny 臂：denied、无 grant、卡消失；错误 secret → secret_mismatch 且卡保留", async () => {

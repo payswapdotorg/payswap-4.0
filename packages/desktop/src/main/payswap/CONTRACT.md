@@ -15,7 +15,12 @@ URL 作为受信 origin 来源。
 - 受信 origin 每次解析事件前从主窗口 URL 现读（不吃构造期快照；空 URL = 全拒）。
 - 本模块不持任何业务状态 —— proposal/challenge/grant 全在 host（shared 法则）。
 
-与其它模块的交集 hook 点：desktop main 入口在 desktop Browser E2E 臂接线时调用
-`installPayswapDesktopApprovalIpc` 并供给真实的 `getMainWindowFrameUrl`（主窗口
-webContents）与 `financialMode` reader（插件 userConfig 投影）；发卡调用方是 P2+ 的
+与其它模块的交集 hook 点：desktop main 入口（desktopPayswapBootstrap.installDesktopPayswapApproval
+—— D12.7 desktop Browser E2E 臂的注册半）调用 `installPayswapDesktopApprovalIpc` 并供给真实的
+`getMainWindowFrameUrl`（主窗口 webContents）与 `financialMode` reader（financialModeReader：
+`~/.zcode/cli/config.json` fresh 读 —— T3 live 门）；cardPush 把发卡/消除事件经
+`PAYSWAP_DESKTOP_CARD_CHANNEL` 推给目标卡实例（Class-B 投影模式的投递半，preload 暴露
+`payswapResolveApproval` / `onPayswapCard`）；E2E 观察桥（shouldEnableE2ETestBridge 门）
+在测试模式挂 `globalThis.__zcodePayswapDesktopApprovalE2E`（P2+ request_authorization
+接线前的发卡调用方入口 —— D12.6 in-process 纪律）。发卡调用方是 P2+ 的
 request_authorization 接线。

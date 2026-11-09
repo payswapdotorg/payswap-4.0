@@ -59,6 +59,21 @@ import {
 /** desktop main 的批准通道注册名（ipcMain.handle —— desktop-payswap 装配）。 */
 export const PAYSWAP_DESKTOP_APPROVAL_IPC_CHANNEL = "payswap:approval" as const;
 
+/**
+ * desktop main → 目标卡实例 webContents 的卡面推送通道（desktop-payswap 装配；
+ * Class-B permission-prompt 投影模式的投递半）。事件与批准解析同一 webContents
+ * 定向（§1.6.2 item 1：challenge 只发给该卡实例）。
+ */
+export const PAYSWAP_DESKTOP_CARD_CHANNEL = "payswap:card" as const;
+
+/**
+ * 卡面推送事件（main → renderer）：发卡（含一次性 challenge 的完整 payload）与
+ * 卡面消除（T7 item 3 / N18 —— pending 消失时 renderer 同步撤卡）。
+ */
+export type PayswapDesktopCardEvent =
+  | { kind: "payswap-card-issued"; payload: PayswapAuthorizationCardPayload }
+  | { kind: "payswap-card-dismissed"; proposalId: string };
+
 /** desktop 渲染层卡组件的消费面（host 派生卡 payload —— Class-B 内容来源法则）。 */
 export type { PayswapAuthorizationCardPayload };
 

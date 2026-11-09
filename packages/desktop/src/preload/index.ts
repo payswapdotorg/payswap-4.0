@@ -102,6 +102,10 @@ import {
   scopedServicePortPayloadSchema,
   shouldEnableE2ETestBridge,
 } from "@zcode/shared";
+import {
+  PAYSWAP_DESKTOP_APPROVAL_IPC_CHANNEL,
+  PAYSWAP_DESKTOP_CARD_CHANNEL,
+} from "@zcode/shared/payswap";
 import { createOAuthCallbackHandler } from "./oauthCallbackBridge.js";
 
 if (shouldEnableE2ETestBridge(process.env)) {
@@ -309,6 +313,19 @@ contextBridge.exposeInMainWorld("zcode", {
   },
   disposeRemoteSession: (sessionId: string): Promise<void> =>
     ipcRenderer.invoke(PlatformChannels.DisposeRemoteSession, sessionId),
+  /**
+   * PaySwap Class-B 授权卡（ADR-12 D12.7；addendum §1.6.0 permission-prompt 投影
+   * 模式）：批准解析经真实 ipcMain.handle（desktop main 的三检法则在 main 侧执法
+   * —— sender/主框架/受信 origin；preload 只是结构化透传，不持有任何判定）。
+   */
+  payswapResolveApproval: (payload: unknown): Promise<unknown> =>
+    ipcRenderer.invoke(PAYSWAP_DESKTOP_APPROVAL_IPC_CHANNEL, payload),
+  /** 卡面推送订阅（main → renderer：issued/dismissed）。 */
+  onPayswapCard: (callback: (event: unknown) => void): (() => void) => {
+    const handler = (_event: unknown, payload: unknown) => callback(payload);
+    ipcRenderer.on(PAYSWAP_DESKTOP_CARD_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(PAYSWAP_DESKTOP_CARD_CHANNEL, handler);
+  },
   isDockerAvailable: (): Promise<boolean> => ipcRenderer.invoke(PlatformChannels.IsDockerAvailable),
   listWSLDistros: () => ipcRenderer.invoke(PlatformChannels.ListWSLDistros),
   listDockerContainers: () => ipcRenderer.invoke(PlatformChannels.ListDockerContainers),
