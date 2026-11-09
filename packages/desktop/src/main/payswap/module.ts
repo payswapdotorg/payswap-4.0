@@ -6,8 +6,9 @@
  */
 export const desktopPayswapModule = {
   id: "desktop-payswap",
-  // shared-payswap：桌面批准 host + 真实 IPC 映射法则 + 通道常量。
-  requires: ["shared-payswap"],
+  // shared-payswap：桌面批准 host + 真实 IPC 映射法则 + 通道常量；
+  // shared：E2E 观察桥门（shouldEnableE2ETestBridge —— D12.7 装配半）。
+  requires: ["shared-payswap", "shared"],
   provides: ["desktop-payswap"],
   publicEntrypoints: ["index.ts", "contract.ts"],
 } as const;
