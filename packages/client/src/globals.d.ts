@@ -113,6 +113,15 @@ declare global {
       onWebRemoteControlStatusChanged?(
         handler: (status: WebRemoteControlStatus) => void,
       ): () => void;
+      /**
+       * PaySwap Class-B 授权卡（ADR-12 D12.7）：批准解析结构化透传 —— 三检法则
+       * （expected webContents / 主框架 / 受信 origin）在 desktop main 侧执法。
+       */
+      payswapResolveApproval?(payload: unknown): Promise<unknown>;
+      /** PaySwap 卡面推送订阅（main → renderer：issued/dismissed）。 */
+      onPayswapCard?(
+        handler: (event: import("@zcode/shared/payswap").PayswapDesktopCardEvent) => void,
+      ): () => void;
       /** 释放当前窗口里的远程 session */
       disposeRemoteSession(sessionId: string): Promise<void>;
       /** 检查本机 Docker daemon 是否可用 */

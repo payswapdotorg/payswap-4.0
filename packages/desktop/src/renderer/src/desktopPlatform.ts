@@ -53,6 +53,11 @@ export function createDesktopPlatform(options: {
     getWebRemoteControlStatus: () => window.zcode.getWebRemoteControlStatus(),
     onWebRemoteControlStatusChanged: (handler) =>
       window.zcode.onWebRemoteControlStatusChanged?.(handler) ?? (() => {}),
+    // PaySwap Class-B 授权卡（ADR-12 D12.7）：preload 桥的结构化透传 —— 三检法则在
+    // desktop main 侧执法，renderer 只提交卡面 payload 与接收推送。
+    payswapResolveApproval: (payload) =>
+      window.zcode.payswapResolveApproval?.(payload) ?? Promise.reject(new Error("unavailable")),
+    onPayswapCard: (handler) => window.zcode.onPayswapCard?.(handler) ?? (() => {}),
     disposeRemoteSession: (sessionId) => window.zcode.disposeRemoteSession(sessionId),
     isDockerAvailable: () => window.zcode.isDockerAvailable(),
     listWSLDistros: () => window.zcode.listWSLDistros(),

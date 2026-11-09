@@ -862,6 +862,17 @@ export interface IPlatformService {
   /** 订阅当前窗口 Web 远程控制状态变化；旧平台可不实现，UI 会保留轮询兜底 */
   onWebRemoteControlStatusChanged?(handler: (status: WebRemoteControlStatus) => void): () => void;
 
+  /**
+   * PaySwap Class-B 授权卡（ADR-12 D12.7）：批准解析（结构化透传 —— 三检法则在
+   * desktop main 侧执法）。仅桌面平台实现；其它平台不实现（无卡面）。
+   */
+  payswapResolveApproval?(payload: unknown): Promise<unknown>;
+
+  /** PaySwap 卡面推送订阅（main → renderer：issued/dismissed）。仅桌面平台实现。 */
+  onPayswapCard?(
+    handler: (event: import("./payswap/index.js").PayswapDesktopCardEvent) => void,
+  ): () => void;
+
   /** 释放当前窗口里已创建的远程 session */
   disposeRemoteSession(sessionId: string): Promise<void>;
 

@@ -293,6 +293,7 @@ import {
   getPluginSandboxHost,
   installPluginSandboxHost,
 } from "./pluginSandbox/index.js";
+import { installDesktopPayswapApproval } from "./payswap/index.js";
 
 registerLocalMediaPreviewScheme(protocol, [
   PLUGIN_SANDBOX_PRIVILEGED_SCHEME,
@@ -2165,6 +2166,14 @@ app.whenReady().then(async () => {
   installBrowserRestoreBootstrapProtocol(
     session.fromPartition(EMBEDDED_BROWSER_PARTITION).protocol,
   );
+  // PaySwap 桌面批准通道（ADR-12 D12.7）：真实 ipcMain 注册 + 主窗口 URL 现读的受信
+  // origin + T3 financialMode live 读 + 卡面推送。通道无条件注册是安全的（无 pending
+  // proposal 的事件 typed proposal_unknown，fail-closed）；受信 origin 每次解析事件前
+  // 现读主窗口 URL（无窗口/空 URL = 空集 = 全拒）。
+  installDesktopPayswapApproval({
+    getMainWindowFrameUrl: () =>
+      getApplicationWindowsExcludingCuaIndicator()[0]?.webContents.getURL() ?? "",
+  });
   // Bootstrap: 从设置文件读取自定义数据目录，在所有 host 进程启动前生效
   let loadedBootstrapLocale = false;
   let bootstrapSettings: AppSettings | undefined;

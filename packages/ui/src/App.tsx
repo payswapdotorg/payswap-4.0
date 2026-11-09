@@ -38,6 +38,7 @@ import {
 import { createQuickPickCommands } from "@/quickpick/quickPickCommands.js";
 import { CommandCenterDialog } from "@/command-center/CommandCenterDialog.js";
 import { FeedbackHost } from "@/feedback/FeedbackHost.js";
+import { PayswapAuthorizationCardHost } from "@/payswap/PayswapAuthorizationCardHost.js";
 import { useFeedbackStore } from "@/feedback/feedbackStore.js";
 import {
   resolveQuickPickConversationNavigation,
@@ -1174,6 +1175,9 @@ export function App({
       {/* Bugfix: 反馈是应用级能力，必须固定走本机 base host；SSH session 连接中或断开时，
           workspace-scoped services 会切成断连代理，不能让反馈提交跟随远程 session 失效。 */}
       <FeedbackHost feedbackService={baseFeedbackService} platform={platform} />
+      {/* PaySwap Class-B 授权卡（ADR-12 D12.7）：应用级宿主 —— 卡面来自 main 的推送，
+          无 pending 时不渲染任何东西（零布局影响）。 */}
+      <PayswapAuthorizationCardHost />
       <PluginUiWorkspaceProvider onOpenSidePane={handleOpenPluginUi}>
         <WorkspaceShellLayout
           services={services}
