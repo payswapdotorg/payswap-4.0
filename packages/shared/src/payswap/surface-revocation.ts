@@ -29,10 +29,11 @@
  *   拆除纪律的窗口值供给（MCP_APPS_TEARDOWN_TIMEOUT_MS 同源）—— 页面永不合作
  *   （teardown promise 永不 settle）→ 窗到期推进；teardown 拒绝 → 照常推进（host 侧
  *   错误不中止撤销）。替换租约的 **sandboxId 必须新**（disposeSandbox 契约「new pages
- *   use new credentials and sandboxIds」—— 复用旧 sandboxId = fail-closed 抛错；initId
- *   不是新鲜性信号：上游注册表对每次新登记铸造常量 initId=1，合法新实例的 initId
- *   与旧实例相同）。替换实例重新入册（后续 opt-out 周期对它同样有效）。retention 清除
- *   恰按计划键集、两 store（feed 快照 + widget 状态）都清。
+ *   use new credentials and sandboxIds」—— 复用旧 sandboxId → 拒绝入册并记入
+ *   `replacementFailed`；替换创建拒绝 → 同样记录不重占：安全步骤（保留清除）永不被
+ *   替换失败阻断；initId 不是新鲜性信号：上游注册表对每次新登记铸造常量 initId=1，
+ *   合法新实例的 initId 与旧实例相同）。替换实例重新入册（后续 opt-out 周期对它
+ *   同样有效）。retention 清除恰按计划键集、两 store（feed 快照 + widget 状态）都清。
  * - **接线缝（D12.7 桌面卡接线，本模块不依赖 Electron）**：teardownInstance ↔
  *   runPluginUiHostTeardown（有界 ui/resource-teardown 窗 + disposeSandbox）；
  *   clearSurfaceFeed/clearWidgetState ↔ clearPluginUiSurfaceFeed/
@@ -256,6 +257,11 @@ export interface PayswapSurfaceRevocationReport {
   disposed: readonly string[];
   /** 已以新租约重占锚位的 surfaceKey 集。 */
   replaced: readonly string[];
+  /**
+   * 替换失败（创建拒绝或非新鲜租约）的 surfaceKey 集 —— 记录不中断：旧实例已拆、
+   * 保留已清，锚位留空交给上游空态渲染；安全步骤（保留清除）永不被替换失败阻断。
+   */
+  replacementFailed: readonly string[];
   /** 已发 best-effort 撤销事件的 surfaceKey 集。 */
   bestEffortNotified: readonly string[];
   /** renderer 保留已清除的键集（计划键序，两 store 都清）。 */
@@ -265,8 +271,9 @@ export interface PayswapSurfaceRevocationReport {
 /**
  * opt-out 撤销执行（§2.3 item 1 臂 (b) + item 3 的执行纪律）：按计划串行推进 ——
  * 每个标记实例的有界拆除（守护窗到期即推进，不依赖页面合作；teardown 拒绝不中止），
- * dispose_and_replace 在拆除完成后创建并验证新鲜租约（复用旧 sandboxId = fail-closed
- * 抛错）、重新入册；最后按计划键集清除两 store 的 renderer 保留（恰自有键）。
+ * dispose_and_replace 在拆除完成后创建并验证新鲜租约（创建拒绝或复用旧 sandboxId
+ * → 记入 replacementFailed、不重占、不中断 —— 保留清除是安全步骤，永不被替换
+ * 失败阻断）、重新入册；最后按计划键集清除两 store 的 renderer 保留（恰自有键）。
  */
 export function runPayswapSurfaceOptOutRevocation(
   registry: PayswapSurfaceContentRegistry,
@@ -276,6 +283,7 @@ export function runPayswapSurfaceOptOutRevocation(
   const guardMs = deps.teardownGuardMs;
   const disposed: string[] = [];
   const replaced: string[] = [];
+  const replacementFailed: string[] = [];
   const bestEffortNotified: string[] = [];
 
   /** 单实例有界拆除：teardown settle（任意结局）或守护窗到期，先到者推进。 */
@@ -312,24 +320,34 @@ export function runPayswapSurfaceOptOutRevocation(
       await runBoundedTeardown({ surfaceKey: action.surfaceKey, lease: action.lease });
       disposed.push(action.surfaceKey);
       if (action.kind === "dispose_and_replace") {
-        const replacement = await deps.createReplacementInstance({
-          surfaceKey: action.surfaceKey,
-          previousLease: action.lease,
-        });
-        // 新鲜性 fail-closed：sandboxId 必须新（disposeSandbox 契约；initId 恒为 1
-        // 不是新鲜性信号 —— 见模块头）。复用旧 sandboxId = 新页面可能被旧处置误杀/
-        // 旧数据上下文存活，拒绝。
-        if (replacement.sandboxId === action.lease.sandboxId) {
-          throw new Error(
-            `payswap surface revocation: the replacement lease for ${action.surfaceKey} reuses the disposed sandboxId — fresh pages must use a new sandboxId`,
-          );
+        let replacement: PayswapSurfaceLease | null = null;
+        try {
+          replacement = await deps.createReplacementInstance({
+            surfaceKey: action.surfaceKey,
+            previousLease: action.lease,
+          });
+        } catch {
+          // 替换创建拒绝 → 记录不中断：保留清除是安全步骤，永不被替换失败阻断
+          // （§2.3 执行器安全次序 —— 锚位留空交给上游空态渲染，旧实例已拆、保留
+          // 已清、失败已记录即可）。
+          replacement = null;
         }
-        registry.registerInstance({
-          surfaceKey: action.surfaceKey,
-          lease: replacement,
-          anchor: "replace",
-        });
-        replaced.push(action.surfaceKey);
+        if (replacement === null) {
+          replacementFailed.push(action.surfaceKey);
+        } else if (replacement.sandboxId === action.lease.sandboxId) {
+          // 新鲜性 fail-closed（disposeSandbox 契约「new pages use new sandboxIds」）：
+          // 复用旧 sandboxId 的"新实例"可能被旧处置误杀/旧数据上下文存活 —— 拒绝
+          // 入册，记录不中断（保留清除照常完成；initId 恒为 1 不是新鲜性信号，
+          // 见模块头）。
+          replacementFailed.push(action.surfaceKey);
+        } else {
+          registry.registerInstance({
+            surfaceKey: action.surfaceKey,
+            lease: replacement,
+            anchor: "replace",
+          });
+          replaced.push(action.surfaceKey);
+        }
       }
     }
     // renderer 保留清除：恰按计划键集、两 store 都清（重开从空开始）。
@@ -340,6 +358,7 @@ export function runPayswapSurfaceOptOutRevocation(
     return {
       disposed,
       replaced,
+      replacementFailed,
       bestEffortNotified,
       retentionCleared: [...plan.retentionKeysToClear],
     };

@@ -648,7 +648,7 @@ describe("payswap surface revocation executor — bounded teardown, fresh replac
     expect(harness.clearedFeeds).toEqual([key]);
   });
 
-  it("替换新鲜性：createReplacementInstance 返回旧 sandboxId → fail-closed 抛错（新页面必须新凭证/新 sandboxId）", async () => {
+  it("替换新鲜性：createReplacementInstance 返回旧 sandboxId → 拒绝入册、记入 replacementFailed（不中断 —— 保留清除必须完成）", async () => {
     const registry = createPayswapSurfaceContentRegistry();
     const key = surfaceKeyOf({ surfaceId: "workspace" });
     registry.registerInstance({ surfaceKey: key, lease: leaseOf(1), anchor: "replace" });
@@ -658,7 +658,35 @@ describe("payswap surface revocation executor — bounded teardown, fresh replac
       // 复用旧租约（同 sandboxId）—— 违反 disposeSandbox 契约的新鲜性要求。
       replacementLease: (_key, previous) => ({ ...previous, initId: previous.initId + 1 }),
     });
-    await expect(runPayswapSurfaceOptOutRevocation(registry, harness.deps)).rejects.toThrow();
+    const report = await runPayswapSurfaceOptOutRevocation(registry, harness.deps);
+
+    // 拆除与保留清除必须照常完成 —— 替换失败是可用性事件，不是中断事件。
+    expect(report.disposed).toEqual([key]);
+    expect(report.replaced).toEqual([]);
+    expect(report.replacementFailed).toEqual([key]);
+    expect(harness.clearedFeeds).toEqual([key]);
+    expect(harness.clearedWidgetStates).toEqual([key]);
+    // 非新鲜租约不入册：后续计划的租约仍是旧租约（未被伪替换覆盖）。
+    const nextPlan = registry.planOptOutRevocation();
+    expect(nextPlan.actions[0]!.lease.sandboxId).toBe(leaseOf(1).sandboxId);
+  });
+
+  it("替换创建拒绝（host 侧异常）→ 记入 replacementFailed、不重占；安全次序保证保留清除仍完成（§2.3 执行器安全次序）", async () => {
+    const registry = createPayswapSurfaceContentRegistry();
+    const key = surfaceKeyOf({ surfaceId: "workspace" });
+    registry.registerInstance({ surfaceKey: key, lease: leaseOf(1), anchor: "replace" });
+    registry.markProtectedDataDelivered(key);
+
+    const harness = createRevocationDeps();
+    harness.deps.createReplacementInstance = () =>
+      Promise.reject(new Error("anchor page create failed"));
+    const report = await runPayswapSurfaceOptOutRevocation(registry, harness.deps);
+
+    expect(report.disposed).toEqual([key]);
+    expect(report.replaced).toEqual([]);
+    expect(report.replacementFailed).toEqual([key]);
+    expect(harness.clearedFeeds).toEqual([key]);
+    expect(harness.clearedWidgetStates).toEqual([key]);
   });
 
   it("先 dispose 后替换（顺序）；替换实例入册（后续 opt-out 周期的计划对它有效）", async () => {
