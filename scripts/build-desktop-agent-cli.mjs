@@ -84,6 +84,13 @@ const requiredDevPluginRuntimeBuilds = [
   })),
   // Sites 面板的 MCP server 由插件自己构建；不构建时面板入口可见但 MCP 启动失败。
   { packageName: "@zcode/zcode-site-plugin", artifactPath: "zcode-site-plugin/dist/server.mjs" },
+  // PaySwap 官方插件：插件生命周期 E2E 的 S0b 基线（已安装未启用）需要 dev agent
+  // 自带已构建的官方插件 runtime；不构建就只有残缺种子（清单在、dist/server.mjs
+  // 缺失），marketplace 管线装出的是启动即失败的插件。
+  {
+    packageName: "@zcode/payswap-plugin",
+    artifactPath: "payswap-plugin/dist/server.mjs",
+  },
 ];
 const defaultBuildFilters = [
   ...cliWorkspaceBuilds.map(({ packageName }) => packageName),
