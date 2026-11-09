@@ -4651,6 +4651,15 @@ export const config: WebdriverIO.Config = {
           // 让跨平台清理优先命中当前 run，并为 Windows shard 保留路径级兜底。
           buildE2ERunIdArg(E2E_RUN_ID),
           createWindowsE2EHomeMarkerArg(E2E_HOME_DIR),
+          // 环境适配入口：无摄像头沙箱（如 Linux CI 容器，/dev/video* 全缺）上
+          // getUserMedia 会以 NotFoundError 短路，永远走不到权限请求，权限确认条
+          // 用例无法执行；环境可用 ZCODE_E2E_EXTRA_APP_ARGS 注入 Chromium 开关
+          // （如 --use-fake-device-for-media-stream 提供假设备）。未设置时零影响。
+          ...(process.env.ZCODE_E2E_EXTRA_APP_ARGS?.trim()
+            ? process.env.ZCODE_E2E_EXTRA_APP_ARGS.split(",")
+                .map((arg) => arg.trim())
+                .filter(Boolean)
+            : []),
         ],
         appBinaryPath: ELECTRON_APP_BINARY_PATH,
       },

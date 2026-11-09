@@ -153,17 +153,20 @@ async function ensureSidePaneEntryVisible(): Promise<void> {
       );
       if (visible) return true;
       // 与产品 ⌥⌘B 共用真实 workspace shortcut；初始 side-pane 收起态和已展开态都可兼容。
+      // Linux/Windows 上 cmdOrCtrl 绑定解析为 Ctrl，只派发 Apple 形态不命中；两种形态都派发。
       await browser.execute(() => {
-        window.dispatchEvent(
-          new KeyboardEvent("keydown", {
-            key: "b",
-            code: "KeyB",
-            altKey: true,
-            metaKey: true,
-            bubbles: true,
-            cancelable: true,
-          }),
-        );
+        const dispatchSidePaneShortcut = (modifiers: KeyboardEventInit) =>
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: "b",
+              code: "KeyB",
+              bubbles: true,
+              cancelable: true,
+              ...modifiers,
+            }),
+          );
+        dispatchSidePaneShortcut({ metaKey: true, altKey: true });
+        dispatchSidePaneShortcut({ ctrlKey: true, altKey: true });
       });
       return false;
     },
