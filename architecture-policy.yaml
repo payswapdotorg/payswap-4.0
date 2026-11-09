@@ -1207,6 +1207,9 @@ modules:
     publicEntrypoints:
       - packages/shared/src/payswap/index.ts
       - packages/shared/src/payswap/contract.ts
+      # 浏览器安全入口（D12.7 卡组件）：只依赖 zod。桶入口带 broker/identity 模块的
+      # 模块级 Buffer 用法，会拖死浏览器 renderer 的 chunk 求值（Buffer is not defined）。
+      - packages/shared/src/payswap/approval-card.ts
     layers:
       app: .
     owner: plugin
@@ -1249,6 +1252,8 @@ modules:
       - mcp-apps-protocol
       - plugin-ui
       - shared-payswap
+      # D12.7 卡组件：button/hooks/i18n 的 ui 内部面。
+      - ui
     publicEntrypoints:
       - packages/ui/src/payswap/index.ts
       - packages/ui/src/payswap/contract.ts
@@ -1262,6 +1267,8 @@ modules:
     managed: true
     requires:
       - shared-payswap
+      # D12.7 入口装配：shouldEnableE2ETestBridge（E2E 观察桥门）来自 shared 主入口。
+      - shared
     publicEntrypoints:
       - packages/desktop/src/main/payswap/index.ts
       - packages/desktop/src/main/payswap/contract.ts

@@ -37,10 +37,10 @@ export interface PayswapDesktopApprovalE2EBridge {
   channel: typeof PAYSWAP_DESKTOP_APPROVAL_IPC_CHANNEL;
 }
 
-declare global {
-  // eslint-disable-next-line no-var -- globalThis 挂点（E2E test bridge 模式）
-  var __zcodePayswapDesktopApprovalE2E: PayswapDesktopApprovalE2EBridge | undefined;
-}
+/** globalThis 挂点（结构化访问面 —— 测试进程内读取；未挂 = undefined）。 */
+type PayswapE2EBridgeGlobal = typeof globalThis & {
+  __zcodePayswapDesktopApprovalE2E?: PayswapDesktopApprovalE2EBridge;
+};
 
 export interface InstallDesktopPayswapApprovalOptions {
   /** 主窗口 URL 的现读来源（生产受信 origin；空/无窗口 = fail-closed 全拒）。 */
@@ -85,7 +85,7 @@ export function installDesktopPayswapApproval(
     host,
   });
   if (options.e2eBridgeEnabled ?? shouldEnableE2ETestBridge(process.env)) {
-    globalThis.__zcodePayswapDesktopApprovalE2E = {
+    (globalThis as PayswapE2EBridgeGlobal).__zcodePayswapDesktopApprovalE2E = {
       host,
       registration,
       channel: PAYSWAP_DESKTOP_APPROVAL_IPC_CHANNEL,
