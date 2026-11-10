@@ -17,6 +17,12 @@ modules:
   - id: services
     roots: [ packages/services/src ]
     managed: false
+    # PaySwap Gate E2（addendum §5.2，P2）：credentialService 的 PSP（payswap:psp:*）
+    # 键级安全政策消费 shared-payswap 的 credential-security 法则（命名空间谓词、
+    # per-platform 决策表、typed 拒绝、host env 键契约 —— 单一实现，两侧永不漂移）。
+    # 仅经 publicEntrypoint（@zcode/shared/payswap 桶）导入；services 是 node-only
+    # 包，无浏览器 chunk 暴露面。
+    requires: [ shared-payswap ]
   - id: session
     roots: [ packages/services/src/session ]
     managed: false

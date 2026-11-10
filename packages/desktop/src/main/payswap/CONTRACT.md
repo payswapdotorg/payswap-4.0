@@ -24,3 +24,22 @@ URL 作为受信 origin 来源。
 在测试模式挂 `globalThis.__zcodePayswapDesktopApprovalE2E`（P2+ request_authorization
 接线前的发卡调用方入口 —— D12.6 in-process 纪律）。发卡调用方是 P2+ 的
 request_authorization 接线。
+
+P2 增补（Gate E2 desktop 行，addendum §5.2）：`pspCredentialKeyStore.ts` ——
+PSP cipher 随机键的 safeStorage 键仓（Electron main 是唯一能访问 safeStorage 的
+进程；host 是 utilityProcess）。不变量：
+
+- at-rest：键文件（app 配置目录 `payswap-psp-safe-storage-key`）只含 safeStorage
+  包裹产物，0600 私有模式；仓自己从不写明文、fallback 派生物或第二份。
+- fail-closed：safeStorage 不可用 → null（不建文件、不造键、不 memoize —— 可
+  重试）；services 侧对 `payswap:psp:*` 键 typed 拒绝。
+- 无静默轮换：包裹解不开（钥匙串更换/迁移）→ typed
+  `PAYSWAP_PSP_KEY_UNWRAP_FAILED`（shared 法则），文件字节原样保留。
+- 并发：ensure 内部串行（in-flight 去重）—— 同一键、恰一次落盘；成功后
+  memoize。
+- IO 全注入（safeStorage 端口 + fs 端口）—— 法则级测试无 Electron 依赖。
+- 交付：解包键经 `buildPayswapPspHostEnv`（shared 法则单一实现）组装为
+  `ZCODE_PAYSWAP_PSP_KEY`，由 spawnHostProcess 的 hostProcessLocalEnv 通道交付
+  host。**入口接线（app-ready 预热 + spawn 注入）随 P2.2 账户服务连接流与其
+  desktop Browser E2E 臂落地**（D12.7 同款纪律：法则与模块先行，入口接线随
+  活的窗口证明）。

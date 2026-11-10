@@ -8,9 +8,16 @@ import {
   formatZodError,
   isCredentialDecryptError,
 } from "@zcode/shared";
+import {
+  createPayswapPspSecureStorageUnavailableError,
+  isPayswapPspCredentialKey,
+  PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY,
+  resolvePayswapPspCredentialStoragePolicy,
+} from "@zcode/shared/payswap";
 import type { ICredentialService } from "./credential.js";
 import {
   createCredentialCipherProvider,
+  createCredentialCipherProviderForSecret,
   type CredentialCipherProvider,
 } from "./providers/credentialCipherProvider.js";
 import { createServiceLogger } from "../logger/serviceLogger.js";
@@ -81,6 +88,18 @@ async function writeAll(credentialsFile: string, data: Record<string, string>): 
 
 interface CredentialServiceDependencies {
   cipherProvider?: CredentialCipherProvider;
+  /**
+   * Gate E2（addendum §5.2）：PSP（`payswap:psp:*`）键的专用加密通道。解析顺序：
+   * 1. 显式注入（本字段）—— 最高优先级（测试/装配通道）；
+   * 2. env `ZCODE_PAYSWAP_PSP_KEY`（desktop 行 —— main 的 safeStorage 键仓解包后
+   *    经 hostProcessLocalEnv 交付的随机键）；
+   * 3. env `ZCODE_CREDENTIAL_SECRET` 在位 → 默认通道（server 行 —— secret 派生）；
+   * 4. 否则 fail-closed typed 拒绝（确定性 fallback 派生键对 PSP 键永不可用）。
+   * 非 PSP 键恒不受本字段影响（preservation：上游行为零变更）。
+   */
+  pspCipherProvider?: CredentialCipherProvider;
+  /** 环境注入点（测试确定性；缺省 process.env —— 与 cipher provider 的既有语义同源）。 */
+  env?: NodeJS.ProcessEnv;
   /** Host 私有的持久化成功通知；不进入 Renderer/RPC 凭据接口。 */
   onDidMutate?: (event: { operation: "save" | "delete"; key: string }) => void;
 }
@@ -95,11 +114,47 @@ export interface LocalCredentialService extends ICredentialService {
 export function createCredentialService(
   dependencies: CredentialServiceDependencies = {},
 ): LocalCredentialService {
-  const cipherProvider = dependencies.cipherProvider ?? createCredentialCipherProvider();
+  const env = dependencies.env ?? process.env;
+  const cipherProvider = dependencies.cipherProvider ?? createCredentialCipherProvider({ env });
+  const pspKeyMaterial = env[PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]?.trim();
+  const pspCipherProvider =
+    dependencies.pspCipherProvider ??
+    (pspKeyMaterial ? createCredentialCipherProviderForSecret(pspKeyMaterial) : undefined);
+  const credentialSecretConfigured = Boolean(env.ZCODE_CREDENTIAL_SECRET?.trim());
+
+  /**
+   * 键级 cipher 解析（Gate E2 §5.2 决策表的 services 侧投影）：
+   * - 非 PSP 键 → 默认通道（上游行为零变更）。
+   * - PSP 键 → safeStorage 键通道（显式注入或 env 交付）优先；否则仅在
+   *   `ZCODE_CREDENTIAL_SECRET` 在位且默认通道未被调用方替换时走默认通道
+   *   （server 行 —— 被注入的任意 cipherProvider 无法证明是 secret 派生，
+   *   fail-closed 拒绝）；否则 typed 拒绝 —— 确定性 fallback 派生键对
+   *   `payswap:psp:*` 键永不可用。
+   * 拒绝在触盘之前抛出（save 不产生任何记录；load/recover 不读密文）。
+   */
+  function resolveCipherFor(validatedKey: string): CredentialCipherProvider {
+    if (!isPayswapPspCredentialKey(validatedKey)) {
+      return cipherProvider;
+    }
+    if (pspCipherProvider) {
+      return pspCipherProvider;
+    }
+    if (
+      resolvePayswapPspCredentialStoragePolicy({
+        safeStorageKeyConfigured: false,
+        credentialSecretConfigured,
+      }) === "secret" &&
+      !dependencies.cipherProvider
+    ) {
+      return cipherProvider;
+    }
+    throw createPayswapPspSecureStorageUnavailableError();
+  }
 
   return {
     async recoverUnreadable(key, assertCurrent) {
       const validatedKey = credentialKeySchema.parse(key);
+      const pspCipher = resolveCipherFor(validatedKey);
       const credentialsFile = getCredentialsFile();
       let deleted = false;
       const value = await withFileLock(credentialsFile, async () => {
@@ -109,7 +164,7 @@ export function createCredentialService(
         const rawValue = creds[validatedKey];
         if (rawValue === undefined) return null;
         try {
-          return cipherProvider.decrypt(rawValue);
+          return pspCipher.decrypt(rawValue);
         } catch (error) {
           if (!isCredentialDecryptError(error)) throw error;
         }
@@ -127,19 +182,21 @@ export function createCredentialService(
 
     async load(key: string): Promise<string | null> {
       const validatedKey = credentialKeySchema.parse(key);
+      const cipher = resolveCipherFor(validatedKey);
       const creds = await readAll();
       const rawValue = creds[validatedKey];
       if (rawValue === undefined) {
         return null;
       }
 
-      return cipherProvider.decrypt(rawValue);
+      return cipher.decrypt(rawValue);
     },
 
     async save(key: string, value: string, assertCurrent?: () => void): Promise<void> {
       const validatedKey = credentialKeySchema.parse(key);
       const validatedValue = credentialValueSchema.parse(value);
-      const encryptedValue = cipherProvider.encrypt(validatedValue);
+      const cipher = resolveCipherFor(validatedKey);
+      const encryptedValue = cipher.encrypt(validatedValue);
       const credentialsFile = getCredentialsFile();
       // desktop host 与 CLI adapter 是独立进程，进程内排队不能阻止 whole-file
       // read-modify-write 丢更新；共享目录锁必须覆盖读取、变更和原子替换全过程。

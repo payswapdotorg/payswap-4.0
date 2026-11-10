@@ -26,3 +26,14 @@ export {
   type InstallDesktopPayswapApprovalOptions,
   type PayswapDesktopApprovalE2EBridge,
 } from "./desktopPayswapBootstrap.js";
+export {
+  createPayswapPspKeyStore,
+  PAYSWAP_PSP_KEY_STORE_FILE_NAME,
+  type PayswapPspKeyStore,
+  type PayswapPspKeyStoreDependencies,
+  type PayswapPspSafeStoragePort,
+} from "./pspCredentialKeyStore.js";
+export {
+  buildPayswapPspHostEnv,
+  PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY,
+} from "@zcode/shared/payswap";
