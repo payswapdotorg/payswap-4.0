@@ -15,6 +15,12 @@
  *   values — only opaque connection status」）：投影面是连接记录的去秘密子集；
  *   投影 schema 对携带任何秘密形字段（secret/apiKey/operatorSecret）的载荷
  *   schema 级拒绝 —— 渲染层/模型侧在类型面上拿不到秘密。
+ * - **读回半（slice 2）**：状态词汇补全 `expired`（doc 05 §5「expiry is
+ *   projected as connection status」—— provider read-back 的 auth-failed 证据把
+ *   connected 翻 expired，verified 证据翻回；revoked 终态）。provider 读回端口
+ *   三值结局（verified〔携带 providerAccountId 非秘密证据摘要〕/ auth-failed /
+ *   unavailable〔unknown ≠ expired，doc 05 §6.4〕）是 strict schema；畸形结局
+ *   无证据 = fail-closed 拒绝，永不翻状态。
  * - **Stripe authSpec 事实**（doc 04，检索记录在案）：operator-supplied-secret、
  *   key-prefix 模式区分（sk/rk × test/live）、secretKinds 恰 ["api-key"]、
  *   revoke = delete-local-only；formatCheck 是防御性检查，最终权威是 provider
@@ -38,6 +44,7 @@ import {
   mintPayswapConnectionId,
   PAYSWAP_ACCOUNT_SECURE_STORAGE_REFUSAL_CODE,
   PAYSWAP_STRIPE_AUTH_SPEC,
+  payswapAccountReadBackOutcomeSchema,
   payswapConnectionRecordSchema,
   payswapConnectionStatusProjectionSchema,
   payswapPspSecretCredentialKey,
@@ -111,7 +118,12 @@ describe("payswap account connection — connection record schema", () => {
     expect(payswapConnectionRecordSchema.safeParse({ ...record, mode: "sandbox" }).success).toBe(
       false,
     );
-    expect(payswapConnectionRecordSchema.safeParse({ ...record, status: "expired" }).success).toBe(
+    // slice 2：expired 进状态词汇（doc 05 §5「expiry is projected as connection
+    // status」）—— 记录与投影都接受；词汇外（pending/unknown）仍拒绝。
+    expect(payswapConnectionRecordSchema.parse({ ...record, status: "expired" }).status).toBe(
+      "expired",
+    );
+    expect(payswapConnectionRecordSchema.safeParse({ ...record, status: "pending" }).success).toBe(
       false,
     );
     expect(
@@ -157,6 +169,71 @@ describe("payswap account connection — status projection law", () => {
           .success,
       ).toBe(false);
     }
+  });
+
+  it("expired 状态进投影词汇：expired 记录投影携带 expired（投影与记录词汇同步）", () => {
+    const expiredRecord = { ...validRecordFixture(), status: "expired" as const };
+    const projection = projectPayswapConnectionStatus(expiredRecord);
+    expect(projection.status).toBe("expired");
+    expect(payswapConnectionStatusProjectionSchema.parse(projection)).toEqual(projection);
+    // 词汇外状态在投影面同样拒绝。
+    expect(
+      payswapConnectionStatusProjectionSchema.safeParse({ ...projection, status: "pending" })
+        .success,
+    ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// provider 读回端口（doc 05 §5「final authority is provider read-back」+ §6.4
+// unknown 结局纪律 + doc 06 §2.2 refreshEvidence；slice 2）
+// ---------------------------------------------------------------------------
+
+describe("payswap account connection — provider read-back outcome law (slice 2)", () => {
+  it("三值结局 strict schema：verified/auth-failed/unavailable 通过；未知 kind 与未知字段拒绝", () => {
+    expect(
+      payswapAccountReadBackOutcomeSchema.parse({
+        kind: "verified",
+        providerAccountId: "acct_1A2b3C",
+      }),
+    ).toEqual({ kind: "verified", providerAccountId: "acct_1A2b3C" });
+    expect(
+      payswapAccountReadBackOutcomeSchema.parse({ kind: "auth-failed", detail: "invalid_api_key" }),
+    ).toEqual({ kind: "auth-failed", detail: "invalid_api_key" });
+    expect(
+      payswapAccountReadBackOutcomeSchema.parse({ kind: "unavailable", detail: "network timeout" }),
+    ).toEqual({ kind: "unavailable", detail: "network timeout" });
+
+    // 未知 kind 拒绝（闭集）；strict：任何额外字段拒绝（秘密形字段尤其 —— 结局面
+    // 永不携带秘密材料）。
+    expect(payswapAccountReadBackOutcomeSchema.safeParse({ kind: "unknown" }).success).toBe(false);
+    expect(
+      payswapAccountReadBackOutcomeSchema.safeParse({
+        kind: "verified",
+        providerAccountId: "acct_1A2b3C",
+        secret: "sk_test_redacted",
+      }).success,
+    ).toBe(false);
+    expect(
+      payswapAccountReadBackOutcomeSchema.safeParse({ kind: "auth-failed", detail: "x", extra: 1 })
+        .success,
+    ).toBe(false);
+  });
+
+  it("verified 必须携带非空 providerAccountId（证据摘要）；auth-failed/unavailable 必须携带 detail", () => {
+    expect(
+      payswapAccountReadBackOutcomeSchema.safeParse({ kind: "verified" }).success,
+    ).toBe(false);
+    expect(
+      payswapAccountReadBackOutcomeSchema.safeParse({ kind: "verified", providerAccountId: "" })
+        .success,
+    ).toBe(false);
+    expect(payswapAccountReadBackOutcomeSchema.safeParse({ kind: "auth-failed" }).success).toBe(
+      false,
+    );
+    expect(payswapAccountReadBackOutcomeSchema.safeParse({ kind: "unavailable" }).success).toBe(
+      false,
+    );
   });
 });
 
