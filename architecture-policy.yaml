@@ -1281,6 +1281,21 @@ modules:
     layers:
       app: .
     owner: plugin
+  # services-payswap：由 architecture:adopt 登记
+  - id: services-payswap
+    roots:
+      - packages/services/src/payswap
+    managed: true
+    requires:
+      - services
+      - shared
+      - shared-payswap
+    publicEntrypoints:
+      - packages/services/src/payswap/index.ts
+      - packages/services/src/payswap/contract.ts
+    layers:
+      app: .
+    owner: plugin
 
 global:
   # 临时时间戳（2026-09-10）：unmanaged-new-file 只约束此日期之后首次入库的文件。
