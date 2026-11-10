@@ -58,6 +58,7 @@ import { readRelayPeerFacts } from "./peer-relay-protocol.js";
 import { drainAfterEnd, readOneLine } from "./line-io.js";
 import {
   createPayswapBrokerDispatch,
+  type PayswapAccountOverviewReader,
   type PayswapBrokerDispatch,
   type PayswapInstanceBinding,
   type PayswapLiveStateReader,
@@ -122,6 +123,12 @@ export interface PayswapBrokerServerOptions {
   /** §7.3 live 状态 reader（Step 4；缺省 → S2 not_connected，见 dispatch.ts）。 */
   liveStateReader?: PayswapLiveStateReader;
   /**
+   * §7.3/P2.2 slice 3 account-overview reader：get_account_overview 在 enabled +
+   * opted-in 时的连接投影数据源（每次 dispatch 现读）。缺省 → 概览不答数据。
+   * 仅当 live 状态**实读**为 opted-in 时被咨询（三码法则优先于数据路径）。
+   */
+  accountOverviewReader?: PayswapAccountOverviewReader;
+  /**
    * §8.1 会话 resolver（Step 5，ADR-8 D8.2）：live 实例请求的 sessionId hint 经此权威
    * 下游解析。**缺省 = fail-closed**（无 resolver → 一切 live 请求 session_unresolvable
    * —— 会话被解析而非被声明；与 liveStateReader 的宽松缺省不同：会话是每次 dispatch
@@ -176,6 +183,7 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
     closeGraceMs,
     auditSink,
     liveStateReader,
+    accountOverviewReader,
     sessionScopeResolver,
     entityWorkspaceResolver,
     seenRecords,
@@ -183,8 +191,8 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
   const endpointPath = bootState.endpointPath;
   const endpointDir = path.dirname(endpointPath);
   const privateKey = bootState.keyPair.privateKey;
-  // §7 闭集 dispatch 表（Step 4）—— per-request 调用，无共享可变状态。
-  const dispatch: PayswapBrokerDispatch = createPayswapBrokerDispatch({ liveStateReader });
+  // §7 闭集 dispatch 表（Step 4 + P2.2 slice 3 概览真数据半）—— per-request 调用，无共享可变状态。
+  const dispatch: PayswapBrokerDispatch = createPayswapBrokerDispatch({ liveStateReader, accountOverviewReader });
   // §9 seen-record 引擎（Step 6，ADR-9）：per-broker 实例（连接无关，§9.2）；同步纯内存
   // —— accept 判定+插入与退役解析各自是事件循环内不可交错的一步（§9.3(4) 原子性）。
   const replayRecords: PayswapSeenRecords = seenRecords ?? createPayswapSeenRecords();

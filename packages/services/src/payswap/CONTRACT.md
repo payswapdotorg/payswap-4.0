@@ -43,13 +43,33 @@ management」；deliverable 05 §5 认证面的 host-service 半）。法则（s
 corrupt-refuse-overwrite（typed `PAYSWAP_CONNECTIONS_STORE_CORRUPT`，绝不自动
 覆盖）；IO 全注入。
 
+真实 Stripe 读回 adapter（`providers/stripe/readBackAccount.ts`，slice 3，doc 06
+§2.9 provider 运行时的 Stripe 落地）：
+
+- **端口实现**：`createStripeAccountReadBackPort(deps)` 返回 shared 法则的
+  `PayswapAccountReadBackPort`。HTTP Bearer 验证 `GET https://api.stripe.com/v1/account`
+  （doc 04 §1.1：test/live 同端点、模式由键前缀区分 —— 模式不切端
+  点，不发明）。
+- **结局映射（doc 05 §6.4 unknown 纪律）**：200 + 非空 `id` →
+  `verified{providerAccountId}`；**401 是唯一的 auth-failed 证据**（provider 拒绝
+  凭据）；其余一切（非 200/非 401、非 JSON、缺 id、传输异常、超时）→
+  `unavailable`（unknown ≠ expired，读回失败永不假装成功也永不假装 auth 失败）。
+- **装配防线（先于任何网络触达）**：`providerId ≠ "stripe"` 或
+  `secretKind ≠ "api-key"` = 装配错误 → 抛出（accountService 映射为
+  `read_back_unavailable` typed 拒绝，状态不变）；秘密前缀推导的模式与记录
+  `mode` 不一致 = 本地不一致 → `unavailable`（不触网 —— 无 provider 证据不翻
+  状态）。
+- **零秘密外泄**：秘密只入 `Authorization` 头；任何 detail/message 永不携带
+  秘密材料；adapter 不日志、不持久化。
+- **IO 全注入**：transport 经 `ApiClient`（`@zcode/shared` 既有抽象，
+  `timeoutMs` 随 init 传递 —— 执行归实现，与 NodeApiClient 同一契约）；缺省
+  = `globalThis.fetch` + AbortController 超时执行（缺省 10 s，可注入）。
+
 尚未落地（随 P2.2 后续切片，D12.7 同款纪律——法则与模块先行，入口接线随活的
 窗口证明）：
 
 - additive RPC channel（连接 UI 的 host 暴露面）与平台壳 onboarding UI；
 - desktop main 入口接线（app-ready 预热 + `ZCODE_PAYSWAP_PSP_KEY` 的
-  hostProcessLocalEnv 注入 —— desktop-payswap/CONTRACT.md 的 P2 交付段）；
-- broker dispatch 的 account overview 真数据半（read-only conversational
-  operations）；
-- 真实 Stripe 读回 adapter（`readBackAccount` 的 provider 运行时实现，doc 06
-  §2.9）与连接流的 desktop Browser E2E 臂 —— 随活的窗口证明切片。
+  hostProcessLocalEnv 注入 —— desktop-payswap/CONTRACT.md 的 P2 交付段；
+  生产装配把本切片的 Stripe adapter 与 accountOverviewReader 接进 broker）；
+- 连接流的 desktop Browser E2E 臂 —— 随活的窗口证明切片。

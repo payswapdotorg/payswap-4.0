@@ -19,6 +19,7 @@ export {
 } from "./boot.js";
 export {
   createPayswapBrokerDispatch,
+  type PayswapAccountOverviewReader,
   type PayswapBrokerDispatch,
   type PayswapBrokerDispatchOptions,
   type PayswapBrokerLiveState,

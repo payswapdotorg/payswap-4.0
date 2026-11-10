@@ -1,7 +1,8 @@
 /**
- * services-payswap 对外契约（P2.2 账户服务 —— deliverable 06 §2.2 + doc 05 §5）。
+ * services-payswap 对外契约（P2.2 账户服务 + Stripe 读回 adapter —— deliverable
+ * 06 §2.2/§2.9 + doc 05 §5）。
  *
- * 公共面即 index.ts 再导出的两个工厂与其类型；方法级契约如下（调用方想知道的
+ * 公共面即 index.ts 再导出的工厂与其类型；方法级契约如下（调用方想知道的
  * 一切，其余对外不可见）：
  *
  * `createPayswapAccountService(deps)`（单一写者）：
@@ -44,6 +45,20 @@
  *   **绝不自动覆盖**（corrupt-refuse-overwrite）。
  * - `upsert(record)`：文件锁内原子读-改-写（跨进程安全）；持久化完成才返回。
  * - IO 全注入（缺省 = 真实 fs + @zcode/shared/node 锁/原子写原语）。
+ *
+ * `createStripeAccountReadBackPort(deps)`（slice 3，doc 06 §2.9 provider 运行时）：
+ * - 返回 shared 法则的 `PayswapAccountReadBackPort`；`GET
+ *   https://api.stripe.com/v1/account` + Bearer（doc 04 §1.1 事实；test/live 同
+ *   端点，模式由键前缀区分）。结局映射遵循 doc 05 §6.4：200+非空 `id` →
+ *   `verified{providerAccountId}`；**401 是唯一 auth-failed 证据**；其余（非
+ *   200/401、非 JSON、缺 id、传输异常、超时）→ `unavailable`（unknown ≠
+ *   expired）。
+ * - 装配防线先于网络：`providerId ≠ "stripe"` / `secretKind ≠ "api-key"` → 抛出
+ *   （accountService 映射 `read_back_unavailable`，状态不变）；秘密前缀模式与
+ *   `input.mode` 不一致 → `unavailable`（本地不一致，不触网）。
+ * - 秘密只入 Authorization 头 —— detail/message 永不携带秘密；不日志、不持久化。
+ * - IO 全注入：`apiClient?: ApiClient`（`timeoutMs` 随 init，执行归实现）；
+ *   缺省 = `globalThis.fetch` + AbortController 超时（缺省 10 s，`timeoutMs` 可注入）。
  */
 export type ServicesPayswapId = string & { readonly __brand: "ServicesPayswapId" };
 

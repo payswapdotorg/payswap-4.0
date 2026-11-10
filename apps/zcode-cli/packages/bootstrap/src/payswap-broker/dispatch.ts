@@ -1,5 +1,6 @@
 /**
- * PaySwap 闭集六操作 dispatch 表（契约 w2-01 §7；Step 4 落地）。
+ * PaySwap 闭集六操作 dispatch 表（契约 w2-01 §7；Step 4 落地，P2.2 slice 3 扩展
+ * account-overview 真数据半）。
  *
  * §7.2（N21，normative）：dispatch 是**代码里的闭集 enum → handler map**，不是可注册
  * 的 registry —— 无 ServiceChannels 通路、无任意 host-service 调用、无反射、无
@@ -10,11 +11,22 @@
  *
  * §7.3 三码法则：每个操作按 broker 观察到的 live 状态回答业务拒绝 —— 插件禁用/卸载
  * → financial_mode_disabled；enabled + 未 opt-in（S1）→ not_opted_in；enabled +
- * opted-in + 无账户（S2）→ not_connected（§13：本 wave 无账户数据，not_connected 是
- * 唯一真话）。live 状态经注入的 reader **每次 dispatch 现读**（非 boot 快照 ——
- * T2/T3 live-flip 的基础，§10.2(3)）。reader 缺省 → not_connected（S2 默认：所有码
- * 都是拒绝，无账户在本 wave 无条件为真）；reader 抛错 → internal_error（§6.3，无细节
+ * opted-in + 无账户（S2）→ not_connected。live 状态经注入的 reader **每次 dispatch
+ * 现读**（非 boot 快照 —— T2/T3 live-flip 的基础，§10.2(3)）。reader 缺省 →
+ * not_connected（S2 默认：所有码都是拒绝）；reader 抛错 → internal_error（§6.3，无细节
  * 外泄）。
+ *
+ * P2.2 slice 3（§7.3「Read-only account data arrives with P2's Gate E2」的兑现）：
+ * `get_account_overview` 在 **live 状态实读为 enabled + opted-in** 且注入的
+ * `accountOverviewReader` 读回非空时回答真数据 `{kind:"overview", connections}`
+ * （shared `PayswapAccountOverviewData` —— 五字段状态投影，schema 级无秘密）。
+ * 法则序：三码法则优先于数据路径（disable 撤销 / 未 opt-in 永不触 overview
+ * reader）；live 状态未实读（reader 缺席的 S2 默认）同样不触 —— 数据永不绕过
+ * opt-in 门。空清单 / 未知 connectionId → `not_connected`（该工作区的已连接集合
+ * 之为空/不含所求 —— S2 唯一真话，永不是空概览）；`connectionId` 收窄所求行。
+ * reader 抛错 → internal_error（§6.3，与 liveStateReader 同类）。闭表保持：其余
+ * 五操作维持 §7.3 拒绝语义（各自领域 —— intent/eligibility/routing/grant/
+ * execution —— 随其切片落地，届时 not_connected 的 S2 前置由各领域自身证据驱动）。
  *
  * §7.4 dormant grant hook：`request_authorization` 的 dispatch 层预留 grant 校验步骤，
  * Wave 2 **休眠** —— 不铸造、不校验、不存储任何 grant；`authorizationId` 不是 Wave 1
@@ -29,8 +41,10 @@
 import {
   PAYSWAP_OPERATION_PARAMS_SCHEMAS,
   payswapBusinessRefusal,
+  type PayswapAccountOverviewData,
   type PayswapBrokerOp,
   type PayswapBrokerResponseBody,
+  type PayswapConnectionStatusProjection,
 } from "@zcode/shared/payswap";
 
 /** broker 观察到的 live 金融模式状态（§7.3 live 读，非子进程 env 快照）。 */
@@ -43,6 +57,15 @@ export interface PayswapBrokerLiveState {
 
 /** live 状态 reader：每次 dispatch 现读；抛错 → internal_error（§6.3）。 */
 export type PayswapLiveStateReader = () => PayswapBrokerLiveState | Promise<PayswapBrokerLiveState>;
+
+/**
+ * account-overview reader（P2.2 slice 3）：本 broker 绑定作用域（工作区）的连接
+ * 状态投影清单 —— host 装配侧把它接到账户服务的 listConnections（每次 dispatch
+ * 现读，非 boot 快照）。返回的投影由 shared 法则投影面保证无秘密。抛错 →
+ * internal_error（§6.3，与 liveStateReader 同类）。
+ */
+export type PayswapAccountOverviewReader =
+  () => readonly PayswapConnectionStatusProjection[] | Promise<readonly PayswapConnectionStatusProjection[]>;
 
 /** §5.5 步 (4) 之后的实例绑定状态：live，或 disable 撤销（D5.6 流通到三码法则）。 */
 export type PayswapInstanceBinding = "live" | "disabled_revocation";
@@ -62,6 +85,12 @@ export type PayswapDispatchResult =
 export interface PayswapBrokerDispatchOptions {
   /** live 状态 reader（缺省 → S2 not_connected：所有码都是拒绝，§13 无账户无条件为真）。 */
   liveStateReader?: PayswapLiveStateReader;
+  /**
+   * account-overview reader（P2.2 slice 3；缺省 → 概览不答数据，`not_connected`
+   * 保持唯一真话）。仅当 live 状态**实读**为 enabled + opted-in 时被咨询（三码
+   * 法则优先于数据路径 —— 数据永不绕过 opt-in 门）。
+   */
+  accountOverviewReader?: PayswapAccountOverviewReader;
 }
 
 export interface PayswapBrokerDispatch {
@@ -83,6 +112,7 @@ export function createPayswapBrokerDispatch(
   options: PayswapBrokerDispatchOptions = {},
 ): PayswapBrokerDispatch {
   const liveStateReader = options.liveStateReader;
+  const accountOverviewReader = options.accountOverviewReader;
   return {
     async resolveRequest(request, context) {
       const schema = PAYSWAP_OPERATION_PARAMS_SCHEMAS[request.op as PayswapBrokerOp];
@@ -90,16 +120,18 @@ export function createPayswapBrokerDispatch(
         // N21 皮带扣：schema 枚举之后的第二道闭集防线。
         return { kind: "refused", code: "operation_not_found", retryable: false };
       }
-      if (!schema.safeParse(request.params).success) {
+      const params = schema.safeParse(request.params);
+      if (!params.success) {
         // §6.1(3)：per-op schema 违例 → request_invalid（绑定后的桥接拒绝，请求归属信封）。
         return { kind: "refused", code: "request_invalid", retryable: false };
       }
       // 三码法则（§7.3）。disable 撤销（D5.6）优先于 reader —— 注册表 tombstone 是权威。
       let code: "not_opted_in" | "not_connected" | "financial_mode_disabled";
+      let stateWasRead = false;
       if (context?.instanceBinding === "disabled_revocation") {
         code = DISABLED_REFUSAL;
       } else if (liveStateReader === undefined) {
-        // 缺省：S2 not_connected —— 所有码都是拒绝；无账户在本 wave 无条件为真（§13）。
+        // 缺省：S2 not_connected —— 所有码都是拒绝；无账户数据接线（§13）。
         code = "not_connected";
       } else {
         let state: PayswapBrokerLiveState;
@@ -109,11 +141,44 @@ export function createPayswapBrokerDispatch(
           // reader 故障 = 未预期的 host 侧失败：typed internal_error，无细节外泄（§6.3）。
           return { kind: "refused", code: "internal_error", retryable: false };
         }
+        stateWasRead = true;
         code = !state.pluginEnabled
           ? DISABLED_REFUSAL
           : !state.financialWorkspace
             ? "not_opted_in"
             : "not_connected";
+      }
+      // P2.2 slice 3 数据路径：三码法则已判定 enabled + opted-in（not_connected 终态
+      // 且状态**实读**）时，get_account_overview 咨询注入的概览 reader。数据永不
+      // 绕过 opt-in 门 —— live 状态未实读（reader 缺席默认）不触。
+      if (
+        code === "not_connected" &&
+        stateWasRead &&
+        request.op === "get_account_overview" &&
+        accountOverviewReader !== undefined
+      ) {
+        let connections: readonly PayswapConnectionStatusProjection[];
+        try {
+          connections = await accountOverviewReader();
+        } catch {
+          // 概览 reader 故障 = 未预期的 host 侧失败（§6.3，与 liveStateReader 同类）。
+          return { kind: "refused", code: "internal_error", retryable: false };
+        }
+        // connectionId 收窄（params 已过 per-op strict schema）：所求行不在本作用域的
+        // 已连接集合 → not_connected（S2 对该所求为真；跨工作区不可证，§8.3 不越权
+        // 声称）。全清单非空才答概览 —— 空清单是 S2 的唯一真话。
+        const requestedConnectionId = (params.data as { connectionId?: string }).connectionId;
+        const narrowed =
+          requestedConnectionId === undefined
+            ? connections
+            : connections.filter((connection) => connection.connectionId === requestedConnectionId);
+        if (narrowed.length > 0) {
+          const data: PayswapAccountOverviewData = { kind: "overview", connections: narrowed };
+          return {
+            kind: "dispatched",
+            body: { ok: true, seq: request.seq, data },
+          };
+        }
       }
       return {
         kind: "dispatched",
