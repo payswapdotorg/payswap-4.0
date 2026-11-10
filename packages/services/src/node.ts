@@ -139,6 +139,13 @@ export {
   createSettingServiceWithMigrations,
 } from "./setting/settingService.js";
 export { createCredentialService } from "./credential/credentialService.js";
+// Gate E2（addendum §5.2）：cipher 工厂公开 —— services 侧 PSP 政策的键材料通道
+// （desktop safeStorage 解包随机键经 env 交付后由 createCredentialCipherProviderForSecret
+// 构建；测试的 fallback 派生键对照组由 createCredentialCipherProvider({env:{}}) 构建）。
+export {
+  createCredentialCipherProvider,
+  createCredentialCipherProviderForSecret,
+} from "./credential/providers/credentialCipherProvider.js";
 export { createBroadcastService } from "./broadcast/broadcastService.js";
 export { createZCodeAgentService } from "./zcode-agent/zcodeAgentService.js";
 export { createZCodeTaskServiceAdapter } from "./zcode-agent/zcodeTaskServiceAdapter.js";

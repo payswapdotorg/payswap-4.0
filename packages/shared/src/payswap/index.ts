@@ -39,5 +39,6 @@ export * from "./approval-flow.js";
 export * from "./hook-admission.js";
 export * from "./browser-admission.js";
 export * from "./authorization-surfaces.js";
+export * from "./credential-security.js";
 export * from "./surface-revocation.js";
 export * from "./approval-desktop.js";

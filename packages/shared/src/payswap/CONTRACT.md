@@ -155,3 +155,20 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
   把真实 `IpcMainInvokeEvent` 交给 `host.handleApprovalResolution`（结构满足映射面，
   typecheck 即证明）；`getMainWindowFrameUrl` 供给生产受信 origin 值；真实窗口的
   注册与 `financialMode` reader 由 desktop Browser E2E 臂接线。
+- Gate E2 PSP 凭据安全法则（addendum §5.2，P2；`credential-security.ts`）：
+  `payswap:psp:*` 键的权威命名空间谓词（前缀精确 `payswap:psp:`；`payswap:psp`
+  无尾冒号不在内；退化空段在内 —— fail-closed）+ per-platform 决策表
+  （safeStorage 键在位 → `safe_storage`〔desktop 行，OS 钥匙串优先于 secret〕；
+  否则 `ZCODE_CREDENTIAL_SECRET` 在位 → `secret`〔server 行〕；否则
+  `fail_closed`〔neither 行 —— 确定性 fallback 派生键对 PSP 键永不可用〕）+
+  两类不重叠的 typed 失败（`PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE` = 存储通道
+  缺失的 fail-closed 拒绝；`PAYSWAP_PSP_KEY_UNWRAP_FAILED` = 键仓包裹解不开，
+  无静默轮换）+ host env 键契约（`ZCODE_PAYSWAP_PSP_KEY` —— desktop main 写侧
+  与 services 读侧的单一事实源）+ `buildPayswapPspHostEnv` 交付组装（null →
+  空对象 = 不注入即拒）。消费方：`@zcode/services` credentialService 的键级
+  cipher 解析（PSP 键：注入/env safeStorage 键优先，secret 在位且默认通道未被
+  替换时走默认通道，否则触盘前 typed 拒绝；非 PSP 键恒默认通道 —— 上游行为
+  零变更）与 `@zcode/desktop` main 的 safeStorage 键仓
+  （`pspCredentialKeyStore.ts`：at-rest 只落包裹产物、0600、ensure 串行去重、
+  memoize 成功不 memoize 不可用；入口接线随 P2.2 账户服务连接流与其 desktop
+  Browser E2E 臂落地）。

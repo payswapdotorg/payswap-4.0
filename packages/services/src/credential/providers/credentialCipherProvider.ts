@@ -53,12 +53,26 @@ function createCredentialDecryptError(
   });
 }
 
-export function createCredentialCipherProvider(
-  options: CredentialCipherProviderOptions = {},
+/**
+ * 以显式 secret 派生 cipher（与 createCredentialCipherProvider 同一 AES-256-GCM
+ * 实现）。Gate E2（addendum §5.2）的 PSP 通道复用：desktop 行的 safeStorage
+ * 解包随机键、注入式 pspCipherProvider 的测试通道都以本工厂构建 —— 密文格式与
+ * 上游逐字节一致，仅键材料来源不同。
+ */
+export function createCredentialCipherProviderForSecret(
+  secret: string,
 ): CredentialCipherProvider {
-  const env = options.env ?? process.env;
-  const key = deriveCipherKey(defaultCredentialSecret(env));
+  return createCredentialCipherProviderForKey(deriveCipherKey(secret));
+}
 
+/**
+ * 以显式 key material 构建 cipher（AES-256-GCM；enc:v1 格式与上游一致）。
+ * createCredentialCipherProvider 的实现核心 —— secret 派生与显式键共享同一
+ * 加密/解密路径，行为零分叉。
+ */
+export function createCredentialCipherProviderForKey(
+  key: Buffer,
+): CredentialCipherProvider {
   return {
     encrypt(value: string): string {
       const iv = randomBytes(CREDENTIAL_CIPHER_IV_BYTES);
@@ -115,4 +129,11 @@ export function createCredentialCipherProvider(
       }
     },
   };
+}
+
+export function createCredentialCipherProvider(
+  options: CredentialCipherProviderOptions = {},
+): CredentialCipherProvider {
+  const env = options.env ?? process.env;
+  return createCredentialCipherProviderForKey(deriveCipherKey(defaultCredentialSecret(env)));
 }
