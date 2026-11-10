@@ -35,6 +35,9 @@ import { join } from "node:path";
 import {
   PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY,
   payswapPspSecretCredentialKey,
+  type PayswapAccountReadBackInput,
+  type PayswapAccountReadBackOutcome,
+  type PayswapAccountReadBackPort,
 } from "@zcode/shared/payswap";
 import {
   createCredentialService,
@@ -312,5 +315,359 @@ describe("payswap account service (P2.2) — write-failure compensation", () => 
     // 补偿：秘密没有留在凭据 store（孤儿秘密 = 无记录的 PSP 密文）。
     const credentials = await fixture.readRawCredentials();
     expect(Object.keys(credentials ?? {}).length).toBe(0);
+  });
+});
+
+describe("payswap account service (P2.2 slice 2) — refreshEvidence (provider read-back)", () => {
+  /**
+   * 读回半法则的 services 侧证明（doc 05 §5「final authority is provider
+   * read-back」+ §6.4 unknown 结局纪律 + doc 06 §2.2 refreshEvidence）：
+   *
+   * 1. **verified**：connected 保持（无记录写 —— 状态变更才写）；expired →
+   *    connected 恢复行（provider 证据翻回）。端口收到法则形输入（含秘密）。
+   * 2. **auth-failed**：connected → expired（唯一的 expiry 证据是 provider 的
+   *    拒绝）；已 expired 再 auth-failed → 状态不变（无写）。
+   * 3. **unavailable / 传输异常 / 畸形结局**：typed `read_back_unavailable`
+   *    拒绝，状态不变（unknown ≠ expired）。
+   * 4. **revoked 终态**：不触端口、不读秘密，直回 revoked 投影。
+   * 5. **存储 fail-closed / 秘密缺失 / 端口缺席**：typed 拒绝，状态不变。
+   * 6. **秘密永不外泄**：端口输入带秘密；全部结果序列化不含秘密材料。
+   */
+
+  interface ScriptedPort {
+    readBackAccount: PayswapAccountReadBackPort;
+    calls: PayswapAccountReadBackInput[];
+  }
+
+  /** 脚本化读回端口：记录每次调用，按序回放结局。 */
+  function scriptedPort(...outcomes: (PayswapAccountReadBackOutcome | Error)[]): ScriptedPort {
+    const calls: PayswapAccountReadBackInput[] = [];
+    let cursor = 0;
+    return {
+      calls,
+      readBackAccount: async (input) => {
+        calls.push(input);
+        const outcome = outcomes[cursor];
+        cursor += 1;
+        if (outcome instanceof Error) throw outcome;
+        return outcome;
+      },
+    };
+  }
+
+  interface RefreshFixture {
+    dir: string;
+    readRawConnections(): Promise<string | null>;
+    build(
+      env: Record<string, string>,
+      readBackAccount?: PayswapAccountReadBackPort,
+    ): ReturnType<typeof createPayswapAccountService>;
+    buildWithCredentialService(
+      env: Record<string, string>,
+      readBackAccount?: PayswapAccountReadBackPort,
+    ): {
+      service: ReturnType<typeof createPayswapAccountService>;
+      credentialService: ReturnType<typeof createCredentialService>;
+    };
+  }
+
+  async function freshRefreshFixture(): Promise<RefreshFixture> {
+    const dir = await mkdtemp(join(tmpdir(), "payswap-p22-refresh-"));
+    createdDirs.push(dir);
+    setDataBaseDir(dir);
+    const connectionsPath = join(dir, "payswap-connections.json");
+    const readRawConnections = async () => {
+      try {
+        return await readFile(connectionsPath, "utf-8");
+      } catch {
+        return null;
+      }
+    };
+    const assemble = (env: Record<string, string>, readBackAccount?: PayswapAccountReadBackPort) => {
+      const credentialService = createCredentialService({ env });
+      const connectionStore = createPayswapConnectionRecordStore({
+        resolveStorePath: () => connectionsPath,
+      });
+      const service = createPayswapAccountService({
+        credentialPort: credentialService,
+        connectionStore,
+        ...(readBackAccount ? { readBackAccount } : {}),
+      });
+      return { credentialService, connectionStore, service };
+    };
+    return {
+      dir,
+      readRawConnections,
+      build: (env, readBackAccount) => assemble(env, readBackAccount).service,
+      buildWithCredentialService: (env, readBackAccount) => {
+        const { credentialService, service } = assemble(env, readBackAccount);
+        return { credentialService, service };
+      },
+    };
+  }
+
+  const DESKTOP_ENV = { [PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]: "b".repeat(64) } as const;
+
+  async function connectOne(
+    service: ReturnType<typeof createPayswapAccountService>,
+  ): Promise<string> {
+    const result = await service.connect({
+      providerId: "stripe",
+      operatorSecret: TEST_SECRET,
+      displayName: "Stripe (test)",
+    });
+    if (result.kind !== "connected") throw new Error(`connect failed: ${result.kind}`);
+    return result.connection.connectionId;
+  }
+
+  it("verified on connected：端口收到法则形输入（含秘密）；结果 verified + providerAccountId；状态保持且无记录写（字节不变）", async () => {
+    const fixture = await freshRefreshFixture();
+    const port = scriptedPort({ kind: "verified", providerAccountId: "acct_1A2b3C" });
+    const service = fixture.build({ ...DESKTOP_ENV }, port.readBackAccount);
+    const connectionId = await connectOne(service);
+    const before = await fixture.readRawConnections();
+
+    const result = await service.refreshEvidence({ connectionId });
+
+    // 端口收到恰一次法则形调用：五字段输入（providerId/mode/secretKind/secret）。
+    expect(port.calls).toEqual([
+      { providerId: "stripe", mode: "test", secretKind: "api-key", secret: TEST_SECRET },
+    ]);
+    expect(result).toEqual({
+      kind: "verified",
+      providerAccountId: "acct_1A2b3C",
+      connection: {
+        connectionId,
+        providerId: "stripe",
+        mode: "test",
+        displayName: "Stripe (test)",
+        status: "connected",
+      },
+    });
+    // 状态变更才写：connected 保持 → 记录 store 字节不变。
+    expect(await fixture.readRawConnections()).toBe(before);
+    // 秘密进端口、永不进结果。
+    expect(JSON.stringify(result)).not.toContain(TEST_SECRET);
+    expect(JSON.stringify(result)).not.toContain("payswap:psp:");
+  });
+
+  it("auth-failed on connected → expired：记录翻 expired；结果 expired 投影；listConnections 同步", async () => {
+    const fixture = await freshRefreshFixture();
+    const port = scriptedPort({ kind: "auth-failed", detail: "invalid_api_key" });
+    const service = fixture.build({ ...DESKTOP_ENV }, port.readBackAccount);
+    const connectionId = await connectOne(service);
+
+    const result = await service.refreshEvidence({ connectionId });
+
+    expect(result).toEqual({
+      kind: "expired",
+      connection: {
+        connectionId,
+        providerId: "stripe",
+        mode: "test",
+        displayName: "Stripe (test)",
+        status: "expired",
+      },
+    });
+    const raw = await fixture.readRawConnections();
+    expect(raw).toContain('"status": "expired"');
+    expect(JSON.stringify(result)).not.toContain(TEST_SECRET);
+    const listed = await service.listConnections();
+    expect(listed).toHaveLength(1);
+    expect(listed[0]?.status).toBe("expired");
+  });
+
+  it("verified on expired → connected 恢复行：provider 证据把 expired 翻回 connected", async () => {
+    const fixture = await freshRefreshFixture();
+    const port = scriptedPort(
+      { kind: "auth-failed", detail: "key rolled" },
+      { kind: "verified", providerAccountId: "acct_1A2b3C" },
+    );
+    const service = fixture.build({ ...DESKTOP_ENV }, port.readBackAccount);
+    const connectionId = await connectOne(service);
+
+    const first = await service.refreshEvidence({ connectionId });
+    expect(first.kind).toBe("expired");
+    const second = await service.refreshEvidence({ connectionId });
+
+    expect(second).toEqual({
+      kind: "verified",
+      providerAccountId: "acct_1A2b3C",
+      connection: {
+        connectionId,
+        providerId: "stripe",
+        mode: "test",
+        displayName: "Stripe (test)",
+        status: "connected",
+      },
+    });
+    const raw = await fixture.readRawConnections();
+    expect(raw).toContain('"status": "connected"');
+    expect(port.calls).toHaveLength(2);
+  });
+
+  it("auth-failed on already-expired：状态不变（记录字节不变），结果 expired", async () => {
+    const fixture = await freshRefreshFixture();
+    const port = scriptedPort(
+      { kind: "auth-failed", detail: "invalid_api_key" },
+      { kind: "auth-failed", detail: "still invalid" },
+    );
+    const service = fixture.build({ ...DESKTOP_ENV }, port.readBackAccount);
+    const connectionId = await connectOne(service);
+    await service.refreshEvidence({ connectionId });
+    const before = await fixture.readRawConnections();
+
+    const again = await service.refreshEvidence({ connectionId });
+
+    expect(again.kind).toBe("expired");
+    if (again.kind !== "expired") return;
+    expect(again.connection.status).toBe("expired");
+    expect(await fixture.readRawConnections()).toBe(before);
+  });
+
+  it("unavailable → typed read_back_unavailable 拒绝；状态不变（unknown ≠ expired）", async () => {
+    const fixture = await freshRefreshFixture();
+    const port = scriptedPort({ kind: "unavailable", detail: "api.stripe.com unreachable" });
+    const service = fixture.build({ ...DESKTOP_ENV }, port.readBackAccount);
+    const connectionId = await connectOne(service);
+    const before = await fixture.readRawConnections();
+
+    const result = await service.refreshEvidence({ connectionId });
+
+    expect(result).toEqual({
+      kind: "refused",
+      refusal: { code: "read_back_unavailable", message: expect.any(String) },
+    });
+    expect(await fixture.readRawConnections()).toBe(before);
+  });
+
+  it("端口传输异常（ECONNRESET）→ typed read_back_unavailable；状态不变", async () => {
+    const fixture = await freshRefreshFixture();
+    const port = scriptedPort(new Error("fetch failed: ECONNRESET"));
+    const service = fixture.build({ ...DESKTOP_ENV }, port.readBackAccount);
+    const connectionId = await connectOne(service);
+    const before = await fixture.readRawConnections();
+
+    const result = await service.refreshEvidence({ connectionId });
+
+    expect(result).toEqual({
+      kind: "refused",
+      refusal: { code: "read_back_unavailable", message: expect.any(String) },
+    });
+    expect(await fixture.readRawConnections()).toBe(before);
+  });
+
+  it("端口畸形结局（未知 kind）→ fail-closed typed 拒绝；状态不变", async () => {
+    const fixture = await freshRefreshFixture();
+    const port = scriptedPort({ kind: "definitely-not-an-outcome" });
+    const service = fixture.build({ ...DESKTOP_ENV }, port.readBackAccount);
+    const connectionId = await connectOne(service);
+    const before = await fixture.readRawConnections();
+
+    const result = await service.refreshEvidence({ connectionId });
+
+    expect(result).toEqual({
+      kind: "refused",
+      refusal: { code: "read_back_unavailable", message: expect.any(String) },
+    });
+    expect(await fixture.readRawConnections()).toBe(before);
+  });
+
+  it("revoked 终态：不触端口、不读秘密；直回 revoked 投影", async () => {
+    const fixture = await freshRefreshFixture();
+    const port = scriptedPort();
+    const service = fixture.build({ ...DESKTOP_ENV }, port.readBackAccount);
+    const connectionId = await connectOne(service);
+    await service.revoke({ connectionId });
+
+    const result = await service.refreshEvidence({ connectionId });
+
+    expect(result).toEqual({
+      kind: "revoked",
+      connection: {
+        connectionId,
+        providerId: "stripe",
+        mode: "test",
+        displayName: "Stripe (test)",
+        status: "revoked",
+      },
+    });
+    expect(port.calls).toHaveLength(0);
+  });
+
+  it("未知 connectionId → unknown_connection 拒绝", async () => {
+    const fixture = await freshRefreshFixture();
+    const port = scriptedPort();
+    const service = fixture.build({ ...DESKTOP_ENV }, port.readBackAccount);
+
+    const result = await service.refreshEvidence({
+      connectionId: "00000000-0000-4000-8000-000000000000",
+    });
+
+    expect(result).toEqual({
+      kind: "refused",
+      refusal: { code: "unknown_connection", message: expect.any(String) },
+    });
+    expect(port.calls).toHaveLength(0);
+  });
+
+  it("存储 fail-closed（neither 行）：load 拒绝 → typed PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE；状态不变；不触端口", async () => {
+    const fixture = await freshRefreshFixture();
+    const port = scriptedPort({ kind: "verified", providerAccountId: "acct_1A2b3C" });
+    // 连接时通道在位；refresh 时重建为 neither env（同一数据目录）。
+    const seeded = fixture.build({ ...DESKTOP_ENV }, port.readBackAccount);
+    const connectionId = await connectOne(seeded);
+    const before = await fixture.readRawConnections();
+    const degraded = fixture.build({}, port.readBackAccount);
+
+    const result = await degraded.refreshEvidence({ connectionId });
+
+    expect(result).toEqual({
+      kind: "refused",
+      refusal: {
+        code: "PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE",
+        message: expect.any(String),
+      },
+    });
+    expect(await fixture.readRawConnections()).toBe(before);
+    expect(port.calls).toHaveLength(0);
+  });
+
+  it("秘密缺失（out-of-band 删除）：typed read_back_unavailable；状态不变；不触端口", async () => {
+    const fixture = await freshRefreshFixture();
+    const port = scriptedPort({ kind: "verified", providerAccountId: "acct_1A2b3C" });
+    const { service, credentialService } = fixture.buildWithCredentialService(
+      { ...DESKTOP_ENV },
+      port.readBackAccount,
+    );
+    const connectionId = await connectOne(service);
+    await credentialService.delete(
+      payswapPspSecretCredentialKey("stripe", connectionId, "api-key"),
+    );
+    const before = await fixture.readRawConnections();
+
+    const result = await service.refreshEvidence({ connectionId });
+
+    expect(result).toEqual({
+      kind: "refused",
+      refusal: { code: "read_back_unavailable", message: expect.any(String) },
+    });
+    expect(await fixture.readRawConnections()).toBe(before);
+    expect(port.calls).toHaveLength(0);
+  });
+
+  it("端口缺席（无 provider 读回 adapter）→ typed read_back_unavailable；不炸", async () => {
+    const fixture = await freshRefreshFixture();
+    const service = fixture.build({ ...DESKTOP_ENV });
+    const connectionId = await connectOne(service);
+    const before = await fixture.readRawConnections();
+
+    const result = await service.refreshEvidence({ connectionId });
+
+    expect(result).toEqual({
+      kind: "refused",
+      refusal: { code: "read_back_unavailable", message: expect.any(String) },
+    });
+    expect(await fixture.readRawConnections()).toBe(before);
   });
 });

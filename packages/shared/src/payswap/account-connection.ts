@@ -11,8 +11,9 @@
  *    宁可拒绝，不可产出绕过段结构的畸形键）。
  * 2. **连接记录**：connection record 只含非秘密元数据（doc 06 §2.2「Secrets never
  *    live here」）。schema `.strict()`：未知字段（尤其任何秘密形字段）拒绝。
- *    `status` 的 `expired` 与 provider read-back 证据刷新随 P2 的账户读回切片
- *    落地；本切片的真话只有 `connected | revoked`。
+ *    `status` 词汇：`connected | expired | revoked` —— `expired` 由 provider
+ *    read-back 的 auth-failed 证据翻入、verified 证据翻回（doc 05 §5「expiry
+ *    is projected as connection status」）；`revoked` 终态。
  * 3. **状态投影**（doc 05 §5「The renderer and the agent never receive secret
  *    values — only opaque connection status」）：投影是记录的去秘密子集（恰五字
  *    段）；投影 schema 对秘密形载荷 schema 级拒绝 —— 渲染层/模型侧在类型面上
@@ -22,10 +23,17 @@
  *    client-credentials 形态随 P3 的 provider 评估落地，不提前发明）。Stripe
  *    事实源自 doc 04（检索日期在案）：sk/rk × test/live，revoke =
  *    delete-local-only。formatCheck 是防御性检查；**最终权威是 provider
- *    read-back**（后续切片），本模块永不声称格式通过即凭据有效。
+ *    read-back**（refreshEvidence），本模块永不声称格式通过即凭据有效。
  * 5. **typed refusal**：账户服务的存储 fail-closed 拒绝码逐字复用 Gate E2 的
  *    `PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE`（addendum §5.2「typed error
  *    surfaced in the connection UI」）—— 单一事实源，连接 UI 按 code 分流。
+ * 6. **provider 读回端口**（doc 05 §5「final authority is provider read-back」+
+ *    §6.4 unknown 结局纪律 + doc 06 §2.2 refreshEvidence）：三值结局 strict
+ *    schema —— `verified`（携带 `providerAccountId` 非秘密证据摘要）/ `auth-failed`
+ *    （provider 拒绝凭据 —— 唯一能把状态翻到 `expired` 的证据）/ `unavailable`
+ *    （网络/未知结局 —— 不是 expiry 证据）。端口在 host 进程内执行；秘密只经
+ *    参数入，端口永不持久化/日志/投影秘密；结局面永不携带秘密材料。畸形结局
+ *    无证据 = fail-closed 拒绝，永不翻状态。
  *
  * 本模块无 IO、无时间源（时间由调用方注入）；node:crypto 的 randomUUID 是系统
  * 原语（与 broker-identity 同一纪律）。
@@ -91,7 +99,7 @@ export const payswapConnectionRecordSchema = z
     providerId: z.string().min(1),
     mode: z.enum(["test", "live"]),
     displayName: z.string().trim().min(1).max(120),
-    status: z.enum(["connected", "revoked"]),
+    status: z.enum(["connected", "expired", "revoked"]),
     /** 该连接实际落盘的秘密种类清单（撤销时逐项删除；种类名不是秘密）。 */
     secretKinds: z.array(z.enum(PAYSWAP_PSP_SECRET_KINDS)).min(1),
     createdAt: z.string().min(1),
@@ -111,7 +119,7 @@ export const payswapConnectionStatusProjectionSchema = z
     providerId: z.string().min(1),
     mode: z.enum(["test", "live"]),
     displayName: z.string().trim().min(1).max(120),
-    status: z.enum(["connected", "revoked"]),
+    status: z.enum(["connected", "expired", "revoked"]),
   })
   .strict();
 
@@ -203,6 +211,45 @@ export function derivePayswapSecretKeyMode(
 }
 
 // ---------------------------------------------------------------------------
+// provider 读回端口（doc 05 §5「final authority is provider read-back」+ §6.4
+// unknown 结局纪律 + doc 06 §2.2 refreshEvidence；slice 2）
+// ---------------------------------------------------------------------------
+
+/** 读回端口的输入（host 进程内执行；秘密只经参数入）。 */
+export interface PayswapAccountReadBackInput {
+  readonly providerId: string;
+  readonly mode: "test" | "live";
+  readonly secretKind: PayswapPspSecretKind;
+  /** 连接秘密（host 进程内从凭据 store 读出；端口永不持久化/日志/投影它）。 */
+  readonly secret: string;
+}
+
+/**
+ * 读回结局（strict 闭集）：
+ * - `verified` —— provider 认证了凭据并返回账户读回（`providerAccountId` 是
+ *   非秘密证据摘要，如 Stripe 的 `acct_*`）；
+ * - `auth-failed` —— provider 拒绝了凭据（**唯一的 expiry 证据**）；
+ * - `unavailable` —— 网络/未知结局（**不是** expiry 证据 —— doc 05 §6.4 的
+ *   unknown 纪律：读回失败永不假装成功，也永不假装 auth 失败）。
+ */
+export type PayswapAccountReadBackOutcome =
+  | { readonly kind: "verified"; readonly providerAccountId: string }
+  | { readonly kind: "auth-failed"; readonly detail: string }
+  | { readonly kind: "unavailable"; readonly detail: string };
+
+/** 结局面 strict 闭集（畸形结局无证据 —— 服务侧 fail-closed 拒绝，永不翻状态）。 */
+export const payswapAccountReadBackOutcomeSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("verified"), providerAccountId: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("auth-failed"), detail: z.string().min(1) }).strict(),
+  z.object({ kind: z.literal("unavailable"), detail: z.string().min(1) }).strict(),
+]);
+
+/** provider 读回端口（host 进程内的 adapter 函数面；真实 Stripe 实现随 provider 运行时切片）。 */
+export type PayswapAccountReadBackPort = (
+  input: PayswapAccountReadBackInput,
+) => Promise<PayswapAccountReadBackOutcome>;
+
+// ---------------------------------------------------------------------------
 // 连接 ID 铸造 + 账户服务 typed refusal
 // ---------------------------------------------------------------------------
 
@@ -214,15 +261,18 @@ export function mintPayswapConnectionId(): string {
 /**
  * 账户服务的 typed refusal 码（host-service 面）：
  * - `validation_failed` 逐字复用 doc 05 §6.6 词汇（语义精确匹配：输入形状/格式）；
- * - `unsupported_provider` / `unknown_connection` 是 host-service 范围的码
- *   （§6.6 是 adapter 操作面的词汇表，不越界借用）；
+ * - `unsupported_provider` / `unknown_connection` / `read_back_unavailable` 是
+ *   host-service 范围的码（§6.6 是 adapter 操作面的词汇表，不越界借用）；
  * - 存储 fail-closed 逐字复用 Gate E2 常量（addendum §5.2「typed error surfaced
- *   in the connection UI」—— 连接 UI 按 code 分流，永不匹配 message）。
+ *   in the connection UI」—— 连接 UI 按 code 分流，永不匹配 message）；
+ * - `read_back_unavailable` = 读回无法完成（端口缺席/传输失败/畸形结局/秘密缺失）
+ *   —— unknown ≠ expired，状态不变（fail-closed 不猜）。
  */
 export type PayswapAccountRefusalCode =
   | "validation_failed"
   | "unsupported_provider"
   | "unknown_connection"
+  | "read_back_unavailable"
   | typeof PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE_CODE;
 
 /** 账户服务存储 fail-closed 拒绝码（Gate E2 常量的单一事实源再导出）。 */
@@ -240,5 +290,24 @@ export type PayswapConnectResult =
   | { readonly kind: "refused"; readonly refusal: PayswapAccountRefusal };
 
 export type PayswapRevokeResult =
+  | { readonly kind: "revoked"; readonly connection: PayswapConnectionStatusProjection }
+  | { readonly kind: "refused"; readonly refusal: PayswapAccountRefusal };
+
+/**
+ * refreshEvidence 的结果（doc 06 §2.2；四值）：
+ * - `verified` —— provider 读回认证了凭据（携带 `providerAccountId` 证据摘要）；
+ *    `expired` 记录翻回 `connected`（恢复行），`connected` 保持；
+ * - `expired` —— provider 拒绝了凭据（auth-failed 证据）；`connected` 翻 `expired`；
+ * - `revoked` —— 终态（delete-local-only 已删秘密）：不触端口，直回投影；
+ * - `refused` —— typed 拒绝（unknown_connection / 存储 fail-closed /
+ *   read_back_unavailable）；状态不变。
+ */
+export type PayswapRefreshResult =
+  | {
+      readonly kind: "verified";
+      readonly connection: PayswapConnectionStatusProjection;
+      readonly providerAccountId: string;
+    }
+  | { readonly kind: "expired"; readonly connection: PayswapConnectionStatusProjection }
   | { readonly kind: "revoked"; readonly connection: PayswapConnectionStatusProjection }
   | { readonly kind: "refused"; readonly refusal: PayswapAccountRefusal };

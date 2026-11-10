@@ -172,3 +172,22 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
   （`pspCredentialKeyStore.ts`：at-rest 只落包裹产物、0600、ensure 串行去重、
   memoize 成功不 memoize 不可用；入口接线随 P2.2 账户服务连接流与其 desktop
   Browser E2E 臂落地）。
+- P2.2 账户连接法则（doc 05 §5 + doc 06 §2.2，`account-connection.ts`）：PSP 存储
+  键模板 `payswap:psp:<providerId>:<connectionId>:<secretKind>`（段空/含冒号 =
+  编程错误，fail-closed 抛出）；连接记录与状态投影 schema `.strict()`（投影 =
+  记录的去秘密子集，恰五字段；秘密形载荷 schema 级拒绝 —— 渲染层/模型侧在
+  类型面上拿不到秘密）；Stripe authSpec 事实（doc 04，检索日期在案；
+  oauth/client-credentials 形态随 P3 的 provider 评估落地，不提前发明）；
+  typed refusal 词汇（`validation_failed` 逐字 doc 05 §6.6；`unsupported_provider`/
+  `unknown_connection` 是 host-service 范围码；存储 fail-closed 逐字复用 Gate E2
+  常量）。**读回半（slice 2）**：状态词汇补全 `expired`（connected | expired |
+  revoked —— doc 05 §5「expiry is projected as connection status」；`expired` ⇄
+  `connected` 经 refreshEvidence 证据翻转，`revoked` 终态）；provider 读回端口
+  `PayswapAccountReadBackPort`（host 进程内执行；输入携带秘密值 —— 端口永不
+  持久化/日志/投影秘密）产出三值结局：`verified`（携带 `providerAccountId`
+  非秘密证据摘要）/ `auth-failed`（provider 拒绝凭据 —— 唯一能把状态翻到
+  `expired` 的证据）/ `unavailable`（网络/未知结局 —— 不是 expiry 证据，
+  doc 05 §6.4/§6.6 的 unknown 纪律）；refresh 结果四值 `verified | expired |
+  revoked | refused`；新拒绝码 `read_back_unavailable`（端口缺席、传输失败或
+  秘密缺失 —— 状态不变，fail-closed 不猜）。原始 read-back 的证据落账
+  （ledger seq、能力记录引用）随 P2 能力注册表切片，本切片只落状态迁移。

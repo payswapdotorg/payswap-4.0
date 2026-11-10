@@ -20,6 +20,22 @@
  * - `revoke({connectionId})`：delete-local-only。先标 revoked 再删秘密（任何中间
  *   态绝不留下失真的 connected）；幂等（重复 revoke 同投影；补清残留秘密）；未知
  *   id → typed `unknown_connection`。持久化完成后才返回。
+ * - `refreshEvidence({connectionId})`（slice 2，provider read-back）：经注入的
+ *   `readBackAccount` 端口（host 进程内）验证凭据并按证据驱动状态机：
+ *   - 前置：连接存在（否则 typed `unknown_connection`）；非 revoked（revoked
+ *     终态 → 直回 `{kind: "revoked"}` 投影，不触端口、不读秘密）；端口已注入
+ *     （缺席 → typed `read_back_unavailable`）。
+ *   - 秘密经 credentialPort.load 读出（Gate E2 键级政策：通道不可用 → typed
+ *     `PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE`，状态不变）；键缺失（本地不
+ *     一致）→ typed `read_back_unavailable`，状态不变。
+ *   - 结局（strict 三值，畸形/传输异常按 unknown 处理）：`verified` → `expired`
+ *     记录翻回 `connected`（恢复行，落记录），`connected` 保持（**状态变更才
+ *     写**——无变更不写）；`auth-failed` → `connected` 翻 `expired`（唯一的
+ *     expiry 证据是 provider 的拒绝，落记录），已 `expired` 保持（无写）；
+ *     `unavailable` → typed `read_back_unavailable`，状态不变（unknown ≠
+ *     expired，doc 05 §6.4）。
+ *   - 返回：`verified`（含 `providerAccountId` 非秘密证据摘要）/ `expired` /
+ *     `revoked` / `refused`——投影面五字段，永不携带秘密。
  * - `listConnections()`：只读；返回全部记录的状态投影（无秘密材料）。
  *
  * `createPayswapConnectionRecordStore(deps)`：
