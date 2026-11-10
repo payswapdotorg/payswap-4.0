@@ -156,6 +156,7 @@
   "packages/server/test/payswap-approval.test.ts",
   "packages/server/test/payswap-operator-auth.test.ts",
   "packages/server/test/tsupConfig.test.ts",
+  "packages/services/test/payswap-account-service.test.ts",
   "packages/services/test/payswap-credential-security.test.ts",
   "packages/ui/test/payswap-surface-revocation-wiring.test.ts",
   "packages/web/test/viteConfigLoad.test.ts",

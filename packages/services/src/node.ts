@@ -146,6 +146,24 @@ export {
   createCredentialCipherProvider,
   createCredentialCipherProviderForSecret,
 } from "./credential/providers/credentialCipherProvider.js";
+// PaySwap P2.2（deliverable 06 §2.2）：账户服务 + 连接记录 store —— 连接/撤销/
+// 清单的单一写者；秘密只落 ICredentialService 的 payswap:psp:* 键（Gate E2 政策），
+// 记录 store 只存非秘密元数据。host 侧装配（RPC channel/UI 接线）随 P2.2 后续切片。
+// 经 services-payswap 模块的 publicEntrypoint 桶导入（architecture-governance）。
+export {
+  createPayswapAccountService,
+  type PayswapAccountCredentialPort,
+  type PayswapAccountService,
+  type PayswapAccountServiceDependencies,
+} from "#src/payswap/index.js";
+export {
+  createPayswapConnectionRecordStore,
+  isPayswapConnectionsStoreCorruptError,
+  PAYSWAP_CONNECTIONS_STORE_CORRUPT_CODE,
+  PAYSWAP_CONNECTIONS_STORE_FILE_NAME,
+  type PayswapConnectionRecordStore,
+  type PayswapConnectionRecordStoreDependencies,
+} from "#src/payswap/index.js";
 export { createBroadcastService } from "./broadcast/broadcastService.js";
 export { createZCodeAgentService } from "./zcode-agent/zcodeAgentService.js";
 export { createZCodeTaskServiceAdapter } from "./zcode-agent/zcodeTaskServiceAdapter.js";

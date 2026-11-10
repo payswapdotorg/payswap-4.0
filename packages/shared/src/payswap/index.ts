@@ -17,7 +17,10 @@
  * financialMode live 读门 + T7 item 3 的 revokePendingProposals；§2.3 item 1 臂 (b)
  * 的表面内容注册表与 opt-out 撤销执行器，surface-revocation.ts）也在此：桌面卡
  * 接线（D12.7）以 runPluginUiHostTeardown / clearPluginUiSurfaceFeed /
- * clearPluginUiWidgetState 接线本模块的端口。
+ * clearPluginUiWidgetState 接线本模块的端口。P2.2 的账户连接法则
+ * （account-connection.ts：PSP 存储键模板、连接记录/状态投影 schema、Stripe
+ * authSpec 事实、账户服务 typed refusal —— doc 05 §5 + doc 06 §2.2）也在此：
+ * services 账户服务与 law 级测试共用同一份实现。
  */
 
 export * from "./canonical-json.js";
@@ -39,5 +42,6 @@ export * from "./approval-flow.js";
 export * from "./hook-admission.js";
 export * from "./browser-admission.js";
 export * from "./credential-security.js";
+export * from "./account-connection.js";
 export * from "./surface-revocation.js";
 export * from "./approval-desktop.js";
