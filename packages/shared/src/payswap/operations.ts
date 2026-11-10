@@ -17,6 +17,7 @@
  */
 
 import { z } from "zod";
+import type { PayswapConnectionStatusProjection } from "./account-connection.js";
 import type { PayswapBrokerOp } from "./envelope.js";
 import { PAYSWAP_BROKER_OPS } from "./envelope.js";
 import { PAYSWAP_RETIRED_SEQS_MAX } from "./replay.js";
@@ -125,6 +126,23 @@ export function payswapBusinessRefusal(
       message: PAYSWAP_REFUSAL_MESSAGES[code],
     },
   };
+}
+
+// ---------------------------------------------------------------------------
+// §7.3/P2.2 get_account_overview 真数据半（slice 3）—— 业务 data 的成功形态
+// ---------------------------------------------------------------------------
+
+/**
+ * `get_account_overview` 的成功 data（与业务拒绝 data `{kind:"refused",...}` 对称的
+ * `{kind:"overview",...}`）：连接状态投影数组（五字段、schema 级无秘密 ——
+ * `payswapConnectionStatusProjectionSchema` 是投影面的法则证明）。broker 的
+ * dispatch 在 enabled + opted-in 且读回非空时回答此形态；空清单 / reader 缺席仍答
+ * 三码法则的 `not_connected`（S2 唯一真话）。投影本身住 account-connection.ts ——
+ * 本接口只是 wire 形状的单一事实源（broker 与插件侧共用，永不漂移）。
+ */
+export interface PayswapAccountOverviewData {
+  kind: "overview";
+  connections: readonly PayswapConnectionStatusProjection[];
 }
 
 /** 与 payswap-plugin/src/contract.ts 的 snapshotRefusal 同文（单一事实源注释；见文件头）。 */

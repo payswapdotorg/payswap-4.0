@@ -164,6 +164,12 @@ export {
   type PayswapConnectionRecordStore,
   type PayswapConnectionRecordStoreDependencies,
 } from "#src/payswap/index.js";
+// PaySwap P2.2 slice 3（doc 06 §2.9）：真实 Stripe 读回 adapter ——
+// `PayswapAccountReadBackPort` 的 provider 运行时实现（refreshEvidence 的证据源）。
+export {
+  createStripeAccountReadBackPort,
+  type PayswapStripeReadBackDependencies,
+} from "#src/payswap/index.js";
 export { createBroadcastService } from "./broadcast/broadcastService.js";
 export { createZCodeAgentService } from "./zcode-agent/zcodeAgentService.js";
 export { createZCodeTaskServiceAdapter } from "./zcode-agent/zcodeTaskServiceAdapter.js";

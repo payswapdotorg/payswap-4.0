@@ -8,6 +8,7 @@ import {
   verifyResponseEnvelope,
   type PayswapBrokerAttemptContext,
   type PayswapBrokerBootState,
+  type PayswapConnectionStatusProjection,
   type PayswapInstanceRegistry,
   type PayswapInstanceRegistryEntry,
 } from "@zcode/shared/payswap";
@@ -15,6 +16,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   bootPayswapBroker,
   createPayswapBrokerDispatch,
+  type PayswapAccountOverviewReader,
   type PayswapBrokerAuditEvent,
   type PayswapBrokerBootOptions,
   type PayswapBrokerHandle,
@@ -39,7 +41,13 @@ import {
  * 三码法则（§7.3，单一事实源 = 插件契约的三个 code；broker 只回答其一）：
  *   disabled/uninstalled 残留调用 → `financial_mode_disabled`（§10.2(2) tombstone 与
  *   live reader 双臂）；enabled + 未 opt-in → `not_opted_in`（S1）；enabled + opted-in +
- *   无账户 → `not_connected`（S2，本 wave 无账户模型 —— §13）。
+ *   无账户 → `not_connected`（S2）。
+ *
+ * P2.2 slice 3 追加（account-overview 真数据半）：enabled + opted-in 且注入的
+ * accountOverviewReader 读回非空时，`get_account_overview` 回答
+ * `{kind:"overview", connections}`（shared `PayswapAccountOverviewData`）；空清单 /
+ * reader 缺席仍是 `not_connected`（S2 唯一真话）；三码法则优先于数据路径；
+ * 闭表保持 —— 其余五操作维持 §7.3 拒绝语义，直到各自领域切片落地。
  */
 
 // ---------------------------------------------------------------------------
@@ -283,6 +291,36 @@ function expectRequestAttributedError(line: string, expectedCode: string, entry:
   expect(error.code).toBe(expectedCode);
 }
 
+/** request-attributed 概览 data oracle（P2.2 slice 3）：验签通过，data 里是 overview。 */
+function expectAccountOverview(
+  line: string,
+  expectedConnections: readonly PayswapConnectionStatusProjection[],
+  entry: { instanceId: string },
+  sentLine: string,
+  bootState: PayswapBrokerBootState,
+  seq = 1,
+): void {
+  const verdict = verifyResponseEnvelope(line, attemptFor(entry, sentLine, "get_account_overview", seq), oracleMaterial(bootState));
+  expect(verdict.ok).toBe(true);
+  if (!verdict.ok) return;
+  expect(verdict.body.ok).toBe(true);
+  const data = verdict.body.data as { kind: string; connections?: unknown };
+  expect(data.kind).toBe("overview");
+  expect(data.connections).toEqual(expectedConnections);
+}
+
+/** P2.2 slice 3 概览行共用的连接投影（五字段、无秘密 —— 法则投影面）。 */
+function overviewProjection(overrides: Partial<PayswapConnectionStatusProjection> = {}): PayswapConnectionStatusProjection {
+  return {
+    connectionId: "conn-overview-1",
+    providerId: "stripe",
+    mode: "test",
+    displayName: "Stripe (test)",
+    status: "connected",
+    ...overrides,
+  };
+}
+
 afterEach(async () => {
   for (const child of activeChildren.splice(0)) {
     child.kill("SIGKILL");
@@ -448,6 +486,216 @@ describe("P1.4 Step 4 — closed dispatch table (pure, all platforms)", () => {
 });
 
 // ---------------------------------------------------------------------------
+// P2.2 slice 3 —— account-overview 真数据半（纯 dispatch；§7.3「Read-only account
+// data arrives with P2's Gate E2」的 P2.2 兑现）
+// ---------------------------------------------------------------------------
+
+describe("P2.2 slice 3 — account-overview real-data half (pure dispatch, all platforms)", () => {
+  const ENABLED_OPTED_IN: PayswapBrokerLiveState = { pluginEnabled: true, financialWorkspace: true };
+
+  it("no accountOverviewReader → the Wave-2 default holds: not_connected, the only honest answer without account wiring", async () => {
+    const dispatch = createPayswapBrokerDispatch({ liveStateReader: () => ENABLED_OPTED_IN });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    const data = result.body.data as { kind: string; refusal?: { code: string } };
+    expect(data.refusal?.code).toBe("not_connected");
+  });
+
+  it("opt-in gate first: without a live state read the overview reader is never consulted (no data leak past the three-code law)", async () => {
+    let readerCalls = 0;
+    const reader: PayswapAccountOverviewReader = () => {
+      readerCalls += 1;
+      return [overviewProjection()];
+    };
+    // liveStateReader 缺席 = 三码法则的 S2 默认（§13）—— 概览 reader 不存在被咨询的路径。
+    const dispatch = createPayswapBrokerDispatch({ accountOverviewReader: reader });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    const data = result.body.data as { kind: string; refusal?: { code: string } };
+    expect(data.refusal?.code).toBe("not_connected");
+    expect(readerCalls).toBe(0);
+  });
+
+  it("an empty connection list is S2's truth: not_connected (never an empty overview)", async () => {
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => [],
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    const data = result.body.data as { kind: string; refusal?: { code: string } };
+    expect(data.refusal?.code).toBe("not_connected");
+  });
+
+  it("a non-empty list answers the overview data shape: {kind:'overview', connections} — five-field projections, no secret-bearing surface", async () => {
+    const connections = [
+      overviewProjection(),
+      overviewProjection({ connectionId: "conn-overview-2", mode: "live", displayName: "Stripe (live)", status: "expired" }),
+    ];
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => connections,
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    expect(result.body.seq).toBe(1);
+    expect(result.body.data).toEqual({ kind: "overview", connections });
+    // 投影面钉死：每行恰五字段，无 secret/secretKind/createdAt 类字段。
+    for (const row of (result.body.data as { connections: Record<string, unknown>[] }).connections) {
+      expect(Object.keys(row).sort()).toEqual(["connectionId", "displayName", "mode", "providerId", "status"]);
+    }
+  });
+
+  it("an async reader is awaited (the host wiring reads the store per dispatch, live — never a boot snapshot)", async () => {
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: async () => [overviewProjection()],
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    const data = result.body.data as { kind: string };
+    expect(data.kind).toBe("overview");
+  });
+
+  it("connectionId narrows the overview; an unknown id answers not_connected (the workspace's connected set simply does not contain it)", async () => {
+    const connections = [
+      overviewProjection(),
+      overviewProjection({ connectionId: "conn-overview-2" }),
+    ];
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => connections,
+    });
+    const narrowed = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: { connectionId: "conn-overview-2" },
+    });
+    expect(narrowed.kind).toBe("dispatched");
+    if (narrowed.kind === "dispatched") {
+      expect(narrowed.body.data).toEqual({ kind: "overview", connections: [connections[1]] });
+    }
+    const unknown = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 2,
+      op: "get_account_overview",
+      params: { connectionId: "conn-not-in-this-workspace" },
+    });
+    expect(unknown.kind).toBe("dispatched");
+    if (unknown.kind !== "dispatched") return;
+    const data = unknown.body.data as { kind: string; refusal?: { code: string } };
+    expect(data.refusal?.code).toBe("not_connected");
+  });
+
+  it("a throwing overview reader is an internal_error bridge failure (no detail leaked; §6.3, same class as the live-state reader)", async () => {
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => {
+        throw new Error("store exploded");
+      },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result).toEqual({ kind: "refused", code: "internal_error", retryable: false });
+  });
+
+  it("the three-code law outranks the data path: disabled binding and not-opted-in never reach the overview reader", async () => {
+    let readerCalls = 0;
+    const reader: PayswapAccountOverviewReader = () => {
+      readerCalls += 1;
+      return [overviewProjection()];
+    };
+    const disabled = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: reader,
+    });
+    const disabledResult = await disabled.resolveRequest(
+      { instanceId: randomUUID(), seq: 1, op: "get_account_overview", params: {} },
+      { instanceBinding: "disabled_revocation" },
+    );
+    expect(disabledResult.kind).toBe("dispatched");
+    if (disabledResult.kind === "dispatched") {
+      const data = disabledResult.body.data as { refusal?: { code: string } };
+      expect(data.refusal?.code).toBe("financial_mode_disabled");
+    }
+    const optedOut = createPayswapBrokerDispatch({
+      liveStateReader: () => ({ pluginEnabled: true, financialWorkspace: false }),
+      accountOverviewReader: reader,
+    });
+    const optedOutResult = await optedOut.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(optedOutResult.kind).toBe("dispatched");
+    if (optedOutResult.kind === "dispatched") {
+      const data = optedOutResult.body.data as { refusal?: { code: string } };
+      expect(data.refusal?.code).toBe("not_opted_in");
+    }
+    expect(readerCalls).toBe(0);
+  });
+
+  it("the closed table holds: with accounts connected only get_account_overview answers data — the five money-path ops keep the §7.3 refusal semantics (their domains land with their own slices)", async () => {
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => [overviewProjection()],
+    });
+    const fiveOps = PAYSWAP_BROKER_OPS.filter((op) => op !== "get_account_overview");
+    for (const op of fiveOps) {
+      const params: Record<string, unknown> = op === "compile_intent" ? { description: "pay the bill" } : { intentId: "intent-1" };
+      const result = await dispatch.resolveRequest({
+        instanceId: randomUUID(),
+        seq: 1,
+        op,
+        params,
+      });
+      expect(result.kind, `op ${op} must dispatch`).toBe("dispatched");
+      if (result.kind === "dispatched") {
+        const data = result.body.data as { kind: string; refusal?: { code: string } };
+        expect(data.kind, `op ${op} stays refusal-only until its domain slice`).toBe("refused");
+        expect(data.refusal?.code).toBe("not_connected");
+      }
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // broker 集成（真实 UDS + 真实子进程对端 —— Linux 行；非 Linux skipIf，P1.3 纪律）
 // ---------------------------------------------------------------------------
 
@@ -473,6 +721,29 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker dispatch i
         await handle.close();
         activeBrokers.pop();
       }
+    },
+    20000,
+  );
+
+  it(
+    "P2.2 slice 3 over the wire: a connected workspace answers the overview data in a request-attributed signed envelope (§7.3 read-only account data)",
+    async () => {
+      const connections = [
+        overviewProjection(),
+        overviewProjection({ connectionId: "conn-overview-2", mode: "live", displayName: "Stripe (live)" }),
+      ];
+      const { handle, bootState } = await startBroker({
+        liveStateReader: () => ({ pluginEnabled: true, financialWorkspace: true }),
+        accountOverviewReader: () => connections,
+      });
+      const entry = mintEntry();
+      const line = requestLine(entry, { params: {} });
+      const child = spawnClientChild({ path: handle.endpointPath, line });
+      handle.registerInstance({ ...entry, childPid: child.pid });
+      const response = await child.waitFor((event) => event.t === "response");
+      expectAccountOverview(response.line as string, connections, entry, line, bootState);
+      await handle.close();
+      activeBrokers.pop();
     },
     20000,
   );

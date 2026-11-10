@@ -7,6 +7,10 @@
  *   单一写者；秘密只落 ICredentialService 的 payswap:psp:* 键）。
  * - 连接记录 store 工厂 `createPayswapConnectionRecordStore`（非秘密元数据 JSON
  *   store：0600 原子写 + 跨进程文件锁 + corrupt-refuse-overwrite）。
+ * - 真实 Stripe 读回 adapter `createStripeAccountReadBackPort`（slice 3，doc 06
+ *   §2.9 provider 运行时；`PayswapAccountReadBackPort` 的 Stripe 实现 ——
+ *   GET /v1/account + Bearer，401 唯一 auth-failed 证据，其余 unknown ≠
+ *   expired；秘密只进 Authorization 头）。
  *
  * 法则（schema/模板/投影/authSpec/typed refusal）住 `@zcode/shared/payswap` 的
  * account-connection.ts —— 本模块与 law 级测试共用同一份实现，永不漂移。
@@ -29,3 +33,7 @@ export {
   type PayswapConnectionRecordStore,
   type PayswapConnectionRecordStoreDependencies,
 } from "./accounts/connectionRecordStore.js";
+export {
+  createStripeAccountReadBackPort,
+  type PayswapStripeReadBackDependencies,
+} from "./providers/stripe/readBackAccount.js";

@@ -190,4 +190,10 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
   doc 05 §6.4/§6.6 的 unknown 纪律）；refresh 结果四值 `verified | expired |
   revoked | refused`；新拒绝码 `read_back_unavailable`（端口缺席、传输失败或
   秘密缺失 —— 状态不变，fail-closed 不猜）。原始 read-back 的证据落账
-  （ledger seq、能力记录引用）随 P2 能力注册表切片，本切片只落状态迁移。
+  （ledger seq、能力记录引用）随 P2 能力注册表切片，本切片只落状态迁移）。
+  **overview wire 形状（slice 3）**：`get_account_overview` 的成功 data
+  `PayswapAccountOverviewData`（`{kind:"overview", connections: 投影[]}`，与业务
+  拒绝 data 对称）住 `operations.ts` —— broker dispatch 的 account-overview
+  真数据半（§7.3「Read-only account data arrives with P2's Gate E2」的 P2.2
+  兑现）与插件侧共用同一 wire 形状；空清单 / reader 缺席仍答三码法则的
+  `not_connected`。
