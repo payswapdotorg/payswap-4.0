@@ -381,17 +381,28 @@ namespace PayswapBrokerPeerHelper
             {
                 // 严格闭键集手解析（先例族同款纪律 —— 不引 JSON 库，形状破坏一律拒绝）：
                 // {"v":1,"add":<int>,"image":<string|null>}
+                //
+                // round-5 CI 根因（--diag 落地 control:reject，非推测）：两枚差一错误叠加 ——
+                // (a) 前缀 "{\"v\":1,\"add\":" 长 13，IndexOf/Substring 误用 14 起：
+                //     吞 pid 首位数字（6164 → 164）；
+                // (b) tail = "<body>"} 需剥 3 字符（开引号+收引号+}），Substring(1,
+                //     Length-2) 只剥 2：body 残留收引号 → IndexOf('"') 恒真 → 一切
+                //     非空映像控制行被拒（表永不落 → 全部 not-in-table 弃）。修复：13 起 +
+                //     显式收引号位校验 + 剥 3 + 空映像拒收（合法哨兵是 null，D14.5）。
                 if (!line.StartsWith("{\"v\":1,\"add\":", StringComparison.Ordinal)) return false;
-                int rest = line.IndexOf(",\"image\":", 14, StringComparison.Ordinal);
+                int rest = line.IndexOf(",\"image\":", 13, StringComparison.Ordinal);
                 if (rest < 0) return false;
-                string addText = line.Substring(14, rest - 14);
+                string addText = line.Substring(13, rest - 13);
                 if (!ParsePositiveInt(addText, out add)) return false;
                 string imageKey = ",\"image\":";
                 string tail = line.Substring(rest + imageKey.Length);
                 if (tail == "null}") { image = null; return true; }
                 if (!tail.StartsWith("\"", StringComparison.Ordinal)) return false;
                 if (!tail.EndsWith("}", StringComparison.Ordinal)) return false;
-                string body = tail.Substring(1, tail.Length - 2);
+                // 收引号必须恰在 } 前（破损形状不得被静默截断采纳）。
+                if (tail.Length < 3 || tail[tail.Length - 2] != '"') return false;
+                string body = tail.Substring(1, tail.Length - 3);
+                if (body.Length == 0) return false; // 空映像 = 破损形状（哨兵是 null）
                 if (body.IndexOf('"') >= 0) return false; // 内嵌引号 = 非最简形状
                 image = UnescapeJsonString(body);
                 return image != null;

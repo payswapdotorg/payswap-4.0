@@ -394,8 +394,11 @@ describe.skipIf(process.platform !== "win32")(
         expect(impostor.events.filter((event) => event.t === "response")).toHaveLength(0);
         // 门不因拒绝而卡死：随后一个已注册子进程仍过门（claim 另一实例 token → host 侧
         // unauthorized 签名拒绝行 —— 也证明 relaying 在 drop 之后照常工作）。
+        // §5.5(3)/N20（round-5 教训：此前误把同一实例的 token 发给已映射到它的子进程 ——
+        // 比对对象是对端 pid 映射实例的 token，同实例 token 必过门 → not_connected 而非
+        // unauthorized；宿主半边同型行（peer-relay-windows 套件）才是本意：注册 A，claim B。
         const entry = mintEntry({ childImagePath: process.execPath });
-        const child = spawnClientChild({ path: handle.endpointPath, line: requestLine(entry), gated: true });
+        const child = spawnClientChild({ path: handle.endpointPath, line: requestLine(mintEntry()), gated: true });
         await child.waitFor((event) => event.t === "pid");
         handle.registerInstance({ ...entry, childPid: child.pid });
         // 同上：等推送落表再放行（§5.3(4) 竞态的顺序化）。
@@ -413,17 +416,31 @@ describe.skipIf(process.platform !== "win32")(
     it(
       "the image-path gate: a registered pid with a wrong expected image is dropped at the pipe (QueryFullProcessImageName mismatch)",
       async () => {
-        const { handle } = await startRealHelperBroker();
+        const diagPath = mintDiagPath("image");
+        try {
+        const { handle } = await startRealHelperBroker(diagPath);
         expect(handle.mode, `boot degraded: ${handle.degradedReason ?? "(no reason)"}`).toBe("peer_verified");
         // 注册真实 pid，但期望映像指向不存在的路径 —— 映像门拒绝（§5.3(1)）。
         const entry = mintEntry({ childImagePath: "C:\\payswap-arm-test\\definitely-not-the-image.exe" });
         const child = spawnClientChild({ path: handle.endpointPath, line: requestLine(entry), gated: true });
         await child.waitFor((event) => event.t === "pid");
         handle.registerInstance({ ...entry, childPid: child.pid });
+        // 等推送落表再放行（同链/占用两行：控制行与连接是两路径，先落表才轮得到
+        // 映像门裁决 —— 否则 not-in-table 弃接无鉴别力）。
+        await new Promise((resolve) => setTimeout(resolve, 400));
         child.release();
         const endEvent = await child.waitFor((event) => event.t === "close" || event.t === "error");
         expect(["close", "error"]).toContain(endEvent.t);
         expect(child.events.filter((event) => event.t === "response")).toHaveLength(0);
+        // 弃因必须是映像门（round-5 教训：终端形态断言对 not-in-table 与
+        // image-mismatch 同形 —— 该行曾在控制行解析缺陷下空洞通过。reason 断言同时是
+        // 控制行解析修复在真实 helper 上的回归钉：先有 control:add 才可能 image-mismatch）。
+        expect(readDiag(diagPath), "expected gate:drop reason=image-mismatch").toContain(
+          `gate:drop pid=${child.pid} reason=image-mismatch`,
+        );
+        } catch (error) {
+          throw new Error(`${String(error)}\n--- helper diag ---\n${readDiag(diagPath)}`);
+        }
       },
       30000,
     );
