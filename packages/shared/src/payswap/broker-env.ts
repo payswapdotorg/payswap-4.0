@@ -30,6 +30,16 @@ export const PAYSWAP_BROKER_ENV_KEYS = [
 export type PayswapBrokerEnvKey = (typeof PAYSWAP_BROKER_ENV_KEYS)[number];
 
 /**
+ * 宿主侧 helper 供给键（ADR-13 D13.9，macOS §5.1 臂）：`PAYSWAP_BROKER_HELPER_PATH` /
+ * `PAYSWAP_BROKER_HELPER_SHA256` 是 **host-only** 的运维/CI 供给面（peer-verification
+ * native helper 二进制位置 + 期望 SHA-256），绝不属于五键凭据组，也绝不经受信注入进入任何
+ * 子进程 env —— 与五键同款双表剔除（runtimeEnv strip list + tool-env-passthrough
+ * blocklist），交付面恰好一个进程（host 自己）。
+ */
+export const PAYSWAP_BROKER_HELPER_PATH_ENV_KEY = "PAYSWAP_BROKER_HELPER_PATH";
+export const PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY = "PAYSWAP_BROKER_HELPER_SHA256";
+
+/**
  * 官方 PaySwap 插件的注册身份（`payswap@zcode-plugins-official`）。
  * 单一事实源遵循 CUA 先例 `ZCODE_CUA_OFFICIAL_PLUGIN_ID`
  * （packages/shared/src/mcp.ts，硬编码、不派生 —— shared 不依赖 contracts）。
