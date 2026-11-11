@@ -185,19 +185,28 @@ jobs:
       - name: Compile the Windows peer-verification helper (csc, warnings are errors)
         shell: pwsh
         run: |
-          $csc = "C:/Windows/Microsoft.NET/Framework64/v4.0.30319/csc.exe"
-          if (-not (Test-Path $csc)) { $csc = "C:/Windows/Microsoft.NET/Framework/v4.0.30319/csc.exe" }
+          $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (-not (Test-Path $csc)) { $csc = "C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe" }
           if (-not (Test-Path $csc)) { throw "OS-bundled csc.exe not found" }
           $src = "apps/zcode-cli/native/payswap-broker-peer-windows"
-          $out = "$src/out"
-          New-Item -ItemType Directory -Force -Path $out | Out-Null
-          & $csc /nologo /optimize+ /target:exe /platform:x64 /warnaserror+ `
-            /win32manifest:"$src/app.manifest" `
-            /reference:System.Core.dll `
-            /out:"$out/payswap-broker-peer-helper.exe" `
-            "$src/Program.cs"
-          if ($LASTEXITCODE -ne 0) { throw "helper compile failed" }
-          Write-Host "helper sha256: $((Get-FileHash "$out/payswap-broker-peer-helper.exe" -Algorithm SHA256).Hash.ToLower())"
+          New-Item -ItemType Directory -Force -Path (Join-Path $src "out") | Out-Null
+          # Round-1 CI fix：反引号续行 + 长插值相对路径在 runner pwsh 上把源文件参数
+          # 断成了裸 "Program.cs"（CS1504）—— 改为 Push-Location + 数组 splat 单行调用，
+          # 全部短相对名，消除每个可疑机制。
+          Push-Location $src
+          try {
+            $cscArgs = @(
+              "/nologo", "/optimize+", "/target:exe", "/platform:x64", "/warnaserror+",
+              "/win32manifest:app.manifest",
+              "/reference:System.Core.dll",
+              "/out:out/payswap-broker-peer-helper.exe",
+              "Program.cs"
+            )
+            & $csc @cscArgs
+            if ($LASTEXITCODE -ne 0) { throw "helper compile failed" }
+          } finally { Pop-Location }
+          $helperExe = Join-Path $src "out/payswap-broker-peer-helper.exe"
+          Write-Host "helper sha256: $((Get-FileHash $helperExe -Algorithm SHA256).Hash.ToLower())"
 
       - name: Bootstrap payswap windows suites (default-state fail-closed rows + platform rows)
         run: >
