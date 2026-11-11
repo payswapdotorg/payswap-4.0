@@ -327,6 +327,10 @@ describe.skipIf(process.platform !== "win32")(
         const pidEvent = await child.waitFor((event) => event.t === "pid");
         const realChildPid = pidEvent.pid as number;
         handle.registerInstance({ ...entry, childPid: realChildPid });
+        // §5.3(4) 的注册竞态（round-3 CI 教训）：控制行（stdin）与子进程连接是两条路
+        // 径，推送未落表时管道口门弃该 pid 是**按设计正确**（生产里由 bridge 的有界
+        // 字节等价重试覆盖，ADR-10/D14.8）；平台行顺序化等待推送落表再放行客户端。
+        await new Promise((resolve) => setTimeout(resolve, 400));
         child.release();
         const response = await child.waitFor((event) => event.t === "response");
         const line = response.line as string;
@@ -368,6 +372,8 @@ describe.skipIf(process.platform !== "win32")(
         const child = spawnClientChild({ path: handle.endpointPath, line: requestLine(entry), gated: true });
         await child.waitFor((event) => event.t === "pid");
         handle.registerInstance({ ...entry, childPid: child.pid });
+        // 同上：等推送落表再放行（§5.3(4) 竞态的顺序化）。
+        await new Promise((resolve) => setTimeout(resolve, 400));
         child.release();
         const response = await child.waitFor((event) => event.t === "response");
         expectNullBoundRefusal(response.line as string, "unauthorized", bootState);
@@ -490,9 +496,14 @@ describe.skipIf(process.platform !== "win32")(
         const holder = spawnClientChild({ path: handle.endpointPath, gated: true, holdMs: 20000 });
         await holder.waitFor((event) => event.t === "pid");
         handle.registerInstance({ ...holderEntry, childPid: holder.pid });
+        // 等推送落表再放行（§5.3(4) 竞态的顺序化；持有者必须真正过门占住单实例槽）。
+        await new Promise((resolve) => setTimeout(resolve, 400));
         holder.release();
         await holder.waitFor((event) => event.t === "connected");
-        // 客户端 B：同样已注册，但管道单实例忙 → 连接失败（EBUSY）。
+        // 客户端 B：同样已注册，但管道单实例忙 → 连接失败。实质主张 = B 从未获得槽
+        //（无 connected 事件）且以错误终局；错误码家族取决于 libuv 对
+        // ERROR_PIPE_BUSY 的呈现（EBUSY/EPIPE/EACCES 均见诸版本 —— round-3 CI 观察
+        // 到 EPIPE），单实例本身的证明是"从未连上"。
         const secondEntry = mintEntry({ childImagePath: process.execPath });
         const second = spawnClientChild({ path: handle.endpointPath, gated: true, holdMs: 20000 });
         await second.waitFor((event) => event.t === "pid");
@@ -500,7 +511,8 @@ describe.skipIf(process.platform !== "win32")(
         second.release();
         const event = await second.waitFor((event2) => event2.t === "error" || event2.t === "close", 15000);
         expect(event.t).toBe("error");
-        expect(event.code).toBe("EBUSY");
+        expect(["EBUSY", "EPIPE", "EACCES"]).toContain(event.code);
+        expect(second.events.filter((event2) => event2.t === "connected")).toHaveLength(0);
       },
       30000,
     );

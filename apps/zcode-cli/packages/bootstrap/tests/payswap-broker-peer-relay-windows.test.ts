@@ -620,7 +620,7 @@ describe.skipIf(process.platform === "win32")(
       20000,
     );
 
-    it(
+    it.skipIf(process.platform !== "linux")(
       "linux keeps the direct ss+procfs path — the Windows starter never forks a Linux relay (D13.8 discipline, win32 twin)",
       async () => {
         const fake = writeFakeHelper("claim-parent");
