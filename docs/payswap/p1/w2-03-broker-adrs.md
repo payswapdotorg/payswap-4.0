@@ -1352,15 +1352,20 @@ relay is labeled new PaySwap work (§5.3(3)).
    in-memory dispatch, in-flight serialization is the accepted cost; a
    same-user client can additionally hold the slot up to the §3.3(4) idle
    cap (a DoS shape equivalent to what a same-user attacker can already
-   do to any local endpoint; recorded, T6). The round-6 platform row
-   pinned the client-side observable of that kernel fact: a Node/libuv
+   do to any local endpoint; recorded, T6). The round-6/7 platform rows
+   pinned the client-side observables of that kernel fact: a Node/libuv
    client does not surface `EBUSY` — libuv enters its `WaitNamedPipe`
    busy-retry, so the connect stays pending (no `connected`/`error`/
-   `close`) for as long as the single instance is held, and the slot is
-   granted only after the holder's connection ends. (The round-3 "EPIPE"
-   observation was an artifact of the control-line parser defect: the
-   holder was dropped at the gate, the instance freed, and the second
-   client connected vacuously.)
+   `close`) for as long as the single instance is held. When the
+   holder's connection ends, the server's dispose-then-recreate leaves
+   a brief zero-instance window that can resolve a pending
+   `WaitNamedPipe` as `ENOENT` instead of a direct grant — the
+   documented Windows client retry shape (a fresh connect finds the
+   recreated instance), so the platform row proves the re-grant with a
+   fresh client and leaves the pending client's terminal to those
+   mechanics. (The round-3 "EPIPE" observation was an artifact of the
+   control-line parser defect: the holder was dropped at the gate, the
+   instance freed, and the second client connected vacuously.)
 
 10. **D14.10 — The evidence boundary (D13.10's win32 form).** The host half
     (stdin token + control-line discipline, probe identity rule, uid-basis

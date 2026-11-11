@@ -533,7 +533,7 @@ describe.skipIf(process.platform !== "win32")(
     );
 
     it(
-      "single server instance (§3.2(2)): while one client holds the connection, a second client's connect is not granted a slot — pending (libuv busy-retry) until the holder releases",
+      "single server instance (§3.2(2)): while one client holds the connection, a second client's connect is not granted a slot — pending (libuv busy-retry); the slot is grantable again once the holder releases",
       async () => {
         const diagPath = mintDiagPath("busy");
         try {
@@ -564,10 +564,21 @@ describe.skipIf(process.platform !== "win32")(
         expect(second.events.filter((event2) => event2.t === "connected")).toHaveLength(0);
         expect(second.events.filter((event2) => event2.t === "error")).toHaveLength(0);
         expect(second.events.filter((event2) => event2.t === "close")).toHaveLength(0);
-        // 正面臂（非死锁证明）：释放持有者 → 单实例空出 → pending 的 B 获槽 connected
-        //（§3.2(2) 串行单实例语义端到端：槽只在持有者离开后授予）。
+        // 正面臂（非死锁/非僵死证明）：释放持有者 → 单实例空出 → 槽可再次授予。
+        // round-7 CI 教训：持有者死后服务端的 dispose→re-create 有一个零实例窗口，
+        // pending 的 WaitNamedPipe 可能以 ENOENT 终结（Windows 文档化的客户端重试
+        // 形态）而非直接获槽 —— B 的终局是客户端机制非契约语义，确定性清场后以
+        // 全新客户端 C 证明重授予（挂起-仅断言对僵死 helper 也会空洞通过 —— C 关掉
+        // 这个洞）。
         holder.kill();
-        const granted = await second.waitFor((event2) => event2.t === "connected", 10000);
+        second.kill();
+        const thirdEntry = mintEntry({ childImagePath: process.execPath });
+        const third = spawnClientChild({ path: handle.endpointPath, gated: true, holdMs: 20000 });
+        await third.waitFor((event) => event.t === "pid");
+        handle.registerInstance({ ...thirdEntry, childPid: third.pid });
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        third.release();
+        const granted = await third.waitFor((event2) => event2.t === "connected", 10000);
         expect(granted.t).toBe("connected");
         } catch (error) {
           throw new Error(`${String(error)}\n--- helper diag ---\n${readDiag(diagPath)}`);
