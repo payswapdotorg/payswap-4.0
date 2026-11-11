@@ -121,6 +121,16 @@ export class ProcessTreeStdioClientTransport extends StdioClientTransport {
     return this.lastProcessExit;
   }
 
+  /**
+   * 子进程可执行映像路径（spawn 观察面；ADR-14 D14.8 —— PaySwap broker win32 §5.3(1)
+   * 管道口门的期望映像输入，经 stdioProcessObserver.onStarted 透传；其它消费方忽略）。
+   * spawnfile 是 spawn 时解析出的可执行路径 —— 与内核 QueryFullProcessImageName 报告的
+   * 直接子进程映像同一事实源。
+   */
+  get childImagePath(): string | undefined {
+    return this.childProcess?.spawnfile;
+  }
+
   get processAlive(): boolean {
     return Boolean(
       this.childProcess &&

@@ -652,8 +652,10 @@ describe.skipIf(process.platform === "win32")(
         expect(handle.mode).toBe("peer_verified");
         // 无注册 → 表空 → fake 在管道口丢弃：客户端只看到 close，绝无响应行。
         const impostor = spawnClientChild({ path: handle.endpointPath, line: requestLine(mintEntry()) });
-        const closeEvent = await impostor.waitFor((event) => event.t === "close" || event.t === "error");
-        expect(closeEvent.t).toBe("close");
+        const endEvent = await impostor.waitFor((event) => event.t === "close" || event.t === "error");
+        // 弃连接的终端形态：干净 close 或 RST（error）取决于写/拆交错 —— 实质主张是
+        // 零响应字节（无 relay、无拒绝行，§5.3(4)），两种终结都满足它。
+        expect(["close", "error"]).toContain(endEvent.t);
         expect(impostor.events.filter((event) => event.t === "response")).toHaveLength(0);
       },
       20000,
@@ -674,8 +676,8 @@ describe.skipIf(process.platform === "win32")(
           "image-null push sentinel",
         );
         const client = spawnClientChild({ path: handle.endpointPath, line: requestLine(entry) });
-        const closeEvent = await client.waitFor((event) => event.t === "close" || event.t === "error");
-        expect(closeEvent.t).toBe("close");
+        const endEvent = await client.waitFor((event) => event.t === "close" || event.t === "error");
+        expect(["close", "error"]).toContain(endEvent.t);
         expect(client.events.filter((event) => event.t === "response")).toHaveLength(0);
       },
       20000,

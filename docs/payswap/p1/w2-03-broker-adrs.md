@@ -1225,8 +1225,10 @@ relay is labeled new PaySwap work (§5.3(3)).
 **Decision.**
 
 1. **D14.1 — The helper holds the public pipe (§3.2(1)/(2)).** A
-   self-contained C# helper (`apps/zcode-cli/native/payswap-broker-peer-windows/`,
-   .NET 8, single `Program.cs` + csproj, `TreatWarningsAsErrors`) creates the
+   single-`Program.cs` C# helper (`apps/zcode-cli/native/payswap-broker-peer-windows/`,
+   built with the family's shipped discipline — the OS-bundled .NET Framework
+   `csc.exe` at the `build-windows-browser-import-helper.mjs` path, csproj-less,
+   `/warnaserror+` in CI like the clang `-Werror` of `gates-macos`) creates the
    public pipe with the precedent's exact discipline: `PipeSecurity` +
    `SetAccessRuleProtection(true, false)` (no inheritance), the current
    user's SID granted `PipeAccessRights.ReadWrite`, LocalSystem `FullControl`
@@ -1421,7 +1423,7 @@ full §5.5 chain through the relay); platform suite
 (win32-only: real helper end-to-end through the named pipe, real DACL SDDL
 readback, image-gate arms, parent-death cleanup, single-instance busy,
 pipe-name mint); CI `gates` (ubuntu) and `gates-macos` gain the host-half
-suite; new `gates-windows` job publishes the helper with `dotnet` and runs
-the peer-verification fail-closed rows + the platform suite on
-`windows-latest` (the host half is already pinned on POSIX; a mock never
-runs there).
+suite; new `gates-windows` job compiles the helper with the OS-bundled `csc.exe`
+(warnings are errors) and runs the peer-verification fail-closed rows +
+the platform suite on `windows-latest` (the host half is already pinned on
+POSIX; a mock never runs there).

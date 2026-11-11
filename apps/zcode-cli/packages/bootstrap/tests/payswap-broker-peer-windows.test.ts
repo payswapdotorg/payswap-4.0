@@ -357,8 +357,10 @@ describe.skipIf(process.platform !== "win32")(
         expect(handle.mode).toBe("peer_verified");
         // 未注册的真实进程连接 —— 管道口门拒绝（GetNamedPipeClientProcessId ∉ 表）。
         const impostor = spawnClientChild({ path: handle.endpointPath, line: requestLine(mintEntry()) });
-        const closeEvent = await impostor.waitFor((event) => event.t === "close" || event.t === "error");
-        expect(closeEvent.t).toBe("close");
+        const endEvent = await impostor.waitFor((event) => event.t === "close" || event.t === "error");
+        // 管道口弃连接的终端形态：干净 close 或管道破（error）—— 实质主张是零响应字节
+        //（无 relay、无拒绝行，§5.3(1)/(4)）。
+        expect(["close", "error"]).toContain(endEvent.t);
         expect(impostor.events.filter((event) => event.t === "response")).toHaveLength(0);
         // 门不因拒绝而卡死：随后一个已注册子进程仍过门（claim 另一实例 token → host 侧
         // unauthorized 签名拒绝行 —— 也证明 relaying 在 drop 之后照常工作）。
@@ -384,8 +386,8 @@ describe.skipIf(process.platform !== "win32")(
         await child.waitFor((event) => event.t === "pid");
         handle.registerInstance({ ...entry, childPid: child.pid });
         child.release();
-        const closeEvent = await child.waitFor((event) => event.t === "close" || event.t === "error");
-        expect(closeEvent.t).toBe("close");
+        const endEvent = await child.waitFor((event) => event.t === "close" || event.t === "error");
+        expect(["close", "error"]).toContain(endEvent.t);
         expect(child.events.filter((event) => event.t === "response")).toHaveLength(0);
       },
       30000,

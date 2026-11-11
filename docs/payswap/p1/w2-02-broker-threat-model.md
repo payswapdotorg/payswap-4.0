@@ -170,6 +170,19 @@ Each tree reads: adversary → attack step (mitigation §; proof row).
   chain suite**.
 - Stale socket after host crash → per-boot dir dies with the host;
   fresh boot = fresh dir + path (§3.1, §3.4) → **N22**.
+- **Windows arm (ADR-14 D14.4, rev 2a):** the host-held ingress pipe is
+  created by Node/libuv with the OS default security descriptor, which
+  grants *read* access to Everyone — a cross-user squatter can occupy
+  ingress instances (boot-probe timeout or relay-slot starvation →
+  `degraded_refusing` / typed connect failures: a **fail-closed DoS**,
+  availability class only) but **cannot write** the token-authenticated
+  header, so relayed-fact forgery stays exactly as hard as on POSIX
+  (steal the one-shot stdin token or nothing). The public pipe itself
+  carries the §3.2(2) DACL (current-user ReadWrite only) — cross-user
+  clients cannot even reach the public endpoint. Recorded rather than
+  laundered; residual class widened from same-uid (POSIX 0700 dir) to
+  any-local-user, failure mode unchanged → **Windows suites (host-half
+  token arms + platform rows)**.
 
 ### T5 — Pid spoofing (D5)
 - Claim a pid on the wire → §5.2: the *host* maps pid→registry (payload
@@ -180,7 +193,12 @@ Each tree reads: adversary → attack step (mitigation §; proof row).
   `instance_unknown` → Step 2 suite.
 - Windows: `GetNamedPipeClientProcessId` + image-path verification at the
   helper (§5.3, `Program.cs:1095-1127`) — the attacker's binary is not the
-  plugin server image → dropped at the pipe → Step 3 (Windows) suite.
+  plugin server image → dropped at the pipe → **Step 3 (Windows) suites:
+  `tests/payswap-broker-peer-relay-windows.test.ts` (host half, POSIX) +
+  `tests/payswap-broker-peer-windows.test.ts` (platform rows, win32)**;
+  the pid gate runs on the spawn table pushed over stdin (ADR-14 D14.8),
+  and the host-side §5.5(3)/(4) mapping remains the belt for anything a
+  relayed peer claims.
 
 ### T6 — Flood / resource exhaustion (D6)
 - Connection floods → local-domain only, per-connection 1 MiB cap,
@@ -219,7 +237,10 @@ Each tree reads: adversary → attack step (mitigation §; proof row).
   broker degrades open → §5.4: unavailable peer verification = broker in
   `degraded_refusing`, every request refused, financial services
   unreachable — fail-closed, the macOS Helper's own rule → Step 3 suite
-  (forced-unavailable arm per platform).
+  (forced-unavailable arm per platform). Windows arm (ADR-14): hash
+  mismatch / missing binary / failed probe / helper death all take the
+  same degraded path with the host-held pipe bound for diagnostics-only
+  (§5.4) — pinned by the degrade rows of both Windows suites.
 
 ### T9 — Response forgery (D10, rev 2)
 - Substitute the endpoint (unlink + bind, or pre-empt the path), return
@@ -340,6 +361,23 @@ Each tree reads: adversary → attack step (mitigation §; proof row).
    its own per-boot dir — no cross-talk — but "one authoritative
    financial host" is only enforced at the ledger layer (P7), not here.
    Accepted for this wave; the P7 fenced lease is the enforcement.
+5. **Windows arm residuals (ADR-14, honest, rev 2a).** (a) The host-held
+   ingress pipe's libuv default DACL grants Everyone read: cross-user
+   squatters can force `degraded_refusing` or starve relay slots —
+   fail-closed DoS only; the token (constant-time, one-shot, delivered
+   over an anonymous stdin pipe no third party can read) remains the
+   fact-forgery boundary, and the macOS arm's token-file race window
+   does not exist on Windows. (b) §3.2(2)'s single server instance
+   serializes public connections: a same-user client can hold the slot
+   up to the §3.3(4) idle cap — a DoS shape equivalent to what a
+   same-user attacker can already do to any local endpoint. (c) The
+   helper packaging gap (D14.10): until the CLI distribution ships the
+   binary, production win32 boots `degraded_refusing` — the honest
+   state, not a silent one. (d) No helper-side removal of dead pids is
+   pushed in v1: pid reuse is covered host-side (exit-tombstone before
+   reuse, §5.2(2)) with the image-path gate as the helper-side belt;
+   recorded so it is not re-attempted without a concrete incident
+   class.
 
 ## §8 Out of scope (and why)
 

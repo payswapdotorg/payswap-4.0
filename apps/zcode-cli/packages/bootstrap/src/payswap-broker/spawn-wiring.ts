@@ -87,8 +87,12 @@ export interface PayswapBrokerCoordinatorOptions {
 }
 
 export interface PayswapBrokerProcessObserver {
-  /** stdio 子进程连接成功（pid 已知）：adapters 层调用，形状保持 payswap 无关。 */
-  onStarted(serverName: string, config: McpServerConfig, pid: number): void;
+  /**
+   * stdio 子进程连接成功（pid 已知）：adapters 层调用，形状保持 payswap 无关。
+   * `imagePath`（可选，ADR-14 D14.8）= transport 观察到的子进程可执行映像路径
+   * （spawnfile）—— win32 §5.3(1) 管道口门的期望映像输入；POSIX 臂忽略。
+   */
+  onStarted(serverName: string, config: McpServerConfig, pid: number, imagePath?: string): void;
   /** stdio 子进程连接关闭（意外断连或主动关闭）。 */
   onClosed(serverName: string, config: McpServerConfig, pid: number): void;
 }
@@ -208,7 +212,7 @@ export function createPayswapBrokerCoordinator(
   }
 
   const processObserver: PayswapBrokerProcessObserver = {
-    onStarted(serverName, config, pid) {
+    onStarted(serverName, config, pid, imagePath) {
       const instanceId = instanceIdFromConfig(config);
       if (instanceId === null) return; // 无 PaySwap 凭据的 server（含冒名）—— 与本协调器无关。
       const record = minted.get(instanceId);
@@ -220,6 +224,9 @@ export function createPayswapBrokerCoordinator(
         instanceId,
         token: record.tuple.token,
         childPid: pid,
+        // ADR-14 D14.8：spawn 观察面的映像路径（win32 管道口门输入；缺席 = 该 pid 在
+        // win32 管道口不可核验 → 弃，§5.3(4) fail-closed；POSIX 臂忽略此字段）。
+        ...(imagePath !== undefined ? { childImagePath: imagePath } : {}),
         pluginRegistrationIdentity: PAYSWAP_OFFICIAL_PLUGIN_ID,
         workspace: record.workspaceKey,
         // §8.2（Step 5 落地）：sessionScope = 实例可解析 scope。Wave 2 本地桌面模型里

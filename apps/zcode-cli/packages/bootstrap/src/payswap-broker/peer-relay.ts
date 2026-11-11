@@ -51,12 +51,27 @@ export interface PayswapPeerRelayHelperConfig {
  * relay 传输面（server.ts 的 relay 模式消费）：ingress listener 的收养 + 事实源切换 +
  * close 时的 helper/ingress 拆除。`relayToken` 是每条 ingress 连接的认证凭据
  * （peer-relay-protocol.ts 的常时比对）。
+ *
+ * 平台臂差异面（ADR-14）：`peerUidBasis` 声明对等事实中 uid 维度的信任基础 ——
+ * "header"（POSIX 臂：server 对照头行 uid 与 geteuid()，D13.3 原行为）或
+ * "transport"（win32 臂：同用户边界由 helper 公共管道的 DACL 在管道口承担，头行 uid
+ * 是哨兵 0 非证据，server 跳过 uid 比对；pid 仍来自认证后的头行）。`registerChildPid`
+ * 是 win32 §5.3(1) 管道口门的 spawn 表推送面（POSIX 臂不实现 —— 事实只转发，门在
+ * host 的 §5.5）。
  */
 export interface PayswapBrokerRelayTransport {
   readonly ingressPath: string;
   readonly relayToken: string;
-  /** ingress listen 就绪（含 0600 chmod）；本对象返回时已 resolve。 */
+  /** ingress listen 就绪（POSIX 含 0600 chmod；win32 管道名无文件系统条目）；本对象返回时已 resolve。 */
   readonly listening: Promise<void>;
+  /** uid 维度信任基础（见接口头注释；缺省 "header" —— 本臂 darwin）。 */
+  readonly peerUidBasis: "header" | "transport";
+  /**
+   * win32 臂专属（§5.3(1)/ADR-14 D14.8）：把 spawn 表条目（子 pid + 期望映像路径；
+   * image=null = 无法核验 → 该 pid 在管道口被弃）推给 helper。POSIX 臂缺省 ——
+   * 可选能力面，server 侧以 `relay?.registerChildPid?.(...)` 探测调用。
+   */
+  registerChildPid?(childPid: number, imagePath: string | null): void;
   /** 生产期连接处理器（server.handleConnection）；探针期的额外连接一律销毁。 */
   setConnectionHandler(handler: (socket: net.Socket) => void): void;
   /** 拆除：SIGTERM→SIGKILL helper + 关闭 ingress listener + 摘除 ingress socket。 */
@@ -78,23 +93,24 @@ const ENDPOINT_CONNECT_RETRY_MS = 25;
 const STDERR_TAIL_LIMIT = 400;
 
 /**
- * 平台/env 解析（D13.8/D13.9）：仅 darwin（Windows 是后续 PR —— 沿同一缝，勿在此提前
- * 放行）；两键齐备才构成供给声明。存在性/hash 校验在 startPayswapPeerRelay 内统一执行
- * （单一验证点）—— 声明了但二进制缺席 → 那里的 degraded 路径。
+ * 平台/env 解析（D13.8/D13.9 + ADR-14 D14.5）：darwin（C helper）与 win32（C# helper）
+ * 共用同一对供给键，由 boot 层按平台分流到各自的 starter；其它平台不解析（Linux 永远
+ * 走直接 reader —— 缝不分叉第二套 Linux 实现）。两键齐备才构成供给声明。存在性/hash
+ * 校验在 starter 内统一执行（单一验证点）—— 声明了但二进制缺席 → 那里的 degraded 路径。
  */
 export function resolveDefaultPeerRelayHelper(
   platform: string,
   env: Record<string, string | undefined>,
 ): PayswapPeerRelayHelperConfig | null {
-  if (platform !== "darwin") return null;
+  if (platform !== "darwin" && platform !== "win32") return null;
   const helperPath = env[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]?.trim();
   const helperSha256 = env[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]?.trim();
   if (!helperPath || !helperSha256) return null;
   return { helperPath, helperSha256: helperSha256.toLowerCase() };
 }
 
-/** SHA-256 验证（D13.4）：通过返回 null；否则返回降级原因。hash 不符绝不 spawn。 */
-function verifyHelperBinary(config: PayswapPeerRelayHelperConfig): string | null {
+/** SHA-256 验证（D13.4；两平台臂共用）：通过返回 null；否则返回降级原因。hash 不符绝不 spawn。 */
+export function verifyHelperBinary(config: PayswapPeerRelayHelperConfig): string | null {
   try {
     const stat = fs.statSync(config.helperPath);
     if (!stat.isFile()) {
@@ -110,8 +126,8 @@ function verifyHelperBinary(config: PayswapPeerRelayHelperConfig): string | null
   }
 }
 
-/** 到截止时间的端点连接重试（helper 绑定端点有微小延迟；ENOENT/ECONNREFUSED 重试）。 */
-function connectUntilDeadline(endpointPath: string, deadline: number): Promise<net.Socket> {
+/** 到截止时间的端点连接重试（helper 绑定端点有微小延迟；ENOENT/ECONNREFUSED 重试；两臂共用）。 */
+export function connectUntilDeadline(endpointPath: string, deadline: number): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
     const attempt = (): void => {
       if (Date.now() > deadline) {
@@ -132,8 +148,8 @@ function connectUntilDeadline(endpointPath: string, deadline: number): Promise<n
   });
 }
 
-/** 杀 helper：SIGTERM → 宽限 → SIGKILL 兜底；已死立即返回（幂等）。 */
-function stopHelperProcess(helper: ChildProcess): Promise<void> {
+/** 杀 helper：SIGTERM → 宽限 → SIGKILL 兜底；已死立即返回（幂等；win32 上 kill = 硬终止）。两臂共用。 */
+export function stopHelperProcess(helper: ChildProcess): Promise<void> {
   return new Promise((resolve) => {
     if (helper.exitCode !== null || helper.signalCode !== null) {
       resolve();
@@ -164,8 +180,8 @@ function stopHelperProcess(helper: ChildProcess): Promise<void> {
   });
 }
 
-/** 关闭 ingress listener：closeAllConnections + 摘除 socket 文件 + 宽限兜底。 */
-function closeIngressServer(server: net.Server, ingressPath: string): Promise<void> {
+/** 关闭 ingress listener：closeAllConnections + 摘除 socket 文件（win32 管道名无条目）+ 宽限兜底。两臂共用。 */
+export function closeIngressServer(server: net.Server, ingressPath: string): Promise<void> {
   return new Promise((resolve) => {
     let settled = false;
     const done = (): void => {
@@ -410,6 +426,7 @@ export async function startPayswapPeerRelay(
     ingressPath,
     relayToken,
     listening: ingressListening,
+    peerUidBasis: "header",
     setConnectionHandler(handler) {
       connectionSink = handler;
     },
