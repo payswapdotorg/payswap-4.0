@@ -210,7 +210,7 @@ function requestLine(entry: { instanceId: string; token: string }, seq = 1): str
   });
 }
 
-async function startRealHelperBroker(): Promise<{
+async function startRealHelperBroker(diagPath?: string): Promise<{
   handle: PayswapBrokerHandle;
   bootState: PayswapBrokerBootState;
   audit: PayswapBrokerAuditEvent[];
@@ -224,10 +224,28 @@ async function startRealHelperBroker(): Promise<{
     bootState,
     auditSink: (event) => audit.push(event),
     sessionScopeResolver: (hint) => (hint === "sess-test" ? { workspaceKey: "sess-test" } : null),
-    peerRelayHelper: helperConfig,
+    peerRelayHelper:
+      diagPath === undefined
+        ? helperConfig
+        : { ...helperConfig, helperArgs: ["--diag", diagPath] },
   });
   activeBrokers.push(handle);
   return { handle, bootState, audit };
+}
+
+/** 诊断文件的当前内容（--diag 缺省 = 空串）；行级 CI 定位面（D14.10）。 */
+function readDiag(diagPath?: string): string {
+  if (diagPath === undefined) return "(no diag)";
+  try {
+    return fs.readFileSync(diagPath, "utf8");
+  } catch {
+    return "(diag unavailable)";
+  }
+}
+
+/** 每行一枚诊断文件（win32 runner 专用路径）。 */
+function mintDiagPath(row: string): string {
+  return path.join(os.tmpdir(), `payswap-win-diag-${row}-${randomBytes(4).toString("hex")}.log`);
 }
 
 function oracleMaterial(bootState: PayswapBrokerBootState) {
@@ -318,7 +336,9 @@ describe.skipIf(process.platform !== "win32")(
     it(
       "the full §5.5 chain through the real helper: a registered real child's request returns a request-attributed signed envelope (GetNamedPipeClientProcessId = the child's real pid)",
       async () => {
-        const { handle, bootState, audit } = await startRealHelperBroker();
+        const diagPath = mintDiagPath("chain");
+        try {
+        const { handle, bootState, audit } = await startRealHelperBroker(diagPath);
         expect(handle.mode, `boot degraded: ${handle.degradedReason ?? "(no reason)"}`).toBe("peer_verified");
         // 门控子进程：上报 pid → 注册（真实 pid + 真实映像 spawnfile）→ release 后连接。
         const entry = mintEntry({ childImagePath: process.execPath });
@@ -349,7 +369,11 @@ describe.skipIf(process.platform !== "win32")(
               event.instanceId === entry.instanceId &&
               event.peerPid === realChildPid,
           ),
+          readDiag(diagPath),
         ).toBe(true);
+        } catch (error) {
+          throw new Error(`${String(error)}\n--- helper diag ---\n${readDiag(diagPath)}`);
+        }
       },
       30000,
     );
@@ -357,7 +381,9 @@ describe.skipIf(process.platform !== "win32")(
     it(
       "an impostor process (real pid, unregistered) is dropped at the pipe: no relay, no refusal line (§5.3(1)/(4))",
       async () => {
-        const { handle, bootState } = await startRealHelperBroker();
+        const diagPath = mintDiagPath("impostor");
+        try {
+        const { handle, bootState } = await startRealHelperBroker(diagPath);
         expect(handle.mode, `boot degraded: ${handle.degradedReason ?? "(no reason)"}`).toBe("peer_verified");
         // 未注册的真实进程连接 —— 管道口门拒绝（GetNamedPipeClientProcessId ∉ 表）。
         const impostor = spawnClientChild({ path: handle.endpointPath, line: requestLine(mintEntry()) });
@@ -377,6 +403,9 @@ describe.skipIf(process.platform !== "win32")(
         child.release();
         const response = await child.waitFor((event) => event.t === "response");
         expectNullBoundRefusal(response.line as string, "unauthorized", bootState);
+        } catch (error) {
+          throw new Error(`${String(error)}\n--- helper diag ---\n${readDiag(diagPath)}`);
+        }
       },
       30000,
     );
@@ -489,7 +518,9 @@ describe.skipIf(process.platform !== "win32")(
     it(
       "single server instance (§3.2(2)): while one client holds the connection, a second client's connect fails busy (ERROR_PIPE_BUSY)",
       async () => {
-        const { handle } = await startRealHelperBroker();
+        const diagPath = mintDiagPath("busy");
+        try {
+        const { handle } = await startRealHelperBroker(diagPath);
         expect(handle.mode, `boot degraded: ${handle.degradedReason ?? "(no reason)"}`).toBe("peer_verified");
         // 客户端 A：注册后连接并静默持有（单实例槽被占）。
         const holderEntry = mintEntry({ childImagePath: process.execPath });
@@ -511,8 +542,11 @@ describe.skipIf(process.platform !== "win32")(
         second.release();
         const event = await second.waitFor((event2) => event2.t === "error" || event2.t === "close", 15000);
         expect(event.t).toBe("error");
-        expect(["EBUSY", "EPIPE", "EACCES"]).toContain(event.code);
+        expect(["EBUSY", "EPIPE", "EACCES"], readDiag(diagPath)).toContain(event.code);
         expect(second.events.filter((event2) => event2.t === "connected")).toHaveLength(0);
+        } catch (error) {
+          throw new Error(`${String(error)}\n--- helper diag ---\n${readDiag(diagPath)}`);
+        }
       },
       30000,
     );

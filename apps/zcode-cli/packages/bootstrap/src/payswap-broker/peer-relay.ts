@@ -45,6 +45,11 @@ export interface PayswapPeerRelayHelperConfig {
   helperSha256: string;
   /** 探针墙钟预算（缺省 5000 ms）。 */
   probeTimeoutMs?: number;
+  /**
+   * 追加在标准 argv 之后的额外参数（ADR-14 D14.10 的 CI 诊断缝 —— 如 win32 helper 的
+   * `--diag <file>`；生产不传。hash 验证面覆盖的是二进制本身，与本参数无关）。
+   */
+  helperArgs?: string[];
 }
 
 /**

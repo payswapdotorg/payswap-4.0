@@ -184,6 +184,9 @@ export async function startPayswapWindowsPeerRelay(
         String(process.pid),
         "--parent-image",
         process.execPath,
+        // 诊断缝（helperArgs）：标准 argv 之后的追加参数（D14.10 —— CI 的 --diag 等；
+        // 生产不传）。
+        ...(config.helperArgs ?? []),
       ],
       { stdio: ["pipe", "ignore", "pipe"], env: process.env },
     );

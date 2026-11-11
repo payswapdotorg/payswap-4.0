@@ -49,6 +49,11 @@ namespace PayswapBrokerPeerHelper
 
         private static readonly ManualResetEvent Shutdown = new ManualResetEvent(false);
 
+        // --diag <file>（诊断缝，ADR-14 D14.10 平台行的 CI 诊断面）：决策行追加写文件；
+        // 不含 token/密钥材料（pid/原因/方向即可定位）。生产不传 = 零开销（null 检查）。
+        private static readonly object DiagLock = new object();
+        private static string diagPath;
+
         private static int Main(string[] args)
         {
             try
@@ -107,6 +112,23 @@ namespace PayswapBrokerPeerHelper
             return value;
         }
 
+        /** 诊断行（--diag 缺省 = no-op）；IO 失败吞没 —— 诊断绝不影响服务路径。 */
+        private static void Diag(string line)
+        {
+            if (diagPath == null) return;
+            try
+            {
+                lock (DiagLock)
+                {
+                    File.AppendAllText(diagPath,
+                        DateTime.UtcNow.ToString("o") + " " + line + Environment.NewLine);
+                }
+            }
+            catch
+            {
+            }
+        }
+
         // ------------------------------------------------------------------
         // 主路径：stdin token → 看门狗 → 公共管道服务循环
         // ------------------------------------------------------------------
@@ -114,6 +136,7 @@ namespace PayswapBrokerPeerHelper
         private static int RunRelay(string[] args)
         {
             Dictionary<string, string> parsed = ParseArguments(args);
+            diagPath = parsed.ContainsKey("--diag") ? parsed["--diag"] : null;
             // 管道名规范化（round-2 CI 根因修复）：.NET Framework 的 NamedPipeClientStream
             // 无条件自拼 \\[server]\pipe\[name] —— 带前缀的 ingress 名会被拼成畸形路径，
             // Connect 永远失败（探针拿不到头行 → degraded）。两侧统一剥掉 \\.\pipe\ /
@@ -143,25 +166,39 @@ namespace PayswapBrokerPeerHelper
             //     （§3.2(2) 单实例 = 串行服务，D14.9 记录在案）。
             while (!Shutdown.WaitOne(0))
             {
-                NamedPipeServerStream pipe = CreatePipeServer(endpoint);
-                if (pipe == null) return 1; // 建管失败 = 名字被占/系统拒绝 —— fail-closed（§3.4 win32 形态）
+                NamedPipeServerStream pipe = CreatePipeServerWithRetry(endpoint);
+                if (pipe == null)
+                {
+                    // 建管持续失败 = 名字被占/系统拒绝 —— fail-closed（§3.4 win32 形态）。
+                    Diag("pipe:create-failed name=" + endpoint);
+                    return 1;
+                }
                 try
                 {
-                    if (!WaitForConnection(pipe, WaitForConnectionTimeoutMs)) { pipe.Dispose(); continue; }
+                    if (!WaitForConnection(pipe, WaitForConnectionTimeoutMs))
+                    {
+                        Diag("conn:wait-timeout");
+                        pipe.Dispose();
+                        continue;
+                    }
                     if (Shutdown.WaitOne(0)) { pipe.Dispose(); break; }
                     uint clientPid;
                     if (!GetNamedPipeClientProcessId(pipe.SafePipeHandle, out clientPid))
                     {
                         // 事实不可建立 = 不可验证 = 弃（§5.3(4)）—— 绝不读载荷。
+                        Diag("gate:drop pid=" + clientPid + " reason=facts");
                         DisconnectAndRecreate(pipe);
                         continue;
                     }
-                    if (!GateAllows((int)clientPid, parentPid, parentImage, table))
+                    string arm;
+                    if (!GateAllows((int)clientPid, parentPid, parentImage, table, out arm))
                     {
                         // 管道口门拒绝：Disconnect 即弃（§5.3(1)/(4) —— 无 relay、无拒绝行）。
+                        Diag("gate:drop pid=" + clientPid + " reason=" + arm);
                         DisconnectAndRecreate(pipe);
                         continue;
                     }
+                    Diag("gate:allow pid=" + clientPid + " arm=" + arm);
                     // 放行 → ingress relay（D14.4：一条公共连接 = 一条 ingress 连接）。
                     ServeRelayedConnection(pipe, ingress, token, (int)clientPid);
                 }
@@ -170,20 +207,34 @@ namespace PayswapBrokerPeerHelper
                     try { pipe.Dispose(); } catch { }
                 }
             }
+            Diag("exit:clean");
             return 0;
         }
 
-        /** 管道口门（§5.3(1)，D14.3）：父臂（pid+映像）或表臂（pid+映像）；否则弃。 */
-        private static bool GateAllows(int clientPid, int parentPid, string parentImage, SpawnTable table)
+        /** 管道口门（§5.3(1)，D14.3）：父臂（pid+映像）或表臂（pid+映像）；否则弃。arm 输出诊断原因。 */
+        private static bool GateAllows(
+            int clientPid, int parentPid, string parentImage, SpawnTable table, out string arm)
         {
             if (clientPid == parentPid)
             {
-                return VerifyProcessImagePath(clientPid, parentImage);
+                bool ok = VerifyProcessImagePath(clientPid, parentImage);
+                arm = ok ? "parent" : "parent-image-mismatch";
+                return ok;
             }
             string expected;
-            if (!table.TryLookup(clientPid, out expected)) return false;
-            if (expected == null) return false; // image=null = 无法核验 = 不可验证 = 弃（§5.3(4)）
-            return VerifyProcessImagePath(clientPid, expected);
+            if (!table.TryLookup(clientPid, out expected))
+            {
+                arm = "not-in-table";
+                return false;
+            }
+            if (expected == null)
+            {
+                arm = "image-null"; // image=null = 无法核验 = 不可验证 = 弃（§5.3(4)）
+                return false;
+            }
+            bool imageOk = VerifyProcessImagePath(clientPid, expected);
+            arm = imageOk ? "table" : "image-mismatch";
+            return imageOk;
         }
 
         /** 已验证连接的 ingress relay：头行 + 双向泵（先 Flush 再 Dispose —— 在途字节不丢）。 */
@@ -199,9 +250,11 @@ namespace PayswapBrokerPeerHelper
                 ingress = ConnectIngress(ingressName);
                 if (ingress == null)
                 {
+                    Diag("ingress:fail pid=" + clientPid);
                     client.Dispose();
                     return;
                 }
+                Diag("ingress:ok pid=" + clientPid);
                 // v1 头行（peer-relay-protocol.ts 严格形状；uid=0 win32 哨兵，D14.7）。
                 byte[] header = Encoding.UTF8.GetBytes(
                     "{\"v\":1,\"t\":\"" + token + "\",\"pid\":" + clientPid.ToString() + ",\"uid\":0}\n");
@@ -302,8 +355,13 @@ namespace PayswapBrokerPeerHelper
                     if (line.Length > MaxControlLineLength) continue; // 形状破坏 → 放弃本行（fail-closed）
                     int add;
                     string image;
-                    if (!ParseControlLine(line, out add, out image)) continue;
+                    if (!ParseControlLine(line, out add, out image))
+                    {
+                        Diag("control:reject " + (line.Length > 96 ? line.Substring(0, 96) + "..." : line));
+                        continue;
+                    }
                     table.Add(add, image);
+                    Diag("control:add pid=" + add + " image=" + (image == null ? "null" : image));
                 }
             }
             catch
@@ -454,6 +512,20 @@ namespace PayswapBrokerPeerHelper
             {
                 return null; // 名字被占（§3.4 win32：不可静默采纳）或系统拒绝 —— fail-closed
             }
+        }
+
+        /** 建管（带限重试）：弃连接后旧实例对象可能被客户端句柄短暂保活（单实例上限的
+            瞬时窗口，round-4 CI 的放大器）—— 50ms×10 重试吸收；持续失败才 fail-closed。 */
+        private static NamedPipeServerStream CreatePipeServerWithRetry(string pipeName)
+        {
+            for (int attempt = 0; attempt < 10; attempt++)
+            {
+                NamedPipeServerStream pipe = CreatePipeServer(pipeName);
+                if (pipe != null) return pipe;
+                if (attempt > 0) Diag("pipe:create-retry attempt=" + attempt);
+                Thread.Sleep(50);
+            }
+            return null;
         }
 
         private static bool WaitForConnection(NamedPipeServerStream pipe, int timeoutMs)
