@@ -46,6 +46,8 @@ namespace PayswapBrokerPeerHelper
         private const int IngressConnectRetryMs = 25;
         private const int PipeBufferSize = 4096;        // 先例 CreatePipeServer 同款
         private const int MaxControlLineLength = 4096;  // 控制行上限（host 侧同款 Belt）
+        private const int PumpWaitSliceMs = 1000;       // 泵等待切片（darwin poll 1000ms 同款）
+        private const int PumpIdleCapMs = 35000;        // 泵空闲上限（§3.3(4) helper 侧镜像；darwin PUMP_IDLE_CAP_MS 同款，host 30s 之上）
 
         private static readonly ManualResetEvent Shutdown = new ManualResetEvent(false);
 
@@ -237,7 +239,8 @@ namespace PayswapBrokerPeerHelper
             return imageOk;
         }
 
-        /** 已验证连接的 ingress relay：头行 + 双向泵（先 Flush 再 Dispose —— 在途字节不丢）。 */
+        /** 已验证连接的 ingress relay：头行 + 单线程双向泵（D14.4：一条公共连接 =
+            一条 ingress 连接）。 */
         private static void ServeRelayedConnection(
             NamedPipeServerStream client,
             string ingressName,
@@ -261,12 +264,7 @@ namespace PayswapBrokerPeerHelper
                 ingress.Write(header, 0, header.Length);
                 ingress.Flush();
 
-                Thread toIngress = new Thread(delegate() { Pump(client, ingress); });
-                Thread toClient = new Thread(delegate() { Pump(ingress, client); });
-                toIngress.Start();
-                toClient.Start();
-                toIngress.Join();
-                toClient.Join();
+                PumpBoth(client, ingress);
             }
             catch
             {
@@ -279,35 +277,97 @@ namespace PayswapBrokerPeerHelper
             }
         }
 
-        /** 单向泵：read a → write b；EOF（Read 0 或管道破）→ Flush b + Dispose 双侧。 */
-        private static void Pump(Stream source, Stream sink)
+        /** 单线程双向泵（APM 复用 —— .NET Framework 的 poll 等价物；darwin helper 的
+            poll 环同款纪律：方向性 EOF + 错误双侧同亡 + 空闲上限）。
+
+            round-8 CI 根因：旧实现是两条阻塞读线程 + 先破侧 Dispose 双流 —— 同步句柄
+            上 CloseHandle-during-ReadFile 的唤醒是未定义行为，对侧 Read 可能永不返回
+            （持有者死后服务循环卡死：控制行照收、公共管道实例永不重建 —— busy 行正面
+            臂的 ENOENT 即其形）。两流均须 Asynchronous：重叠句柄的关闭取消在途 I/O
+            是文档化保证 —— Dispose 确定唤醒对侧在途读，循环确定性终结。
+
+            半关平台差（darwin 的 shutdown(SHUT_WR) 不可表达）：方向性 EOF 时全关对侧。
+            协议族无需半关 —— §3.3 一请求一连接，客户端在响应到达前不 FIN（bridge 与
+            测试客户端都是 write 后等响应；先 FIN 后等响应的形态不存在于此家族）。 */
+        private static void PumpBoth(NamedPipeServerStream client, NamedPipeClientStream ingress)
         {
-            byte[] buffer = new byte[PipeBufferSize];
-            try
+            byte[] clientBuffer = new byte[PipeBufferSize];
+            byte[] ingressBuffer = new byte[PipeBufferSize];
+            IAsyncResult clientRead = null;
+            IAsyncResult ingressRead = null;
+            bool clientOpen = true;   // client → ingress 方向
+            bool ingressOpen = true;  // ingress → client 方向
+            DateTime lastActivity = DateTime.UtcNow;
+            while (clientOpen || ingressOpen)
             {
-                while (true)
+                if (clientOpen && clientRead == null)
+                {
+                    try { clientRead = client.BeginRead(clientBuffer, 0, clientBuffer.Length, null, null); }
+                    catch { clientOpen = false; }
+                }
+                if (ingressOpen && ingressRead == null)
+                {
+                    try { ingressRead = ingress.BeginRead(ingressBuffer, 0, ingressBuffer.Length, null, null); }
+                    catch { ingressOpen = false; }
+                }
+                if (!clientOpen && !ingressOpen) break;
+
+                WaitHandle[] handles = new WaitHandle[(clientRead != null ? 1 : 0) + (ingressRead != null ? 1 : 0)];
+                int index = 0;
+                if (clientRead != null) handles[index++] = clientRead.AsyncWaitHandle;
+                if (ingressRead != null) handles[index++] = ingressRead.AsyncWaitHandle;
+                if (handles.Length == 0) break;
+
+                if (WaitHandle.WaitAny(handles, PumpWaitSliceMs) == WaitHandle.WaitTimeout)
+                {
+                    // 空闲上限（§3.3(4) 的 helper 侧镜像，darwin PUMP_IDLE_CAP_MS 同款界）。
+                    if ((DateTime.UtcNow - lastActivity).TotalMilliseconds > PumpIdleCapMs) break;
+                    continue;
+                }
+                lastActivity = DateTime.UtcNow;
+                if (clientRead != null && clientRead.IsCompleted)
                 {
                     int read;
-                    try { read = source.Read(buffer, 0, buffer.Length); }
-                    catch { break; } // 管道破/对侧关闭 —— EOF 等价
-                    if (read <= 0) break;
-                    sink.Write(buffer, 0, read);
-                    sink.Flush();
+                    try { read = client.EndRead(clientRead); } catch { read = 0; }
+                    clientRead = null;
+                    if (read <= 0)
+                    {
+                        // client 方向终结 → 全关 ingress（半关不可表达；Dispose 取消在途
+                        // ingress 读 —— 重叠句柄的文档化取消语义）。
+                        clientOpen = false;
+                        try { ingress.Dispose(); } catch { }
+                    }
+                    else
+                    {
+                        try { ingress.Write(clientBuffer, 0, read); ingress.Flush(); }
+                        catch { clientOpen = false; ingressOpen = false; } // 写破 = 双侧同亡
+                    }
+                }
+                if (ingressRead != null && ingressRead.IsCompleted)
+                {
+                    int read;
+                    try { read = ingress.EndRead(ingressRead); } catch { read = 0; }
+                    ingressRead = null;
+                    if (read <= 0)
+                    {
+                        ingressOpen = false;
+                        try { client.Dispose(); } catch { }
+                    }
+                    else
+                    {
+                        try { client.Write(ingressBuffer, 0, read); client.Flush(); }
+                        catch { clientOpen = false; ingressOpen = false; } // 写破 = 双侧同亡
+                    }
                 }
             }
-            catch
-            {
-                // 传输噪声：连接终局由 Dispose 收口
-            }
-            finally
-            {
-                try { sink.Flush(); } catch { }
-                try { sink.Dispose(); } catch { }
-                try { source.Dispose(); } catch { }
-            }
+            // 在途字节收口（D14.4：先 Flush 再 Dispose —— Dispose 由调用方 finally 统一）。
+            try { client.Flush(); } catch { }
+            try { ingress.Flush(); } catch { }
         }
 
-        /** ingress 连接（host 先建 listener 再 spawn 本进程 —— 小窗口重试吸收调度延迟）。 */
+        /** ingress 连接（host 先建 listener 再 spawn 本进程 —— 小窗口重试吸收调度延迟）。
+            Asynchronous（round-8）：泵的 Dispose-取消在途读需要重叠句柄 —— 同步句柄的
+            CloseHandle-during-ReadFile 唤醒未定义（服务循环卡死根因）。 */
         private static NamedPipeClientStream ConnectIngress(string ingressName)
         {
             DateTime deadline = DateTime.UtcNow.AddMilliseconds(IngressConnectTimeoutMs);
@@ -318,7 +378,7 @@ namespace PayswapBrokerPeerHelper
                 try
                 {
                     NamedPipeClientStream stream = new NamedPipeClientStream(
-                        ".", ingressName, PipeDirection.InOut, PipeOptions.None,
+                        ".", ingressName, PipeDirection.InOut, PipeOptions.Asynchronous,
                         TokenImpersonationLevel.Identification);
                     stream.Connect(remaining);
                     return stream;

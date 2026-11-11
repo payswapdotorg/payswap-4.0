@@ -1363,9 +1363,20 @@ relay is labeled new PaySwap work (§5.3(3)).
    documented Windows client retry shape (a fresh connect finds the
    recreated instance), so the platform row proves the re-grant with a
    fresh client and leaves the pending client's terminal to those
-   mechanics. (The round-3 "EPIPE" observation was an artifact of the
-   control-line parser defect: the holder was dropped at the gate, the
-   instance freed, and the second client connected vacuously.)
+   mechanics. The service loop's pump was rebuilt to the darwin
+   helper's single-threaded poll-loop discipline (APM form:
+   `BeginRead` + `WaitAny` on overlapped handles, directional EOF,
+   both-die on write failure, the 35s idle cap mirroring §3.3(4)):
+   the original two-thread pump with cross-dispose could jam the
+   serial service loop forever — closing a synchronous pipe handle
+   while another thread blocks in `ReadFile` on it has undefined
+   wake behavior, so the loop never reached the next
+   `CreateNamedPipe` (the round-8 busy-row ENOENT shape); closing an
+   overlapped handle cancels pending I/O by documented guarantee,
+   making the teardown deterministic. (The round-3 "EPIPE"
+   observation was an artifact of the control-line parser defect:
+   the holder was dropped at the gate, the instance freed, and the
+   second client connected vacuously.)
 
 10. **D14.10 — The evidence boundary (D13.10's win32 form).** The host half
     (stdin token + control-line discipline, probe identity rule, uid-basis
