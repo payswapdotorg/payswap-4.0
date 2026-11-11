@@ -986,8 +986,12 @@ describe("P1.3 Step 3 — fail-closed discipline (all platforms)", () => {
         },
       });
       expect(handle.mode).toBe("degraded_refusing");
-      // §5.4：socket 照常绑定（诊断可达）。
-      expect(fs.existsSync(handle.endpointPath)).toBe(true);
+      // §5.4：socket 照常绑定（诊断可达）。win32 管道端点无文件系统条目（§3.2，
+      // ADR-14 D14.1）—— pipe 命名空间不可 stat，绑定的可达性证明由下方客户端
+      // 连接 + 签名拒绝行承担（degraded 自持管道照常应答）。
+      if (!handle.endpointPath.startsWith("' + bs*4 + '.' + bs*2 + 'pipe' + bs*2 + '")) {
+        expect(fs.existsSync(handle.endpointPath)).toBe(true);
+      }
       const entry = mintEntry();
       const reqLine = requestLine(entry);
       const child = spawnClientChild({

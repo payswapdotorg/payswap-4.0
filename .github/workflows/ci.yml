@@ -177,10 +177,11 @@ jobs:
       - name: Build bootstrap workspace deps
         run: pnpm --filter @zcode/bootstrap... run build
 
-      # ADR-14 D14.1/D14.5：hash 验证的供给面 —— CI 编译后把路径 + SHA-256 写入环境，
-      # 套件经 PAYSWAP_BROKER_HELPER_{PATH,SHA256} 解析（两平台臂共用键；host-only，
-      # runtimeEnv 双表剔除保证不进任何子进程 env）。csc.exe 用 OS 内置 .NET Framework
-      # 编译器（windows-latest 必备路径；与桌面 browser-import helper 的构建纪律同源）。
+      # ADR-14 D14.1/D14.5：编译到平台套件的 fallback 路径（native/…/out/），**不**写
+      # GITHUB_ENV —— peer-verification 套件与本步同跑，它钉的是 win32 的**默认无
+      # helper 态**（degraded fail-closed；供给激活态由平台套件以显式 config 证明）。
+      # csc.exe 用 OS 内置 .NET Framework 编译器（windows-latest 必备路径；与桌面
+      # browser-import helper 的构建纪律同源）；/warnaserror+ 对应 gates-macos 的 -Werror。
       - name: Compile the Windows peer-verification helper (csc, warnings are errors)
         shell: pwsh
         run: |
@@ -196,10 +197,9 @@ jobs:
             /out:"$out/payswap-broker-peer-helper.exe" `
             "$src/Program.cs"
           if ($LASTEXITCODE -ne 0) { throw "helper compile failed" }
-          "PAYSWAP_BROKER_HELPER_PATH=$env:GITHUB_WORKSPACE/$out/payswap-broker-peer-helper.exe" >> $env:GITHUB_ENV
-          "PAYSWAP_BROKER_HELPER_SHA256=$((Get-FileHash "$out/payswap-broker-peer-helper.exe" -Algorithm SHA256).Hash.ToLower())" >> $env:GITHUB_ENV
+          Write-Host "helper sha256: $((Get-FileHash "$out/payswap-broker-peer-helper.exe" -Algorithm SHA256).Hash.ToLower())"
 
-      - name: Bootstrap payswap windows suites (fail-closed rows + platform rows)
+      - name: Bootstrap payswap windows suites (default-state fail-closed rows + platform rows)
         run: >
           pnpm --filter @zcode/bootstrap exec vitest run
           tests/payswap-broker-peer-verification.test.ts
