@@ -34,7 +34,9 @@ import {
   startPayswapPeerRelay,
   type PayswapBrokerRelayTransport,
   type PayswapPeerRelayHelperConfig,
+  type PayswapPeerRelayStartResult,
 } from "./peer-relay.js";
+import { startPayswapWindowsPeerRelay } from "./peer-relay-windows.js";
 import {
   createPayswapBrokerServer,
   PAYSWAP_BROKER_DEFAULT_CLOSE_GRACE_MS,
@@ -163,13 +165,14 @@ export async function bootPayswapBroker(options: PayswapBrokerBootOptions): Prom
   const closeGraceMs = options.closeGraceMs ?? PAYSWAP_BROKER_DEFAULT_CLOSE_GRACE_MS;
   const auditSink = options.auditSink ?? (() => {});
 
-  // (1) 对等验证子系统（ADR-13）：优先尝试 helper-relay（macOS §5.1 native 臂 —— helper
-  //     持端点 + ingress relay + 真路径自探针）；不可用/未验证 → 直接 reader 路径（Linux
-  //     ss+procfs；其它平台 unavailable）→ degraded_refusing（§5.4）。显式 reader 注入
-  //     （既有测试面）跳过 relay。平台门（D13.8）：仅 darwin —— Linux 永远走直接 reader，
-  //     缝不分叉第二套 Linux 实现；win32 沿本缝的后续 PR 放行。
+  // (1) 对等验证子系统（ADR-13/ADR-14）：优先尝试 helper-relay（darwin §5.1 臂 = C helper
+  //     + UDS 缝；win32 §5.3 臂 = C# helper + 命名管道缝 —— 同一传输面，平台分流）；
+  //     不可用/未验证 → 直接 reader 路径（Linux ss+procfs；其它平台 unavailable）→
+  //     degraded_refusing（§5.4）。显式 reader 注入（既有测试面）跳过 relay。平台门
+  //     （D13.8/D14.5）：Linux 永远走直接 reader，缝不分叉第二套 Linux 实现。
+  const relayCapablePlatform = platform === "darwin" || platform === "win32";
   const relayConfig =
-    options.reader === undefined && platform === "darwin"
+    options.reader === undefined && relayCapablePlatform
       ? (options.peerRelayHelper ?? resolveDefaultPeerRelayHelper(platform, process.env))
       : null;
   let relay: PayswapBrokerRelayTransport | null = null;
@@ -178,7 +181,12 @@ export async function bootPayswapBroker(options: PayswapBrokerBootOptions): Prom
   let reader: PeerCredentialReader;
 
   if (relayConfig !== null) {
-    const started = await startPayswapPeerRelay(options.bootState, relayConfig);
+    // 平台分流（D14.5）：darwin → POSIX 缝 starter；win32 → 管道缝 starter（token/
+    // 控制行走 stdin、spawn 表推送、uid 由 DACL 承担 —— ADR-14）。
+    const started: PayswapPeerRelayStartResult =
+      platform === "win32"
+        ? await startPayswapWindowsPeerRelay(options.bootState, relayConfig)
+        : await startPayswapPeerRelay(options.bootState, relayConfig);
     if (started.verified && started.relay !== null) {
       relay = started.relay;
       probe = started.probe;

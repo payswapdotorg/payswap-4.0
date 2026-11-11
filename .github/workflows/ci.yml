@@ -78,6 +78,7 @@ jobs:
           tests/payswap-broker-credentials.test.ts
           tests/payswap-broker-peer-verification.test.ts
           tests/payswap-broker-peer-relay.test.ts
+          tests/payswap-broker-peer-relay-windows.test.ts
           tests/payswap-broker-dispatch.test.ts
           tests/payswap-broker-spawn-wiring.test.ts
           tests/payswap-broker-session-scope.test.ts
@@ -144,4 +145,71 @@ jobs:
           pnpm --filter @zcode/bootstrap exec vitest run
           tests/payswap-broker-peer-verification.test.ts
           tests/payswap-broker-peer-relay.test.ts
+          tests/payswap-broker-peer-relay-windows.test.ts
           tests/payswap-broker-peer-macos.test.ts
+
+
+  # PaySwap P1.3 Windows 臂（ADR-14 D14.10）：平台行只在 win32 证明 —— 真实 C# helper
+  # 经 OS 内置 csc.exe 编译（先例族 windows-browser-import-helper 同款纪律；警告即错误，
+  # 对应 gates-macos 的 clang -Werror）、真实 DACL SDDL 回读、GetNamedPipeClientProcessId
+  # + 映像路径门、父死亡清理、单实例 busy（mock 不转绿，playbook §5(5)）。诚实边界：本
+  # job 只承载平台行所需范围（bootstrap 及其工作区依赖的构建 + peer-verification 的
+  # win32 fail-closed 行 + Windows 平台套件）；宿主半边纪律由 ubuntu 的 gates job 钉住
+  #（POSIX 测试缝）—— 两 job 互补，不是重复。
+  gates-windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      NODE_OPTIONS: --max-old-space-size=3072
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4 # 读取根 package.json 的 packageManager（pnpm@10.33.2）
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Install (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      - name: Build bootstrap workspace deps
+        run: pnpm --filter @zcode/bootstrap... run build
+
+      # ADR-14 D14.1/D14.5：编译到平台套件的 fallback 路径（native/…/out/），**不**写
+      # GITHUB_ENV —— peer-verification 套件与本步同跑，它钉的是 win32 的**默认无
+      # helper 态**（degraded fail-closed；供给激活态由平台套件以显式 config 证明）。
+      # csc.exe 用 OS 内置 .NET Framework 编译器（windows-latest 必备路径；与桌面
+      # browser-import helper 的构建纪律同源）；/warnaserror+ 对应 gates-macos 的 -Werror。
+      - name: Compile the Windows peer-verification helper (csc, warnings are errors)
+        shell: pwsh
+        run: |
+          $csc = "C:\Windows\Microsoft.NET\Framework64\v4.0.30319\csc.exe"
+          if (-not (Test-Path $csc)) { $csc = "C:\Windows\Microsoft.NET\Framework\v4.0.30319\csc.exe" }
+          if (-not (Test-Path $csc)) { throw "OS-bundled csc.exe not found" }
+          $src = "apps/zcode-cli/native/payswap-broker-peer-windows"
+          New-Item -ItemType Directory -Force -Path (Join-Path $src "out") | Out-Null
+          # Round-1 CI fix：反引号续行 + 长插值相对路径在 runner pwsh 上把源文件参数
+          # 断成了裸 "Program.cs"（CS1504）—— 改为 Push-Location + 数组 splat 单行调用，
+          # 全部短相对名，消除每个可疑机制。
+          Push-Location $src
+          try {
+            $cscArgs = @(
+              "/nologo", "/optimize+", "/target:exe", "/platform:x64", "/warnaserror+",
+              "/win32manifest:app.manifest",
+              "/reference:System.Core.dll",
+              "/out:out/payswap-broker-peer-helper.exe",
+              "Program.cs"
+            )
+            & $csc @cscArgs
+            if ($LASTEXITCODE -ne 0) { throw "helper compile failed" }
+          } finally { Pop-Location }
+          $helperExe = Join-Path $src "out/payswap-broker-peer-helper.exe"
+          Write-Host "helper sha256: $((Get-FileHash $helperExe -Algorithm SHA256).Hash.ToLower())"
+
+      - name: Bootstrap payswap windows suites (default-state fail-closed rows + platform rows)
+        run: >
+          pnpm --filter @zcode/bootstrap exec vitest run
+          tests/payswap-broker-peer-verification.test.ts
+          tests/payswap-broker-peer-windows.test.ts

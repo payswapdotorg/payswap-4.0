@@ -131,9 +131,11 @@ export interface CreateMcpAdapterOptions {
    * stdio 子进程生命周期观察者（host 侧 spawn 接线的通用钩子 —— 例如 PaySwap broker
    * 实例注册/tombstone 的数据源；adapters 层保持业务无关）。onStarted 在连接成功
    * （pid 已知）时触发；onClosed 在连接关闭（意外断连或主动回收）时触发。仅 stdio。
+   * `imagePath`（可选）= transport 观察到的子进程可执行映像路径（spawnfile；ADR-14
+   * D14.8 —— 下游 win32 管道口门输入；观察不到时缺席）。
    */
   stdioProcessObserver?: {
-    onStarted(serverName: string, config: McpServerConfig, pid: number): void;
+    onStarted(serverName: string, config: McpServerConfig, pid: number, imagePath?: string): void;
     onClosed(serverName: string, config: McpServerConfig, pid: number): void;
   };
   mcpOAuth?: McpOAuthRuntimeOptions;
@@ -1655,9 +1657,15 @@ class NodeMcpAdapter implements McpPort {
       await this.replayResourceSubscriptions(name, client);
       const mcpTransportPid = getStdioTransportPid(transport);
       if (mcpTransportPid != null && config.type === "stdio") {
-        // spawn 接线观察：pid 已知即通知（host 侧注册先于子进程首个业务请求）。
+        // spawn 接线观察：pid 已知即通知（host 侧注册先于子进程首个业务请求）；
+        // 映像路径（spawnfile）随行 —— ADR-14 D14.8（win32 管道口门；观察不到时缺席）。
         this.stdioProcessByServer.set(name, { pid: mcpTransportPid, config });
-        this.stdioProcessObserver?.onStarted(name, config, mcpTransportPid);
+        this.stdioProcessObserver?.onStarted(
+          name,
+          config,
+          mcpTransportPid,
+          getStdioTransportImagePath(transport),
+        );
       }
       const mcpProcessIdentity =
         mcpTransportPid != null && this.connectionContext
@@ -2566,6 +2574,11 @@ function getStdioTransportPid(transport?: McpTransport): number | undefined {
   if (!(transport instanceof StdioClientTransport)) return undefined;
   const pid = transport.pid;
   return typeof pid === "number" && Number.isInteger(pid) && pid > 0 ? pid : undefined;
+}
+
+/** 子进程可执行映像路径（spawnfile；ADR-14 D14.8）—— 仅 ProcessTree transport 可观察。 */
+function getStdioTransportImagePath(transport?: McpTransport): string | undefined {
+  return transport instanceof ProcessTreeStdioClientTransport ? transport.childImagePath : undefined;
 }
 
 function getStdioTransportExitInfo(transport?: McpTransport):

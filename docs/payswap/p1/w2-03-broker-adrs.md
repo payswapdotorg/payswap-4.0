@@ -1205,3 +1205,249 @@ relay); platform suite
 (darwin-only: real helper end-to-end, placement modes, one-shot token file,
 parent-death cleanup, cross-uid EACCES); CI `gates-macos` compiles the
 helper with clang and runs both suites on `macos-latest`.
+
+## ADR-14 — The Windows §5.3 native arm: helper-held named pipe, DACL, and the spawn-table push (P1.3 completion, Windows half)
+
+**Context.** ADR-13 shipped the relay seam and the macOS §5.1 arm, and named
+this half: "the Windows half (pipe-name mint per §3.2(3), DACL per §3.2(2),
+pid+image-path gate per §5.3(1) with the spawn table pushed to the helper)
+lands as its own PR against the same seam." Until this ADR, win32 booted
+`degraded_refusing`. The normative shape is contract §3.2/§5.3: Node/libuv
+expose neither `GetNamedPipeClientProcessId` nor DACL control (§3.2(1)), so
+the public endpoint is a named pipe **held by the native helper**, verified
+per §5.3(1) with the C# precedent family
+(`packages/desktop/native/windows-browser-import-helper/Program.cs:1031-1057,
+1095-1127, 1213-1265` — `PipeSecurity`/`SetAccessRuleProtection`,
+`GetNamedPipeClientProcessId`, `QueryFullProcessImageName` image verification,
+`FixedTimeEquals`). Applying that family as the broker peer-verification
+relay is labeled new PaySwap work (§5.3(3)).
+
+**Decision.**
+
+1. **D14.1 — The helper holds the public pipe (§3.2(1)/(2)).** A
+   single-`Program.cs` C# helper (`apps/zcode-cli/native/payswap-broker-peer-windows/`,
+   built with the family's shipped discipline — the OS-bundled .NET Framework
+   `csc.exe` at the `build-windows-browser-import-helper.mjs` path, csproj-less,
+   `/warnaserror+` in CI like the clang `-Werror` of `gates-macos`) creates the
+   public pipe with the precedent's exact discipline: `PipeSecurity` +
+   `SetAccessRuleProtection(true, false)` (no inheritance), the current
+   user's SID granted `PipeAccessRights.ReadWrite`, LocalSystem `FullControl`
+   (the precedent's fixed base — no administrators, no authenticated-users,
+   no anonymous grants), `maxNumberOfServerInstances: 1`, byte mode,
+   4096/4096 buffers. A NULL DACL or broader grant is a §3.2(2) contract
+   violation. The host never creates the public pipe in verified mode; in
+   degraded mode the host binds it (Node *can* listen on a pipe — it cannot
+   set its DACL or read peer pids), exactly as §5.4 demands (diagnostics
+   reachable; every request refused `peer_verification_failed`).
+
+2. **D14.2 — The host mints the pipe name (§3.2(3)).** `mintBrokerBootState`
+   gains a platform parameter (default `process.platform`): win32 mints
+   `\\.\pipe\payswap-broker-<24-hex>` (the `createSocketPath` discipline —
+   random per boot, UUID/hex entropy; a stable process-lifetime name is
+   rejected). POSIX platforms keep today's path shape byte-identically. The
+   ingress pipe name is minted with the same entropy family. Pipe names are
+   kernel objects: there is no per-boot directory and no chmod placement law
+   on win32 — §3.1(2)'s role is played entirely by the DACL (D14.1).
+
+3. **D14.3 — Facts at connect; the pid+image-path gate runs at the pipe
+   (§5.3(1)/(4)).** At `ConnectNamedPipe` completion the helper calls
+   `GetNamedPipeClientProcessId` (kernel-sourced — a wire claim is never
+   forwarded), then gates **before any payload byte is read**: the client is
+   allowed iff (a) its pid is the spawning host AND its image path equals
+   the `--parent-image` the host passed at spawn, or (b) its pid is in the
+   spawn table pushed over stdin (D14.5) AND its image path
+   (`OpenProcess(ProcessQueryLimitedInformation)` +
+   `QueryFullProcessImageName`, `Path.GetFullPath`,
+   `StringComparison.OrdinalIgnoreCase` — the precedent's
+   `VerifyProcessImagePath` verbatim) equals that entry's pushed expected
+   image. A table entry pushed without an image path cannot be verified →
+   dropped (unverifiable = dropped, §5.3(4)). **Unregistered or
+   mismatched clients are dropped at the pipe — no refusal line.** This is
+   the deliberate Windows divergence from the macOS arm's relay-and-refuse
+   (D13.2): §5.3(1) demands the gate before payload read and §5.3(4)
+   demands the drop; a *relayed* client that later fails a host-side §5.5
+   step still receives the signed typed refusal, so the refusal surface for
+   registered peers is unchanged.
+
+4. **D14.4 — The ingress is a host-held named pipe; the token is the trust
+   boundary.** One ingress connection per public-client connection; the
+   helper's first ingress line is the shared v1 header
+   (`peer-relay-protocol.ts` unchanged — `uid` carries the win32 sentinel
+   `0`), then a bidirectional pump. The ingress server is Node's
+   `net.Server` on `\\.\pipe\payswap-broker-relay-<hex>`; libuv creates pipe
+   instances with the OS default security descriptor, which grants read
+   access to Everyone. Consequence, recorded: a cross-user squatter can
+   *occupy* ingress instances (a boot-time or relay-slot DoS that degrades
+   fail-closed — the probe times out, `degraded_refusing`) but **cannot
+   write** the token-authenticated header, so relayed-fact forgery remains
+   exactly as hard as on POSIX: steal the one-shot token (D14.5) or nothing.
+   This widens ADR-13 D13.6's squatter class from same-uid to any-local-user
+   while keeping the failure mode fail-closed; recorded in the threat model
+   (T4/T6 residual rows). Rejected alternatives below.
+
+5. **D14.5 — Token and control lines travel over stdin.** The host spawns
+   the helper only after SHA-256 verification of the binary (the D13.4
+   rule; mismatch/absent = degraded, never spawn) with argv
+   `--endpoint/--ingress/--parent-pid/--parent-image` (no secrets in argv —
+   the command line is readable by same-user processes via WMI, the win32
+   twin of macOS `ps`), then writes the one-shot 32-byte hex token as the
+   helper's **first stdin line**, followed by append-only control lines
+   `{"v":1,"add":<pid>,"image":"<path>"|null}` — strict closed key set,
+   one JSON object per line — pushed whenever the host registers an
+   instance (`registerInstance` → `relay.registerChildPid(pid, imagePath)`).
+   A later `add` for the same pid replaces the entry (the host's spawn
+   table is a pid→instance route). Removals are **not pushed in v1**: §5.2(2)
+   covers pid reuse host-side (exit-tombstone before reuse) and the image
+   gate is the helper-side belt; a stale entry's clients must still present
+   the live instance's token (§4.5) and the host still applies §5.5(4).
+   Every ingress connection re-authenticates with the token,
+   constant-time (`timingSafeEqual` host-side; the precedent's
+   `FixedTimeEquals` discipline). The one-shot token-file race window of
+   D13.4 does not exist here: an anonymous stdin pipe is not readable by
+   any other process.
+
+6. **D14.6 — Parent binding and endpoint lifetime.** The host passes
+   `--parent-pid String(process.pid)` (the §5.3(2) discipline); the helper
+   runs a watchdog thread that exits when the parent process is gone
+   (250 ms poll bound — the macOS helper's periodic `getppid` check, win32
+   form), which also gives §3.1(3)/§10.3 endpoint-dies-with-host semantics:
+   the pipe object dies with the helper's handles. `--parent-image`
+   (`process.execPath`) is the belt for the parent arm of the gate (D14.3a).
+   §3.4's Windows form: the pipe namespace refuses a duplicate name at
+   creation (`CreateNamedPipe` fails) — a pre-planted or mid-flight
+   replacement cannot be silently adopted; the helper treats creation
+   failure as fatal (exit ≠ 0 → probe fails → `degraded_refusing`), and a
+   replaced endpoint cannot forge responses (§6.4/§6.5, T4 analysis).
+
+7. **D14.7 — Boot is spawn + a real-path self-probe (D13.5's win32 form).**
+   The subsystem is available only if the host, connecting as a real client
+   to the helper-held public pipe through the exact kernel path production
+   connections take, receives a token-valid header identifying *the host
+   itself* (`pid === process.pid`; the `uid` field is the win32 sentinel —
+   the same-user boundary is enforced by the DACL at the public pipe, not
+   by a uid compare). Any failure — spawn, hash, header, token, identity,
+   or the bounded timeout — kills the helper, closes the ingress, and boots
+   `degraded_refusing` with the host-held endpoint. No mock ever
+   substitutes the probe. To keep one §5.5 pipeline across arms, the relay
+   transport declares its peer-uid basis: `"header"` (POSIX arms — the
+   server compares the header uid against `geteuid()`, today's behavior)
+   or `"transport"` (win32 — the server skips the uid compare because the
+   transport already established it; the sentinel is not evidence).
+
+8. **D14.8 — The spawn-table push, end to end.** The image path a gate
+   entry expects is the executable the host actually spawned, observed at
+   the source: the stdio transport's `ChildProcess.spawnfile`, surfaced
+   through the adapters `stdioProcessObserver.onStarted(serverName,
+   config, pid, imagePath?)` → `PayswapBrokerProcessObserver` →
+   `registerInstance` → `PayswapInstanceRegistryEntry.childImagePath`
+   (optional, additive; POSIX arms ignore it) → the stdin control line.
+   A child that connects before its control line lands is dropped at the
+   pipe (§5.3(4)) and the bridge client's bounded byte-equivalent retry
+   (ADR-10) covers the registration race.
+
+9. **D14.9 — Single instance means serial service (accepted, recorded).**
+   §3.2(2) mandates `maxNumberOfServerInstances: 1` (the cited precedent's
+   shape): while one client connection is being served, further connects
+   get `ERROR_PIPE_BUSY`. With §3.3's one-request-per-connection and the
+   in-memory dispatch, in-flight serialization is the accepted cost; a
+   same-user client can additionally hold the slot up to the §3.3(4) idle
+   cap (a DoS shape equivalent to what a same-user attacker can already
+   do to any local endpoint; recorded, T6). The round-6/7 platform rows
+   pinned the client-side observables of that kernel fact: a Node/libuv
+   client does not surface `EBUSY` — libuv enters its `WaitNamedPipe`
+   busy-retry, so the connect stays pending (no `connected`/`error`/
+   `close`) for as long as the single instance is held. When the
+   holder's connection ends, the server's dispose-then-recreate leaves
+   a brief zero-instance window that can resolve a pending
+   `WaitNamedPipe` as `ENOENT` instead of a direct grant — the
+   documented Windows client retry shape (a fresh connect finds the
+   recreated instance), so the platform row proves the re-grant with a
+   fresh client and leaves the pending client's terminal to those
+   mechanics. The service loop's pump was rebuilt to the darwin
+   helper's single-threaded poll-loop discipline (APM form:
+   `BeginRead` + `WaitAny` on overlapped handles, directional EOF,
+   both-die on write failure, the 35s idle cap mirroring §3.3(4)):
+   the original two-thread pump with cross-dispose could jam the
+   serial service loop forever — closing a synchronous pipe handle
+   while another thread blocks in `ReadFile` on it has undefined
+   wake behavior, so the loop never reached the next
+   `CreateNamedPipe` (the round-8 busy-row ENOENT shape); closing an
+   overlapped handle cancels pending I/O by documented guarantee,
+   making the teardown deterministic. (The round-3 "EPIPE"
+   observation was an artifact of the control-line parser defect:
+   the holder was dropped at the gate, the instance freed, and the
+   second client connected vacuously.)
+
+10. **D14.10 — The evidence boundary (D13.10's win32 form).** The host half
+    (stdin token + control-line discipline, probe identity rule, uid-basis
+    skip, push-wiring, drop-at-pipe vs typed-refusal split, close/teardown,
+    the full §5.5 chain through the relay) is pinned by a POSIX-runnable
+    suite against a protocol-faithful fake helper: on POSIX the relay's
+    endpoint mints UDS paths for both sides (Node's net layer is
+    shape-transparent — `listen`/`connect` are identical for pipes), so the
+    host half is proven on Linux CI without a Windows machine; the fake's
+    parentage check is a POSIX-only discipline and the fake never proves
+    kernel facts. The platform rows — the real C# helper end to end,
+    the real DACL (SDDL read back from the created pipe), the real
+    `GetNamedPipeClientProcessId` + image-path gate, parent-death cleanup,
+    single-instance busy, pipe-name mint — run only on win32, in the
+    `gates-windows` CI job that publishes the helper with `dotnet` and runs
+    the platform suite. A mock never greens a platform row (playbook §5(5)).
+    Helper packaging inside the CLI distribution is the D13.9 gap's win32
+    twin: until packaging ships a binary, production win32 boots
+    `degraded_refusing` — the honest state, not a silent one.
+
+**Rejected alternatives (recorded).**
+
+- *TCP loopback ingress:* same squatter class (any local process can
+  connect) plus a scannable port surface; the named pipe keeps the
+  `\\.\pipe\` namespace family discipline. No security gain for a real
+  complexity cost.
+- *Helper-held ingress (role inversion):* the host cannot be the relay
+  client without a per-connection signal from the helper — the multiplexed
+  framing D13 already rejected; a control channel to coordinate control
+  channels is strictly worse than stdin.
+- *Token via argv or token file:* argv is WMI-visible to same-user
+  processes (the precedent family passes `--token` in argv — we do better
+  because we can: we own the spawn); a file re-opens D13.4's one-shot race
+  window for zero benefit. stdin (an anonymous pipe between host and
+  helper) is unreadable to third parties.
+- *Helper-side removals of dead pids:* the host-side tombstone (§5.2(2)) +
+  token (§4.5) + §5.5(4) already bound a recycled pid; pushing exits adds
+  an ordering surface (tombstone events do not flow through the server
+  today) for a belt on a belt. Recorded so it is not re-attempted without
+  a concrete pid-reuse incident class.
+- *N-API addon:* ADR-3's build-burden reason, now for a second toolchain;
+  the helper needs no Node linkage.
+- *Permissive multi-instance public pipe:* §3.2(2) mandates a single server
+  instance; the serialization cost is accepted and recorded (D14.9), not
+  laundered by widening the contract-cited shape.
+
+**Consequences.** Windows gets the §5.3 read with kernel-sourced facts end
+to end; the refusal surface for registered peers and the entire §5.5
+pipeline are byte-identical across arms (one signature path, one typed
+failure set); unregistered peers are dropped at the pipe per §5.3(4) —
+a deliberate, contract-cited difference from the POSIX arms' typed refusal
+(D13.2's relay-and-refuse exists there because §5.1(2) demands the peer
+*receive* the typed line; §5.3(1)/(4) demand the drop here). Residuals:
+the ingress default-DACL squatter class (D14.4, fail-closed only), the
+serial single-instance service shape (D14.9), the packaging gap (D14.10),
+and the fake-helper evidence boundary for the host half on POSIX CI
+(platform rows are windows-runner-gated). The darwin/linux fail-closed
+rows in the Step-3 suite remain valid exactly as written; the darwin arm
+(ADR-13) is untouched.
+
+**Evidence.** Host-half suite
+`apps/zcode-cli/packages/bootstrap/tests/payswap-broker-peer-relay-windows.test.ts`
+(fake-helper, POSIX-runnable: stdin token/control discipline, probe identity
+rule, uid-basis skip, drop-at-pipe vs typed-refusal split, spawn-table push
+end to end, hash-mismatch never-spawns, degrade paths, close semantics, the
+full §5.5 chain through the relay); platform suite
+`apps/zcode-cli/packages/bootstrap/tests/payswap-broker-peer-windows.test.ts`
+(win32-only: real helper end-to-end through the named pipe, real DACL SDDL
+readback, image-gate arms, parent-death cleanup, single-instance busy,
+pipe-name mint); CI `gates` (ubuntu) and `gates-macos` gain the host-half
+suite; new `gates-windows` job compiles the helper with the OS-bundled `csc.exe`
+(warnings are errors) and runs the peer-verification fail-closed rows +
+the platform suite on `windows-latest` (the host half is already pinned on
+POSIX; a mock never runs there).

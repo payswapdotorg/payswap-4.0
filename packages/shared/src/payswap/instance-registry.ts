@@ -21,6 +21,13 @@ export interface PayswapInstanceRegistryEntry {
   /** per-instance 256-bit hex token（§4.1；仅 host 内存，绝不外泄）。 */
   token: string;
   childPid: number;
+  /**
+   * 子进程可执行映像路径（spawn 观察面记录；ADR-14 D14.8）。win32 §5.3(1) 管道口门的
+   * 期望映像输入（stdio transport 的 spawnfile）；POSIX 臂忽略此字段（§5.1 的
+   * pid/uid 凭据读取不含映像维度）。缺省/缺席 = win32 门无法核验映像 → 该 pid 的
+   * 客户端在管道口被弃（§5.3(4) fail-closed）。
+   */
+  childImagePath?: string;
   /** 官方插件注册身份（host 验证过的 identity，§1.5；如 `payswap@zcode-plugins-official`）。 */
   pluginRegistrationIdentity: string;
   workspace: string;

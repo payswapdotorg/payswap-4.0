@@ -55,6 +55,9 @@ export {
   type PayswapPeerRelayHelperConfig,
   type PayswapPeerRelayStartResult,
 } from "./peer-relay.js";
+// ADR-14：win32 §5.3 臂的 starter（C# helper + 命名管道缝；token/控制行走 stdin、
+// spawn 表推送、uid 由 DACL 承担）—— 与 darwin 臂同一传输面（PayswapBrokerRelayTransport）。
+export { startPayswapWindowsPeerRelay } from "./peer-relay-windows.js";
 // ADR-13 D13.9：helper 供给键（host-only）随 relay 面透传再导出 —— 测试与运维共用单一事实源。
 export {
   PAYSWAP_BROKER_HELPER_PATH_ENV_KEY,

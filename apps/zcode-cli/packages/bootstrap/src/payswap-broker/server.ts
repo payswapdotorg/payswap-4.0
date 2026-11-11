@@ -198,20 +198,26 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
 
   let server: net.Server | null = null;
   let listening: Promise<void>;
+  // win32 端点是命名管道（§3.2）：无文件系统落位纪律（§3.1(2) 的角色由 helper 的 DACL
+  // 承担，ADR-14 D14.1/D14.2）—— 直接分支（degraded 自持端点）跳过 mkdir/unlink/chmod，
+  // close 跳过 unlink/rmSync。
+  const isPipeEndpoint = endpointPath.startsWith("\\\\.\\pipe\\");
   if (relay === undefined) {
-    // §3.1(2)：per-boot 0700 目录（mkdir mode 受 umask 影响 → chmod 钉死）。
-    fs.mkdirSync(endpointDir, { recursive: true, mode: 0o700 });
-    fs.chmodSync(endpointDir, 0o700);
+    if (!isPipeEndpoint) {
+      // §3.1(2)：per-boot 0700 目录（mkdir mode 受 umask 影响 → chmod 钉死）。
+      fs.mkdirSync(endpointDir, { recursive: true, mode: 0o700 });
+      fs.chmodSync(endpointDir, 0o700);
 
-    // §3.4(1)：绑定前拒绝或移除既有文件系统条目 —— 移除（unlink），绝不静默采纳；
-    // 无法移除（如目录）→ boot 失败（refuse 臂）。
-    try {
-      fs.unlinkSync(endpointPath);
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        throw new Error(
-          `payswap broker endpoint path is occupied and not removable (contract §3.4(1)): ${endpointPath}`,
-        );
+      // §3.4(1)：绑定前拒绝或移除既有文件系统条目 —— 移除（unlink），绝不静默采纳；
+      // 无法移除（如目录）→ boot 失败（refuse 臂）。
+      try {
+        fs.unlinkSync(endpointPath);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+          throw new Error(
+            `payswap broker endpoint path is occupied and not removable (contract §3.4(1)): ${endpointPath}`,
+          );
+        }
       }
     }
 
@@ -223,6 +229,12 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
       server?.once("error", reject);
       server?.listen(endpointPath, () => {
         server?.off("error", reject);
+        if (isPipeEndpoint) {
+          // win32 管道：无文件系统条目可 chmod（§3.2 —— 落位纪律在 helper 的 DACL；
+          // degraded 自持管道仅承担 §5.4 诊断可达，无验证声明）。
+          resolve();
+          return;
+        }
         try {
           // §3.1(2)：socket 0600（umask 无关，显式钉死）。
           fs.chmodSync(endpointPath, 0o600);
@@ -404,8 +416,16 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
       } else {
         peer = await reader.readAcceptedSocketPeer(socket);
       }
+      // uid 维度的信任基础（ADR-14 D14.7）：POSIX 臂/直接模式 —— 对照头行/凭据 uid 与
+      // geteuid()（D13.3 原行为）；win32 臂（peerUidBasis "transport"）—— 同用户边界已
+      // 由 helper 公共管道的 DACL 在管道口承担（§3.2(2)），头行 uid 是哨兵非证据，跳过
+      // uid 比对（pid 仍来自 token 认证后的头行，且仍需过下方 spawn 表映射）。
+      const uidEstablishedByTransport = relay !== undefined && relay.peerUidBasis === "transport";
       const hostUid = hostEffectiveUid();
-      if (peer === null || hostUid === null || peer.uid !== hostUid) {
+      if (
+        peer === null ||
+        (!uidEstablishedByTransport && (hostUid === null || peer.uid !== hostUid))
+      ) {
         failPeer(socket, "peer_verification_failed", peer?.pid ?? null);
         return;
       }
@@ -705,15 +725,18 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
         socket.destroy();
       }
       // finally 语义：socket 文件 + per-boot 目录无条件清理（§3.1(3)：目录随 listener 消亡）。
-      try {
-        fs.unlinkSync(endpointPath);
-      } catch {
-        /* ENOENT */
-      }
-      try {
-        fs.rmSync(endpointDir, { recursive: true, force: true });
-      } catch {
-        /* 清理失败不阻断 close 幂等完成 */
+      // win32 管道端点无文件系统条目（§3.2）—— 管道对象随 listener/helper 句柄消亡。
+      if (!isPipeEndpoint) {
+        try {
+          fs.unlinkSync(endpointPath);
+        } catch {
+          /* ENOENT */
+        }
+        try {
+          fs.rmSync(endpointDir, { recursive: true, force: true });
+        } catch {
+          /* 清理失败不阻断 close 幂等完成 */
+        }
       }
     })();
     return closePromise;
@@ -740,6 +763,9 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
         token: entry.token,
         childPid: entry.childPid,
       });
+      // win32 §5.3(1) 管道口门的 spawn 表推送（ADR-14 D14.8）：可选能力面 —— POSIX 臂
+      // 不实现（事实只 relay，门在本 §5.5）；image 缺席 = 无法核验 → helper 弃该 pid。
+      relay?.registerChildPid?.(entry.childPid, entry.childImagePath ?? null);
     },
     get closed() {
       return closePromise !== null;

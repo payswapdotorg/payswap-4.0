@@ -26,7 +26,11 @@ export interface PayswapBrokerBootState {
   hostId: string;
   /** Ed25519 密钥对（KeyObject）。privateKey 只进签名调用，永不出 host 内存（§6.5(1)）。 */
   keyPair: { publicKey: KeyObject; privateKey: KeyObject };
-  /** per-boot 私有目录下的 socket 路径（只铸字符串；目录与 listener 属于 Step 3，§3.1(2)）。 */
+  /**
+   * per-boot endpoint（只铸字符串；目录与 listener 属于 Step 3）：POSIX = 私有目录下的
+   * socket 路径（§3.1(2)）；win32 = `\\\\.\\pipe\\` 命名管道名（§3.2(3)，ADR-14 D14.2
+   * —— 由 native helper 持有创建，Node 只供名字）。
+   */
   endpointPath: string;
 }
 
@@ -34,18 +38,26 @@ export interface PayswapBrokerBootState {
 // 超过 mkdtemp 的 6 字符，保持同一纪律；目录前缀 `payswap-broker-`（Step 2 测试钉住）。
 const ENDPOINT_DIRECTORY_SUFFIX_BYTES = 12;
 
+/** win32 管道名前缀（§3.2(3)：createSocketPath 纪律 —— `\\\\.\\pipe\\zcode-node-repl-<uuid>` 同款）。 */
+const WINDOWS_PIPE_PREFIX = "\\\\.\\pipe\\payswap-broker-";
+
 /**
- * 铸 per-boot broker 状态：fresh UUID v4 host id + fresh Ed25519 密钥对 + per-boot 私有
- * endpoint 路径（ADR-1：每次 boot 全新三元组 —— 无跨 boot 复用）。
+ * 铸 per-boot broker 状态：fresh UUID v4 host id + fresh Ed25519 密钥对 + per-boot
+ * endpoint（ADR-1：每次 boot 全新三元组 —— 无跨 boot 复用）。`platform` 缺省
+ * `process.platform`；win32 铸 per-boot 随机管道名（ADR-14 D14.2，§3.2(3)），其它平台
+ * 铸私有目录下的 socket 路径（§3.1(2)，形状与 Step 2 起完全一致）。
  */
-export function mintBrokerBootState(): PayswapBrokerBootState {
+export function mintBrokerBootState(platform: string = process.platform): PayswapBrokerBootState {
   const hostId = randomUUID();
   const keyPair = generateKeyPairSync("ed25519");
-  const endpointPath = join(
-    tmpdir(),
-    `payswap-broker-${randomBytes(ENDPOINT_DIRECTORY_SUFFIX_BYTES).toString("hex")}`,
-    "broker.sock",
-  );
+  const endpointPath =
+    platform === "win32"
+      ? `${WINDOWS_PIPE_PREFIX}${randomBytes(ENDPOINT_DIRECTORY_SUFFIX_BYTES).toString("hex")}`
+      : join(
+          tmpdir(),
+          `payswap-broker-${randomBytes(ENDPOINT_DIRECTORY_SUFFIX_BYTES).toString("hex")}`,
+          "broker.sock",
+        );
   return { hostId, keyPair, endpointPath };
 }
 
