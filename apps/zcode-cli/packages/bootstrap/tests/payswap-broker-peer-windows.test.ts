@@ -533,7 +533,7 @@ describe.skipIf(process.platform !== "win32")(
     );
 
     it(
-      "single server instance (§3.2(2)): while one client holds the connection, a second client's connect fails busy (ERROR_PIPE_BUSY)",
+      "single server instance (§3.2(2)): while one client holds the connection, a second client's connect is not granted a slot — pending (libuv busy-retry) until the holder releases",
       async () => {
         const diagPath = mintDiagPath("busy");
         try {
@@ -548,19 +548,27 @@ describe.skipIf(process.platform !== "win32")(
         await new Promise((resolve) => setTimeout(resolve, 400));
         holder.release();
         await holder.waitFor((event) => event.t === "connected");
-        // 客户端 B：同样已注册，但管道单实例忙 → 连接失败。实质主张 = B 从未获得槽
-        //（无 connected 事件）且以错误终局；错误码家族取决于 libuv 对
-        // ERROR_PIPE_BUSY 的呈现（EBUSY/EPIPE/EACCES 均见诸版本 —— round-3 CI 观察
-        // 到 EPIPE），单实例本身的证明是"从未连上"。
+        // 客户端 B：同样已注册，但单实例被 A 占用。round-6 CI 教训：libuv 对
+        // ERROR_PIPE_BUSY 走 WaitNamedPipe 忙等重试 —— Node 客户端的可观察形是挂起
+        //（无 connected、无 error、无 close），而非 EBUSY 族错误；round-3 的 EPIPE
+        // 观察是控制行解析缺陷时代的空洞假象（持有者被弃 → 槽空 → B 空连后管道破）。
+        // 有界观测窗内零事件 = 槽未被授予 —— 单实例语义的客户端侧证明。
         const secondEntry = mintEntry({ childImagePath: process.execPath });
         const second = spawnClientChild({ path: handle.endpointPath, gated: true, holdMs: 20000 });
         await second.waitFor((event) => event.t === "pid");
         handle.registerInstance({ ...secondEntry, childPid: second.pid });
+        // 等推送落表再放行（同上 —— B 稍后获槽时须真正过门）。
+        await new Promise((resolve) => setTimeout(resolve, 400));
         second.release();
-        const event = await second.waitFor((event2) => event2.t === "error" || event2.t === "close", 15000);
-        expect(event.t).toBe("error");
-        expect(["EBUSY", "EPIPE", "EACCES"], readDiag(diagPath)).toContain(event.code);
+        await new Promise((resolve) => setTimeout(resolve, 2000));
         expect(second.events.filter((event2) => event2.t === "connected")).toHaveLength(0);
+        expect(second.events.filter((event2) => event2.t === "error")).toHaveLength(0);
+        expect(second.events.filter((event2) => event2.t === "close")).toHaveLength(0);
+        // 正面臂（非死锁证明）：释放持有者 → 单实例空出 → pending 的 B 获槽 connected
+        //（§3.2(2) 串行单实例语义端到端：槽只在持有者离开后授予）。
+        holder.kill();
+        const granted = await second.waitFor((event2) => event2.t === "connected", 10000);
+        expect(granted.t).toBe("connected");
         } catch (error) {
           throw new Error(`${String(error)}\n--- helper diag ---\n${readDiag(diagPath)}`);
         }
