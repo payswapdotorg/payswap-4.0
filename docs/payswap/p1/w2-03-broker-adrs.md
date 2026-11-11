@@ -1052,3 +1052,156 @@ non-consumption on the impersonation refusal, N30's expiry and revocation arms
 service-boundary role refusals with the consumed-retry arm, N28's client arm
 behind the exposure-policy stub, and the N14/N26 server arms with challenge
 survival).
+
+---
+
+## ADR-13 — The macOS §5.1 native arm: helper-held endpoint, fact-relay transport, and the shared relay seam (P1.3 completion, macOS half)
+
+**Context.** ADR-3 shipped the Linux read (ss+procfs) and deferred the macOS
+§5.1 arm: Node exposes neither `getpeereid`/`LOCAL_PEERPID` nor client-fd
+passing (SCM_RIGHTS) on macOS, and macOS has no procfs to compose an
+equivalent from pure Node. §5.1(1) names "a small native helper" as the
+escape hatch and §5.1(3) names the macOS CUA Helper precedent
+(`getpeereid`/`LOCAL_PEERPID`, fail-closed). Until this ADR, darwin booted
+`degraded_refusing`. The Windows arm (§3.2/§5.3) shares the same host-side
+shape — a helper-held endpoint relaying verified connections — so this ADR
+defines the seam both arms use; the Windows half (pipe-name mint per
+§3.2(3), DACL per §3.2(2), pid+image-path gate per §5.3(1) with the spawn
+table pushed to the helper) lands as its own PR against the same seam.
+
+**Decision.**
+
+1. **D13.1 — The helper holds the public endpoint.** A dependency-free C
+   helper (`apps/zcode-cli/native/payswap-broker-peer-macos/helper.c`,
+   compiled `payswap-broker-peer-helper`) binds the per-boot UDS path minted
+   by `mintBrokerBootState`. The §3.1 placement law is enforced *inside the
+   helper*: 0700 directory (chmod-pinned), 0600 socket (chmod-pinned), and
+   §3.4 refuse/remove of any pre-existing entry before bind. The host never
+   binds the public endpoint in verified mode. In degraded mode the host
+   binds it exactly as today, so §5.4 diagnostics stay reachable when the
+   helper is absent — the degraded observable behavior is unchanged.
+
+2. **D13.2 — Facts at accept; identity-unestablishable clients are dropped at
+   the socket; every other connection relays.** At accept the helper reads
+   `getpeereid` (effective uid) and `LOCAL_PEERPID` (pid). A client whose
+   facts cannot be established is dropped at the socket, never relayed (the
+   §5.3(4) family rule). A client with establishable facts — *including*
+   uid-mismatch clients — is relayed, because §5.1(2) makes a uid mismatch a
+   typed `peer_verification_failed` the peer must actually receive, and the
+   signature lives host-side (§6.5(1), ADR-1): relaying keeps the refusal
+   behavior byte-identical to the Linux arm instead of forking it. The
+   helper never parses payload (§5.5(1)); it is a byte pump, and the host
+   parses only after its own peer gate.
+
+3. **D13.3 — The relay channel.** The host holds an ingress UDS
+   (`<per-boot dir>/ingress.sock`, same 0700 dir, 0600). One ingress
+   connection per client connection. The helper's first ingress line is a
+   versioned header `{"v":1,"t":"<64-hex>","pid":N,"uid":N}` (strict shape,
+   no extra keys, hard 512 B cap), then a bidirectional byte pump until EOF
+   both ways — §3.3's one-request-per-connection, the 1 MiB request cap, the
+   drain disciplines, and the half-close semantics all apply unchanged on
+   the relayed stream because the host sees a real socket end-to-end.
+
+4. **D13.4 — The helper-family spawn discipline (§5.3(2), adopted for
+   macOS).** The host spawns the helper only after SHA-256 verification of
+   the binary against a pinned digest (absent binary or mismatch =
+   subsystem unavailable = `degraded_refusing`; never spawn on mismatch).
+   The host passes `--parent-pid <process.pid>`; the helper exits when its
+   actual parent changes (poll-bounded), which also gives §3.1(3)/§10.3
+   endpoint-dies-with-host semantics. The one-shot 32-byte token travels via
+   a 0600 token file inside the per-boot dir (argv is `ps`-visible to
+   same-uid on macOS), read once and unlinked immediately by the helper.
+   Every ingress connection re-authenticates with the token, compared
+   constant-time (`timingSafeEqual` host-side; the `FixedTimeEquals`
+   discipline of the C# family).
+
+5. **D13.5 — Boot is spawn + a real-path self-probe (ADR-4 adapted).** The
+   subsystem is available only if the host, connecting as a real client to
+   the helper-held public endpoint through the exact kernel path production
+   connections take, receives a token-valid header identifying *the host
+   itself* (`pid === process.pid`, `uid === geteuid()`). Any failure —
+   spawn, hash, header, token, identity, or the bounded timeout — kills the
+   helper, removes the per-boot dir, and boots `degraded_refusing` with the
+   host-held endpoint. No mock ever substitutes the probe (ADR-4's rule).
+
+6. **D13.6 — The trust boundary of relayed facts is the token.** Relayed
+   (pid, uid) are trusted exactly because the ingress is 0700-dir-bound and
+   every connection is token-authenticated from the hash-verified,
+   parent-bound helper. The residual — a same-uid attacker who wins the
+   one-shot token-file race and then fabricates facts — is the macOS twin of
+   ADR-3's (c) `ss`-hijack residual: fabricated facts still cannot pass
+   §5.5(3) without the instance token, and every response is host-signed
+   (§6.4/§6.5), so the fabricated-fact relay is a typed-refusal oracle at
+   worst. Recorded in the threat model's Step-3 residual rows.
+
+7. **D13.7 — No `SecCodeCheckValidity` in v1.** The CUA helper's
+   launcher-signature gate exists because that helper *owns TCC grants*;
+   this helper owns no OS authorization. A stolen-binary spawn can only
+   build a relay toward an attacker-chosen ingress (equivalent to running
+   `socat` — no gain), and the real endpoint is unreachable to it (0700 dir
+   + §3.4 refusal + the parentage check). Rejected here so it is not
+   re-attempted without a new OS-grant-owning responsibility.
+
+8. **D13.8 — The seam is shared; the arm is per-platform.** The broker
+   server gains a relay transport option (facts-from-header, no public
+   endpoint bind, ingress listener adoption, close-time teardown). Linux
+   keeps the direct ss+procfs reader unchanged — no second Linux
+   implementation (playbook §10). `createDefaultPeerCredentialReader` is
+   unchanged (darwin/win32 still return unavailable); the relay subsystem is
+   a separate construction that *replaces* the direct transport only when it
+   verifies, so the existing darwin/win32 fail-closed rows keep their
+   meaning: they pin the default state when no helper is provisioned.
+
+9. **D13.9 — Helper resolution and the env surface.** The helper is resolved
+   from `PAYSWAP_BROKER_HELPER_PATH` + `PAYSWAP_BROKER_HELPER_SHA256`
+   (dev/CI provision; both host-only keys are added to the runtimeEnv strip
+   list so they never propagate into any child env). Production packaging of
+   the binary inside the CLI distribution is a recorded gap: the arm is
+   proven on the `macos-latest` CI runner; until packaging ships a binary,
+   production macOS boots `degraded_refusing` — the honest state, not a
+   silent one.
+
+10. **D13.10 — The platform evidence boundary.** The host half (header
+    strictness, token check, probe identity rule, degrade paths, close
+    semantics, the full §5.5 chain through a relay) is pinned by a
+    Linux-runnable suite against a protocol-faithful fake helper. The
+    platform rows — real `getpeereid`/`LOCAL_PEERPID`, endpoint placement
+    modes, parent-death cleanup, cross-uid EACCES (§3.1(2) placement law),
+    and the real chain end-to-end — run only on darwin, in the `gates-macos`
+    CI job that compiles `helper.c` with clang and runs the platform suite.
+    A mock never greens a platform row (playbook §5(5)); Linux-CI skips of
+    the darwin suite are the designed boundary, not an evasion.
+
+**Rejected alternatives (recorded).**
+
+- *N-API addon:* ADR-3's build-burden reason still holds, now for
+  darwin-specific toolchains; the helper needs no Node linkage at all.
+- *`lsof`-based pure-Node pairing:* would rest on unverifiable output-format
+  claims about macOS `lsof` peer-pid support; not documentable as a security
+  foundation from a Linux sandbox. Recorded so it is not re-attempted
+  without on-platform evidence.
+- *Helper-side uid drop of mismatched clients:* would fork the refusal
+  behavior from the Linux arm (§5.1(2)/D5.4 demand the signed typed line the
+  peer can receive). Relayed-and-host-refused is the single-behavior rule.
+- *Multiplexed single ingress connection:* framing complexity for no gain;
+  one connection per client keeps the pump byte-exact and the teardown
+  trivially correct.
+
+**Consequences.** macOS gets the §5.1 read with kernel-sourced facts end to
+end; typed refusal behavior is identical across arms (one §5.5 pipeline,
+one signature path); the Windows follow-up inherits the transport, the
+protocol, and the probe discipline. Residuals: the one-shot token-file race
+window (same risk class as ADR-3 (c), needs the instance token to matter),
+the helper packaging gap (D13.9), and the platform rows being CI-runner
+gated. The darwin fail-closed rows in the Step-3 suite remain valid exactly
+as written.
+
+**Evidence.** Host-half suite
+`apps/zcode-cli/packages/bootstrap/tests/payswap-broker-peer-relay.test.ts`
+(fake-helper, Linux-runnable: protocol strictness, token arms, probe
+identity rule, degrade fallbacks, close semantics, the full chain through a
+relay); platform suite
+`apps/zcode-cli/packages/bootstrap/tests/payswap-broker-peer-macos.test.ts`
+(darwin-only: real helper end-to-end, placement modes, one-shot token file,
+parent-death cleanup, cross-uid EACCES); CI `gates-macos` compiles the
+helper with clang and runs both suites on `macos-latest`.
