@@ -69,30 +69,32 @@ const CHILD_SCRIPT = `
 const net = require("node:net");
 const p = process.env.PB_TEST_PATH;
 const line = process.env.PB_TEST_LINE || "";
-const gated = process.env.PB_TEST_GATED === "1"; // 等待 stdin 的 "go" 再发送（注册竞态消除）
+const gated = process.env.PB_TEST_GATED === "1"; // 等 stdin 的 "go" 再**连接**（注册竞态根因修复：peer gate 在连接时即跑，注册必须先行）
 process.stdout.write(JSON.stringify({ t: "pid", pid: process.pid }) + "\\n");
-const s = net.connect(p, () => {
-  process.stdout.write(JSON.stringify({ t: "connected" }) + "\\n");
-  if (!gated && line) s.write(line + "\\n");
-});
-if (gated) {
-  let stdinBuffer = "";
-  process.stdin.on("data", (d) => {
-    stdinBuffer += d.toString("utf8");
-    if (stdinBuffer.includes("\\n")) {
-      if (line) s.write(line + "\\n");
-      stdinBuffer = "";
-    }
+function connectAndSend() {
+  const s = net.connect(p, () => {
+    process.stdout.write(JSON.stringify({ t: "connected" }) + "\\n");
+    if (line) s.write(line + "\\n");
   });
+  let acc = "";
+  s.on("data", (d) => {
+    acc += d.toString("utf8");
+    let i;
+    while ((i = acc.indexOf("\\n")) >= 0) { process.stdout.write(JSON.stringify({ t: "response", line: acc.slice(0, i) }) + "\\n"); acc = acc.slice(i + 1); }
+  });
+  s.on("close", () => { process.stdout.write(JSON.stringify({ t: "close" }) + "\\n"); process.exit(0); });
+  s.on("error", (e) => { process.stdout.write(JSON.stringify({ t: "error", code: e.code }) + "\\n"); process.exit(0); });
 }
-let acc = "";
-s.on("data", (d) => {
-  acc += d.toString("utf8");
-  let i;
-  while ((i = acc.indexOf("\\n")) >= 0) { process.stdout.write(JSON.stringify({ t: "response", line: acc.slice(0, i) }) + "\\n"); acc = acc.slice(i + 1); }
-});
-s.on("close", () => { process.stdout.write(JSON.stringify({ t: "close" }) + "\\n"); process.exit(0); });
-s.on("error", (e) => { process.stdout.write(JSON.stringify({ t: "error", code: e.code }) + "\\n"); process.exit(0); });
+if (gated) {
+  let started = false;
+  process.stdin.on("data", () => {
+    if (started) return;
+    started = true;
+    connectAndSend();
+  });
+} else {
+  connectAndSend();
+}
 setTimeout(() => process.exit(0), 20000);
 `;
 
@@ -313,15 +315,15 @@ describe.skipIf(process.platform !== "darwin")(
           platform: "darwin",
         });
         activeBrokers.push(handle);
-        // 门控子进程：先报告真实 pid → 测试注册（§5.2：spawn 表来自 host 观察）→
-        // 再释放发送 —— 消除“请求先于注册到达 peer gate”的竞态（注册是异步观察事实）。
+        // 门控子进程：报告 pid → 测试注册（§5.2）→ 释放后**才连接** —— peer gate 在
+        // 连接时即跑（relay 事实即时可得），注册必须先于连接（上轮 CI 的竞态根因：
+        // 子进程 pid 上报→连接仅 ~2ms，测试侧轮询注册 ~5-25ms）。
         const entry = mintEntry();
         const reqLine = requestLine(entry);
         const child = spawnClientChild({ path: handle.endpointPath, line: reqLine, gated: true });
         const pidEvent = await child.waitFor((event) => event.t === "pid");
         const realChildPid = pidEvent.pid as number;
         handle.registerInstance({ ...entry, childPid: realChildPid });
-        await child.waitFor((event) => event.t === "connected");
         child.release();
         const response = await child.waitFor((event) => event.t === "response");
         const line = response.line as string;
@@ -412,7 +414,9 @@ describe.skipIf(process.platform !== "darwin")(
             const { stdout } = await execFileAsync(
               "sudo",
               ["-n", "-u", "nobody", "/usr/bin/python3", "-c", probe],
-              { timeout: 10000 },
+              // cwd 必须是 nobody 可达目录：工作区目录对 nobody 不可遍历，python 的
+              // site/getcwd 引导会直接 Permission denied（上轮 CI 的真实教训）。
+              { timeout: 10000, cwd: "/tmp" },
             );
             const outcome = stdout.trim();
             expect(outcome).not.toBe("connected"); // 任何非 "connected" 结局 = 拒绝到达端点
