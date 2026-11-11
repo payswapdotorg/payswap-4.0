@@ -25,9 +25,16 @@ import {
 } from "@zcode/shared/payswap";
 import {
   createDefaultPeerCredentialReader,
+  createUnavailablePeerCredentialReader,
   hostEffectiveUid,
   type PeerCredentialReader,
 } from "./peer-credentials.js";
+import {
+  resolveDefaultPeerRelayHelper,
+  startPayswapPeerRelay,
+  type PayswapBrokerRelayTransport,
+  type PayswapPeerRelayHelperConfig,
+} from "./peer-relay.js";
 import {
   createPayswapBrokerServer,
   PAYSWAP_BROKER_DEFAULT_CLOSE_GRACE_MS,
@@ -51,6 +58,12 @@ export interface PayswapBrokerBootOptions {
   reader?: PeerCredentialReader;
   /** 平台判定（缺省 process.platform；测试可注入 darwin/win32 走 fail-closed 臂）。 */
   platform?: string;
+  /**
+   * ADR-13 D13.9：显式 helper-relay 配置（宿主半边测试接缝）。缺省 = 平台/env 解析
+   * （`resolveDefaultPeerRelayHelper`：仅 darwin + `PAYSWAP_BROKER_HELPER_{PATH,SHA256}`）。
+   * 仅在未注入显式 reader 时生效（显式 reader 是既有测试面，优先）。
+   */
+  peerRelayHelper?: PayswapPeerRelayHelperConfig;
   /** §3.3(4) 空闲上限（缺省 30 s，SHOULD ≥ 30 s）。 */
   idleTimeoutMs?: number;
   /** ADR-6 close() 兜底宽限（缺省 250 ms）。 */
@@ -145,18 +158,54 @@ async function probePeerCredentialReader(
  */
 export async function bootPayswapBroker(options: PayswapBrokerBootOptions): Promise<PayswapBrokerHandle> {
   const platform = options.platform ?? process.platform;
-  const reader = options.reader ?? createDefaultPeerCredentialReader(platform);
   const registry = options.registry ?? createPayswapInstanceRegistry();
   const idleTimeoutMs = options.idleTimeoutMs ?? PAYSWAP_BROKER_DEFAULT_IDLE_TIMEOUT_MS;
   const closeGraceMs = options.closeGraceMs ?? PAYSWAP_BROKER_DEFAULT_CLOSE_GRACE_MS;
   const auditSink = options.auditSink ?? (() => {});
 
-  // (1) 自探针先于 listener 绑定（ADR-4）。
-  const probe = await probePeerCredentialReader(reader);
-  const mode: PayswapBrokerMode = probe.verified ? "peer_verified" : "degraded_refusing";
-  const degradedReason = probe.verified
-    ? null
-    : `${platform}: peer-credential subsystem unavailable (reader=${reader.kind}:${reader.detail})`;
+  // (1) 对等验证子系统（ADR-13）：优先尝试 helper-relay（macOS §5.1 native 臂 —— helper
+  //     持端点 + ingress relay + 真路径自探针）；不可用/未验证 → 直接 reader 路径（Linux
+  //     ss+procfs；其它平台 unavailable）→ degraded_refusing（§5.4）。显式 reader 注入
+  //     （既有测试面）跳过 relay。平台门（D13.8）：仅 darwin —— Linux 永远走直接 reader，
+  //     缝不分叉第二套 Linux 实现；win32 沿本缝的后续 PR 放行。
+  const relayConfig =
+    options.reader === undefined && platform === "darwin"
+      ? (options.peerRelayHelper ?? resolveDefaultPeerRelayHelper(platform, process.env))
+      : null;
+  let relay: PayswapBrokerRelayTransport | null = null;
+  let relayFailureReason: string | null = null;
+  let probe: PayswapBrokerProbeResult = { verified: false, pid: null, uid: null };
+  let reader: PeerCredentialReader;
+
+  if (relayConfig !== null) {
+    const started = await startPayswapPeerRelay(options.bootState, relayConfig);
+    if (started.verified && started.relay !== null) {
+      relay = started.relay;
+      probe = started.probe;
+    } else {
+      // D13.5：任何失败 → helper/ingress 已拆；降级原因带平台前缀（§11(3) 操作员可见）。
+      relayFailureReason = `${platform}: peer-credential subsystem unavailable (helper relay: ${
+        started.reason ?? "did not verify (no reason recorded)"
+      })`;
+    }
+  }
+
+  let mode: PayswapBrokerMode;
+  let degradedReason: string | null;
+  if (relay !== null) {
+    mode = "peer_verified";
+    degradedReason = null;
+    reader = createUnavailablePeerCredentialReader("helper-relay transport active (reader unused)");
+  } else {
+    reader = options.reader ?? createDefaultPeerCredentialReader(platform);
+    // 自探针先于 listener 绑定（ADR-4）。
+    probe = await probePeerCredentialReader(reader);
+    mode = probe.verified ? "peer_verified" : "degraded_refusing";
+    degradedReason = probe.verified
+      ? null
+      : (relayFailureReason ??
+        `${platform}: peer-credential subsystem unavailable (reader=${reader.kind}:${reader.detail})`);
+  }
 
   // §11(3)：degraded 状态在入口记录原因（操作员可见诊断）；拒绝只带 typed code。
   auditSink({
@@ -170,10 +219,12 @@ export async function bootPayswapBroker(options: PayswapBrokerBootOptions): Prom
   });
 
   // (2) 端点落位 + listener（server.ts 执行 §3.1(2)/§3.4(1)）；degraded 也绑定（§5.4）。
+  //     relay 模式：server 采用 ingress listener（公共端点由 helper 持有）。
   const { handle, listening } = createPayswapBrokerServer({
     bootState: options.bootState,
     registry,
     reader,
+    ...(relay !== null ? { relay } : {}),
     mode,
     degradedReason,
     probe,

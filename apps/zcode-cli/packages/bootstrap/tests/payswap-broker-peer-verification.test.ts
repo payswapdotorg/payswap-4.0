@@ -49,6 +49,7 @@ const mode = process.env.PB_TEST_MODE;
 const lineArg = process.env.PB_TEST_LINE || "";
 const instanceId = process.env.PB_TEST_INSTANCE_ID || "";
 const token = process.env.PB_TEST_TOKEN || "";
+const gated = process.env.PB_TEST_GATED === "1"; // 等 stdin "go" 再**连接**：relay 事实即时可得时，注册必须先于连接（ADR-13）
 function send(o) { process.stdout.write(JSON.stringify(o) + "\\n"); }
 function buildExactLengthLine(total) {
   const base = { instanceId, seq: 1, op: "get_account_overview", params: { pad: "" }, token, sessionId: "sess-test" };
@@ -59,33 +60,45 @@ function buildExactLengthLine(total) {
   if (s.length !== total) throw new Error("length mismatch " + s.length + " != " + total);
   return s;
 }
-const s = net.connect(path, () => {
-  send({ t: "connected" });
-  if (mode === "line") s.write(lineArg + "\\n");
-  else if (mode === "two-lines") { s.write(lineArg + "\\n"); setTimeout(() => s.write(lineArg + "\\n"), 60); }
-  else if (mode === "hold-then-send") { setTimeout(() => s.write(lineArg + "\\n"), 150); }
-  else if (mode === "partial") {
-    // 半行写入后挂起 —— 终止行（SIGKILL mid-line）的确定性载体。
-    s.write(lineArg.slice(0, Math.max(1, Math.floor(lineArg.length / 2))));
-  }
-  else if (mode === "oversize-ok") { s.write(buildExactLengthLine(1024 * 1024) + "\\n"); }
-  else if (mode === "oversize-bad") { s.write(buildExactLengthLine(1024 * 1024 + 1) + "\\n"); }
-  else if (mode === "garbage") { s.write("{this is not json\\n"); }
-  else if (mode === "stream") {
-    const buf = Buffer.alloc(64 * 1024, 0x61);
-    let n = 0;
-    const iv = setInterval(() => { s.write(buf); if (++n > 80) clearInterval(iv); }, 10);
-  }
-  // mode === "idle": 连接后什么都不写
-});
-let acc = "";
-s.on("data", (d) => {
-  acc += d.toString("utf8");
-  let i;
-  while ((i = acc.indexOf("\\n")) >= 0) { send({ t: "response", line: acc.slice(0, i) }); acc = acc.slice(i + 1); }
-});
-s.on("close", () => { send({ t: "close" }); process.exit(0); });
-s.on("error", (e) => { send({ t: "error", code: e.code }); process.exit(0); });
+function start() {
+  const s = net.connect(path, () => {
+    send({ t: "connected" });
+    if (mode === "line") s.write(lineArg + "\\n");
+    else if (mode === "two-lines") { s.write(lineArg + "\\n"); setTimeout(() => s.write(lineArg + "\\n"), 60); }
+    else if (mode === "hold-then-send") { setTimeout(() => s.write(lineArg + "\\n"), 150); }
+    else if (mode === "partial") {
+      // 半行写入后挂起 —— 终止行（SIGKILL mid-line）的确定性载体。
+      s.write(lineArg.slice(0, Math.max(1, Math.floor(lineArg.length / 2))));
+    }
+    else if (mode === "oversize-ok") { s.write(buildExactLengthLine(1024 * 1024) + "\\n"); }
+    else if (mode === "oversize-bad") { s.write(buildExactLengthLine(1024 * 1024 + 1) + "\\n"); }
+    else if (mode === "garbage") { s.write("{this is not json\\n"); }
+    else if (mode === "stream") {
+      const buf = Buffer.alloc(64 * 1024, 0x61);
+      let n = 0;
+      const iv = setInterval(() => { s.write(buf); if (++n > 80) clearInterval(iv); }, 10);
+    }
+    // mode === "idle": 连接后什么都不写
+  });
+  let acc = "";
+  s.on("data", (d) => {
+    acc += d.toString("utf8");
+    let i;
+    while ((i = acc.indexOf("\\n")) >= 0) { send({ t: "response", line: acc.slice(0, i) }); acc = acc.slice(i + 1); }
+  });
+  s.on("close", () => { send({ t: "close" }); process.exit(0); });
+  s.on("error", (e) => { send({ t: "error", code: e.code }); process.exit(0); });
+}
+if (gated) {
+  let started = false;
+  process.stdin.on("data", () => {
+    if (started) return;
+    started = true;
+    start();
+  });
+} else {
+  start();
+}
 setTimeout(() => process.exit(0), 20000);
 `;
 
@@ -99,6 +112,8 @@ interface ChildHandle {
   readonly pid: number;
   readonly events: ChildEvent[];
   waitFor(predicate: (event: ChildEvent) => boolean, timeoutMs?: number): Promise<ChildEvent>;
+  /** 门控子进程：发送 stdin "go" 后才**连接**（注册必须先于连接 —— ADR-13）。 */
+  release(): void;
   kill(): void;
 }
 
@@ -108,9 +123,10 @@ function spawnClientChild(options: {
   line?: string;
   instanceId?: string;
   token?: string;
+  gated?: boolean;
 }): ChildHandle {
   const child = spawn(process.execPath, ["-e", CHILD_SCRIPT], {
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: [options.gated ? "pipe" : "ignore", "pipe", "pipe"],
     env: {
       PATH: process.env.PATH,
       PB_TEST_PATH: options.path,
@@ -118,6 +134,7 @@ function spawnClientChild(options: {
       PB_TEST_LINE: options.line ?? "",
       PB_TEST_INSTANCE_ID: options.instanceId ?? "",
       PB_TEST_TOKEN: options.token ?? "",
+      ...(options.gated ? { PB_TEST_GATED: "1" } : {}),
     },
   });
   const events: ChildEvent[] = [];
@@ -162,6 +179,9 @@ function spawnClientChild(options: {
     },
     kill() {
       child.kill("SIGKILL");
+    },
+    release() {
+      child.stdin?.write("go\n");
     },
   };
   activeChildren.push(child);
@@ -989,12 +1009,28 @@ describe("P1.3 Step 3 — fail-closed discipline (all platforms)", () => {
   it(
     "platform default: a platform without a peer-credential reader boots degraded_refusing (fail-closed on unsupported platforms, §5.4)",
     async () => {
-      const { handle } = await startBroker({ platform: "darwin" });
-      expect(handle.mode).toBe("degraded_refusing");
-      expect(handle.degradedReason).toContain("darwin");
-      const { handle: winHandle } = await startBroker({ platform: "win32" });
-      expect(winHandle.mode).toBe("degraded_refusing");
-      expect(winHandle.degradedReason).toContain("win32");
+      // ADR-13 D13.9 的前提修正：gates-macos CI 会经 PAYSWAP_BROKER_HELPER_{PATH,SHA256}
+      // 供给真实 helper —— 本行的语义是"**未供给**任何 helper 的 darwin 默认态"，因此在
+      // 本行内显式清除两键（save/delete/restore），供给态的行在 peer-relay/macOS 套件。
+      const helperPathKey = "PAYSWAP_BROKER_HELPER_PATH";
+      const helperShaKey = "PAYSWAP_BROKER_HELPER_SHA256";
+      const savedPath = process.env[helperPathKey];
+      const savedSha = process.env[helperShaKey];
+      delete process.env[helperPathKey];
+      delete process.env[helperShaKey];
+      try {
+        const { handle } = await startBroker({ platform: "darwin" });
+        expect(handle.mode).toBe("degraded_refusing");
+        expect(handle.degradedReason).toContain("darwin");
+        const { handle: winHandle } = await startBroker({ platform: "win32" });
+        expect(winHandle.mode).toBe("degraded_refusing");
+        expect(winHandle.degradedReason).toContain("win32");
+      } finally {
+        if (typeof savedPath === "string") process.env[helperPathKey] = savedPath;
+        else delete process.env[helperPathKey];
+        if (typeof savedSha === "string") process.env[helperShaKey] = savedSha;
+        else delete process.env[helperShaKey];
+      }
     },
     20000,
   );
@@ -1004,7 +1040,8 @@ describe("P1.3 Step 3 — fail-closed discipline (all platforms)", () => {
     async () => {
       const { handle, bootState, audit } = await startBroker();
       const entry = mintEntry();
-      // (a) dispatched
+      // (a) dispatched（门控：注册先行 —— relay 事实即时可得，直接路径的 ss+procfs
+      // 延迟不再存在，连接必须等注册完成；直接路径上门控同样正确，只是等待更长）
       const reqLine = requestLine(entry);
       const good = spawnClientChild({
         path: handle.endpointPath,
@@ -1012,8 +1049,10 @@ describe("P1.3 Step 3 — fail-closed discipline (all platforms)", () => {
         line: reqLine,
         instanceId: entry.instanceId,
         token: entry.token,
+        gated: true,
       });
       handle.registerInstance({ ...entry, childPid: good.pid });
+      good.release();
       await good.waitFor((event) => event.t === "response");
       // (b) peer 拒绝（未注册进程冒充）
       const impostor = spawnClientChild({
@@ -1040,8 +1079,10 @@ describe("P1.3 Step 3 — fail-closed discipline (all platforms)", () => {
         }),
         instanceId: entryBad.instanceId,
         token: wrongToken,
+        gated: true,
       });
       handle.registerInstance({ ...entryBad, childPid: bad.pid });
+      bad.release();
       await bad.waitFor((event) => event.t === "response");
       // typed code 全部落审计；无 stack trace。
       const refused = audit.filter((event) => event.outcome === "refused");

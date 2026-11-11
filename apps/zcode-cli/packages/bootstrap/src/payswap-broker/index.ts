@@ -49,6 +49,24 @@ export {
   type PeerCredentialReader,
 } from "./peer-credentials.js";
 export {
+  resolveDefaultPeerRelayHelper,
+  startPayswapPeerRelay,
+  type PayswapBrokerRelayTransport,
+  type PayswapPeerRelayHelperConfig,
+  type PayswapPeerRelayStartResult,
+} from "./peer-relay.js";
+// ADR-13 D13.9：helper 供给键（host-only）随 relay 面透传再导出 —— 测试与运维共用单一事实源。
+export {
+  PAYSWAP_BROKER_HELPER_PATH_ENV_KEY,
+  PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY,
+} from "@zcode/shared/payswap";
+export {
+  PAYSWAP_RELAY_HEADER_MAX_BYTES,
+  PAYSWAP_RELAY_PROTOCOL_VERSION,
+  parseRelayHeaderLine,
+  serializeRelayHeaderLine,
+} from "./peer-relay-protocol.js";
+export {
   createPayswapBrokerServer,
   PAYSWAP_BROKER_DEFAULT_CLOSE_GRACE_MS,
   PAYSWAP_BROKER_DEFAULT_IDLE_TIMEOUT_MS,

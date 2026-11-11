@@ -40,7 +40,6 @@ import net from "node:net";
 import path from "node:path";
 import {
   createPayswapSeenRecords,
-  PAYSWAP_MAX_LINE_BYTES,
   payswapBrokerRequestSchema,
   requestLineDigest,
   signResponseEnvelope,
@@ -52,8 +51,11 @@ import {
   type PayswapInstanceRegistryEntry,
   type PayswapSeenRecords,
 } from "@zcode/shared/payswap";
-import type { PeerCredentialReader } from "./peer-credentials.js";
+import type { PeerCredentialRead, PeerCredentialReader } from "./peer-credentials.js";
 import { hostEffectiveUid } from "./peer-credentials.js";
+import type { PayswapBrokerRelayTransport } from "./peer-relay.js";
+import { readRelayPeerFacts } from "./peer-relay-protocol.js";
+import { drainAfterEnd, readOneLine } from "./line-io.js";
 import {
   createPayswapBrokerDispatch,
   type PayswapBrokerDispatch,
@@ -104,6 +106,13 @@ export interface PayswapBrokerServerOptions {
   bootState: PayswapBrokerBootState;
   registry: PayswapInstanceRegistry;
   reader: PeerCredentialReader;
+  /**
+   * ADR-13 relay 传输（macOS §5.1 臂；Windows 后续 PR 同缝）：存在即 relay 模式 ——
+   * 公共端点由 hash 验证的 native helper 持有（§3.1/§3.4 在 helper 内执行），host 采用
+   * 已绑定的 ingress listener，对等事实来自认证后的头行（peer-relay-protocol.ts）。
+   * 此时 `reader` 不被调用（boot 层传入占位 unavailable reader —— 与既有选项面的兼容）。
+   */
+  relay?: PayswapBrokerRelayTransport;
   mode: PayswapBrokerMode;
   degradedReason: string | null;
   probe: { verified: boolean; pid: number | null; uid: number | null };
@@ -135,10 +144,8 @@ export interface PayswapBrokerServerOptions {
 
 // §6.1 `.strict()` 请求 schema（Step 4）—— 未知键/op 越枚举/token 形状/seq/sessionId
 // 的 pre-binding 拒绝全部经此（null-bound，§6.4(3)）；三码业务拒绝的单一事实源在
-// `@zcode/shared/payswap/operations.ts`（与插件契约同文的注释在那儿）。
-
-/** failPeer/refuseParsed 后的排空段封顶：半开 socket 最多再存活 5 s（防恶意无限流）。 */
-const DRAIN_CAP_MS = 5_000;
+// `@zcode/shared/payswap/operations.ts`（与插件契约同文的注释在那儿）。行 IO 原语
+//（readOneLine/drainAfterEnd，§3.3/ADR-5 D5.4）在 line-io.ts。
 
 // Step-3 临时 dispatch 已随 Step 4 退役：三码业务拒绝的单一事实源现在在
 // `@zcode/shared/payswap/operations.ts`（payswapBusinessRefusal）。
@@ -149,8 +156,6 @@ interface SpawnTableEntry {
   token: string;
   childPid: number;
 }
-
-type LineRead = { kind: "line"; line: string } | { kind: "oversize" } | { kind: "closed" };
 
 export interface PayswapBrokerServer {
   handle: PayswapBrokerHandle;
@@ -163,6 +168,7 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
     bootState,
     registry,
     reader,
+    relay,
     mode,
     degradedReason,
     probe,
@@ -183,22 +189,6 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
   // —— accept 判定+插入与退役解析各自是事件循环内不可交错的一步（§9.3(4) 原子性）。
   const replayRecords: PayswapSeenRecords = seenRecords ?? createPayswapSeenRecords();
 
-  // §3.1(2)：per-boot 0700 目录（mkdir mode 受 umask 影响 → chmod 钉死）。
-  fs.mkdirSync(endpointDir, { recursive: true, mode: 0o700 });
-  fs.chmodSync(endpointDir, 0o700);
-
-  // §3.4(1)：绑定前拒绝或移除既有文件系统条目 —— 移除（unlink），绝不静默采纳；
-  // 无法移除（如目录）→ boot 失败（refuse 臂）。
-  try {
-    fs.unlinkSync(endpointPath);
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-      throw new Error(
-        `payswap broker endpoint path is occupied and not removable (contract §3.4(1)): ${endpointPath}`,
-      );
-    }
-  }
-
   let shuttingDown = false;
   let liveConnections = 0;
   let closePromise: Promise<void> | null = null;
@@ -206,27 +196,54 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
   /** pid → 实例路由（§5.2 spawn 表；注册表 liveness 是权威，见 registerInstance）。 */
   const spawnTable = new Map<number, SpawnTableEntry>();
 
-  const server = net.createServer((socket) => {
-    void handleConnection(socket);
-  });
+  let server: net.Server | null = null;
+  let listening: Promise<void>;
+  if (relay === undefined) {
+    // §3.1(2)：per-boot 0700 目录（mkdir mode 受 umask 影响 → chmod 钉死）。
+    fs.mkdirSync(endpointDir, { recursive: true, mode: 0o700 });
+    fs.chmodSync(endpointDir, 0o700);
 
-  const listening = new Promise<void>((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(endpointPath, () => {
-      server.off("error", reject);
-      try {
-        // §3.1(2)：socket 0600（umask 无关，显式钉死）。
-        fs.chmodSync(endpointPath, 0o600);
-      } catch (error) {
-        reject(error as Error);
-        return;
+    // §3.4(1)：绑定前拒绝或移除既有文件系统条目 —— 移除（unlink），绝不静默采纳；
+    // 无法移除（如目录）→ boot 失败（refuse 臂）。
+    try {
+      fs.unlinkSync(endpointPath);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw new Error(
+          `payswap broker endpoint path is occupied and not removable (contract §3.4(1)): ${endpointPath}`,
+        );
       }
-      resolve();
+    }
+
+    server = net.createServer((socket) => {
+      void handleConnection(socket);
     });
-  });
-  listening.catch(() => {
-    /* listen 失败由 bootPayswapBroker 的 await 冒泡；此处仅防止未处理 rejection */
-  });
+
+    listening = new Promise<void>((resolve, reject) => {
+      server?.once("error", reject);
+      server?.listen(endpointPath, () => {
+        server?.off("error", reject);
+        try {
+          // §3.1(2)：socket 0600（umask 无关，显式钉死）。
+          fs.chmodSync(endpointPath, 0o600);
+        } catch (error) {
+          reject(error as Error);
+          return;
+        }
+        resolve();
+      });
+    });
+    listening.catch(() => {
+      /* listen 失败由 bootPayswapBroker 的 await 冒泡；此处仅防止未处理 rejection */
+    });
+  } else {
+    // ADR-13 relay 模式：公共端点由 helper 持有（§3.1(2)/§3.4(1) 在 helper 内执行；
+    // host 不 bind 不 unlink 公共路径）；采用已绑定的 ingress listener，连接 → 管线。
+    relay.setConnectionHandler((socket) => {
+      void handleConnection(socket);
+    });
+    listening = relay.listening;
+  }
 
   function audit(
     outcome: PayswapBrokerAuditEvent["outcome"],
@@ -353,76 +370,6 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
     }
   }
 
-  /** D5.4 排空段封顶：end+resume 之后最多 DRAIN_CAP_MS 强断（finally 已释放 live count）。 */
-  function drainAfterEnd(socket: net.Socket): void {
-    const timer = setTimeout(() => socket.destroy(), DRAIN_CAP_MS);
-    timer.unref?.();
-    socket.once("close", () => clearTimeout(timer));
-  }
-
-  /**
-   * 单行读取（§3.3）：读到首个换行为止；行长（不含换行）> 1 MiB → oversize（停止缓冲，
-   * 继续排空到换行）；对端半关（end）→ 缓冲内容**无换行即非帧**：请求帧按 §3.3(1) 必须
-   * 换行终止，未终止的残余是对端写入中止的传输噪声，按 closed 丢弃（无响应、无状态、
-   * 零审计 outcome —— 也消除每次中止写铸造一个 Ed25519 拒绝信封的放大面）；连接
-   * 关闭/超时 → closed（无响应，无状态）。
-   */
-  function readOneLine(socket: net.Socket, idleTimer: NodeJS.Timeout): Promise<LineRead> {
-    return new Promise<LineRead>((resolve) => {
-      let buffer = Buffer.alloc(0);
-      let oversizePending = false;
-      let settled = false;
-      const settle = (value: LineRead) => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(idleTimer);
-        socket.off("data", onData);
-        socket.off("end", onEnd);
-        socket.off("close", onClose);
-        socket.off("error", onClose);
-        resolve(value);
-      };
-      const onData = (chunk: Buffer) => {
-        const newlineIndex = chunk.indexOf(0x0a);
-        if (newlineIndex >= 0) {
-          const line = Buffer.concat([buffer, chunk.subarray(0, newlineIndex)]);
-          settle(
-            oversizePending || line.length > PAYSWAP_MAX_LINE_BYTES
-              ? { kind: "oversize" }
-              : { kind: "line", line: line.toString("utf8") },
-          );
-          return;
-        }
-        if (!oversizePending) {
-          buffer = Buffer.concat([buffer, chunk]);
-          if (buffer.length > PAYSWAP_MAX_LINE_BYTES) {
-            // 超限即停止缓冲（防内存放大），继续排空到换行再裁决。
-            oversizePending = true;
-            buffer = Buffer.alloc(0);
-          }
-        }
-      };
-      const onEnd = () => {
-        if (oversizePending || buffer.length > PAYSWAP_MAX_LINE_BYTES) {
-          settle({ kind: "oversize" });
-          return;
-        }
-        if (buffer.length === 0) {
-          settle({ kind: "closed" });
-          return;
-        }
-        // 非空缓冲但从未见到换行 —— §3.3(1) 的帧定义未满足：不是请求，是对端写入中止
-        // （子进程终止/SIGKILL/半途中断）。按 closed 丢弃：不解析、不响应、不审计。
-        settle({ kind: "closed" });
-      };
-      const onClose = () => settle({ kind: "closed" });
-      socket.on("data", onData);
-      socket.on("end", onEnd);
-      socket.on("close", onClose);
-      socket.on("error", onClose);
-    });
-  }
-
   async function handleConnection(socket: net.Socket): Promise<void> {
     liveConnections += 1;
     liveSockets.add(socket);
@@ -444,7 +391,19 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
         failPeer(socket, "peer_verification_failed", null);
         return;
       }
-      const peer = await reader.readAcceptedSocketPeer(socket);
+      // ADR-13：relay 模式的事实源 = 认证后的头行（token 常时比对 + 严格形状，
+      // peer-relay-protocol.ts）；直接模式 = reader（peer-credentials.ts）。两者 facts=null
+      // = 无法建立对端身份（§5.4 fail-closed，唯一安全语义）。relay 的 leftover（同
+      // chunk 内头行后的请求前缀）经 readOneLine 的 prefix 参数拼接 —— 流语义见协议模块。
+      let peer: PeerCredentialRead | null;
+      let relayLeftover: Buffer | undefined;
+      if (relay !== undefined) {
+        const relayRead = await readRelayPeerFacts(socket, relay.relayToken);
+        peer = relayRead.facts;
+        relayLeftover = relayRead.leftover;
+      } else {
+        peer = await reader.readAcceptedSocketPeer(socket);
+      }
       const hostUid = hostEffectiveUid();
       if (peer === null || hostUid === null || peer.uid !== hostUid) {
         failPeer(socket, "peer_verification_failed", peer?.pid ?? null);
@@ -458,8 +417,9 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
       }
       verifiedPid = peer.pid;
 
-      // (2) 载荷解析 + 上限（§3.3(2)）。
-      const read = await readOneLine(socket, idleTimer);
+      // (2) 载荷解析 + 上限（§3.3(2)）。relay 模式携带 leftover 前缀（头行与请求同
+      // chunk 到达时余量已在其中 —— 直接裁决，不依赖流内时序）。
+      const read = await readOneLine(socket, idleTimer, relayLeftover);
       if (read.kind === "closed") {
         return; // 空闲超时/对端消失：无状态静默关闭（§3.3(4)）
       }
@@ -721,8 +681,13 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
       shuttingDown = true;
       audit("shutdown");
       // 停止接纳 + 先摘路径：新连接从此解析不到端点（§3.4/§10.3 —— stale endpoint 不可达）。
+      // relay 模式先拆 helper + ingress（新 relay 不再来；公共端点随 helper 退出被摘，
+      // 下方 unlink 是 belt）。
+      if (relay !== undefined) {
+        await relay.stop();
+      }
       try {
-        server.close();
+        server?.close();
       } catch {
         /* 已关闭 */
       }
