@@ -28,8 +28,14 @@ export function drainAfterEnd(socket: net.Socket): void {
   socket.once("close", () => clearTimeout(timer));
 }
 
-export function readOneLine(socket: net.Socket, idleTimer: NodeJS.Timeout): Promise<LineRead> {
+export function readOneLine(
+  socket: net.Socket,
+  idleTimer: NodeJS.Timeout,
+  prefix?: Buffer,
+): Promise<LineRead> {
   return new Promise<LineRead>((resolve) => {
+    // prefix 经 onData 恰好一次（buffer 从空开始）：若初始化进 buffer 又喂给 onData 会
+    // 双拼（上轮调试的真实教训）—— 字节序唯一性由“恰好一次”保证。
     let buffer = Buffer.alloc(0);
     let oversizePending = false;
     let settled = false;
@@ -81,5 +87,12 @@ export function readOneLine(socket: net.Socket, idleTimer: NodeJS.Timeout): Prom
     socket.on("end", onEnd);
     socket.on("close", onClose);
     socket.on("error", onClose);
+    // relay 路径的 socket 被头行读取（peer-relay-protocol.ts）显式 pause 过 —— attach
+    // 后恢复流动（对未暂停的 socket是 no-op）。ADR-13：头行与请求同 chunk 到达时，
+    // 余量已在 prefix 里，此处可能已含完整请求行 —— 经 onData 恰好一次地裁决。
+    socket.resume();
+    if (prefix && prefix.length > 0) {
+      onData(prefix);
+    }
   });
 }

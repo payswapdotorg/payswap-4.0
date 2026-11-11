@@ -366,12 +366,12 @@ export async function startPayswapPeerRelay(
 
   let probeOutcome: "pending" | "settled" | "timeout" = "pending";
   const relayRead = firstIngressConnection.then(async (socket) => {
-    const facts = await readRelayPeerFacts(
+    const read = await readRelayPeerFacts(
       socket,
       relayToken,
       Math.max(200, probeDeadline - Date.now()),
     );
-    return { socket, facts };
+    return { socket, facts: read.facts };
   });
   // 超时兜底：迟到的首条连接必须销毁（无泄漏、无状态，§3.3(4)）。
   relayRead.then(({ socket }) => {

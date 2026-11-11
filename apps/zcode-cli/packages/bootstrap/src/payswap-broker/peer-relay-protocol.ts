@@ -83,25 +83,39 @@ export function serializeRelayHeaderLine(tokenHex: string, pid: number, uid: num
   })}\n`;
 }
 
+/** readRelayPeerFacts 的结果：事实 + 同一 chunk 内头行之后的余量（请求行前缀）。 */
+export interface RelayFactsRead {
+  facts: PeerCredentialRead | null;
+  /** 头行之后已到达但未消费的字节（可能为空）—— 交给 §5.5 后续步骤的行读取作前缀。 */
+  leftover: Buffer;
+}
+
 /**
  * 从一条已接受的 ingress 连接读出**并认证** relay 头行（§5.5 步 (1) 的 relay 形态事实源）。
- * 返回 null = 无法建立对端身份：连接关闭/超时/超限/形状不符/token 不符。
- * 其余字节留在 socket 缓冲里，由 §5.5 的后续步骤按原序消费。
+ * 返回 facts=null = 无法建立对端身份：连接关闭/超时/超限/形状不符/token 不符；连接照常
+ * 交给 §5.5 的后续步骤（fail-closed 的拒绝在调用方）。
+ *
+ * 流语义（硬约束，平台套件全链行钉住）：socket 先 **pause** 再摘监听 —— flowing 模式下
+ * 无监听者的流会**静默丢弃**缓冲数据（Node 实测），unshift 的两种顺序都不安全；改为：
+ * 显式暂停（后续到达的数据保甡在内部缓冲）+ 头行后的余量经 `leftover` 显式交还，由下一
+ * 个读方（server 的 readOneLine）作为前缀拼接 —— 零流魔法，字节序确定。
  */
 export function readRelayPeerFacts(
   socket: net.Socket,
   expectedTokenHex: string,
   timeoutMs = 10_000,
-): Promise<PeerCredentialRead | null> {
+): Promise<RelayFactsRead> {
   return new Promise((resolve) => {
     let buffer = Buffer.alloc(0);
     let oversize = false;
     let settled = false;
-    const timer = setTimeout(() => settle(null), timeoutMs);
+    const timer = setTimeout(() => settle({ facts: null, leftover: buffer }), timeoutMs);
     timer.unref?.();
-    const settle = (value: PeerCredentialRead | null): void => {
+    const settle = (value: RelayFactsRead): void => {
       if (settled) return;
       settled = true;
+      // 先停流（缓冲保留，绝不丢弃），再摘监听；左侧（调用方/readOneLine）负责 resume。
+      socket.pause();
       clearTimeout(timer);
       socket.off("data", onData);
       socket.off("end", onEnd);
@@ -116,13 +130,8 @@ export function readRelayPeerFacts(
         const line = Buffer.concat([buffer, chunk.subarray(0, newlineIndex)]).toString("utf8");
         const oversizeLine = oversize || line.length > PAYSWAP_RELAY_HEADER_MAX_BYTES;
         const facts = oversizeLine ? null : parseRelayHeaderLine(line, expectedTokenHex);
-        // 同一 chunk 里头行之后的字节是（可能的）请求行前缀 —— 必须推回流内，绝不丢弃
-        //（socket 先 unshift 再摘监听：下一个读方（server 的 readOneLine）按 §5.5 原序消费）。
-        const remainder = chunk.subarray(newlineIndex + 1);
-        if (remainder.length > 0) {
-          socket.unshift(remainder);
-        }
-        settle(facts);
+        // 头行之后的余量显式交还（不 unshift —— 见函数头注释的流语义说明）。
+        settle({ facts, leftover: chunk.subarray(newlineIndex + 1) });
         return;
       }
       if (!oversize) {
@@ -134,8 +143,8 @@ export function readRelayPeerFacts(
         }
       }
     };
-    const onEnd = (): void => settle(null);
-    const onClose = (): void => settle(null);
+    const onEnd = (): void => settle({ facts: null, leftover: buffer });
+    const onClose = (): void => settle({ facts: null, leftover: buffer });
     socket.on("data", onData);
     socket.on("end", onEnd);
     socket.on("close", onClose);

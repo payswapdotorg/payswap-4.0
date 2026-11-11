@@ -51,7 +51,7 @@ import {
   type PayswapInstanceRegistryEntry,
   type PayswapSeenRecords,
 } from "@zcode/shared/payswap";
-import type { PeerCredentialReader } from "./peer-credentials.js";
+import type { PeerCredentialRead, PeerCredentialReader } from "./peer-credentials.js";
 import { hostEffectiveUid } from "./peer-credentials.js";
 import type { PayswapBrokerRelayTransport } from "./peer-relay.js";
 import { readRelayPeerFacts } from "./peer-relay-protocol.js";
@@ -392,12 +392,18 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
         return;
       }
       // ADR-13：relay 模式的事实源 = 认证后的头行（token 常时比对 + 严格形状，
-      // peer-relay-protocol.ts）；直接模式 = reader（peer-credentials.ts）。两者 null =
-      // 无法建立对端身份（§5.4 fail-closed，唯一安全语义）。
-      const peer =
-        relay !== undefined
-          ? await readRelayPeerFacts(socket, relay.relayToken)
-          : await reader.readAcceptedSocketPeer(socket);
+      // peer-relay-protocol.ts）；直接模式 = reader（peer-credentials.ts）。两者 facts=null
+      // = 无法建立对端身份（§5.4 fail-closed，唯一安全语义）。relay 的 leftover（同
+      // chunk 内头行后的请求前缀）经 readOneLine 的 prefix 参数拼接 —— 流语义见协议模块。
+      let peer: PeerCredentialRead | null;
+      let relayLeftover: Buffer | undefined;
+      if (relay !== undefined) {
+        const relayRead = await readRelayPeerFacts(socket, relay.relayToken);
+        peer = relayRead.facts;
+        relayLeftover = relayRead.leftover;
+      } else {
+        peer = await reader.readAcceptedSocketPeer(socket);
+      }
       const hostUid = hostEffectiveUid();
       if (peer === null || hostUid === null || peer.uid !== hostUid) {
         failPeer(socket, "peer_verification_failed", peer?.pid ?? null);
@@ -411,8 +417,9 @@ export function createPayswapBrokerServer(options: PayswapBrokerServerOptions): 
       }
       verifiedPid = peer.pid;
 
-      // (2) 载荷解析 + 上限（§3.3(2)）。
-      const read = await readOneLine(socket, idleTimer);
+      // (2) 载荷解析 + 上限（§3.3(2)）。relay 模式携带 leftover 前缀（头行与请求同
+      // chunk 到达时余量已在其中 —— 直接裁决，不依赖流内时序）。
+      const read = await readOneLine(socket, idleTimer, relayLeftover);
       if (read.kind === "closed") {
         return; // 空闲超时/对端消失：无状态静默关闭（§3.3(4)）
       }
