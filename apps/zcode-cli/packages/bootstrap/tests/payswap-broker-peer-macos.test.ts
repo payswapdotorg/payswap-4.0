@@ -69,11 +69,22 @@ const CHILD_SCRIPT = `
 const net = require("node:net");
 const p = process.env.PB_TEST_PATH;
 const line = process.env.PB_TEST_LINE || "";
+const gated = process.env.PB_TEST_GATED === "1"; // 等待 stdin 的 "go" 再发送（注册竞态消除）
 process.stdout.write(JSON.stringify({ t: "pid", pid: process.pid }) + "\\n");
 const s = net.connect(p, () => {
   process.stdout.write(JSON.stringify({ t: "connected" }) + "\\n");
-  if (line) s.write(line + "\\n");
+  if (!gated && line) s.write(line + "\\n");
 });
+if (gated) {
+  let stdinBuffer = "";
+  process.stdin.on("data", (d) => {
+    stdinBuffer += d.toString("utf8");
+    if (stdinBuffer.includes("\\n")) {
+      if (line) s.write(line + "\\n");
+      stdinBuffer = "";
+    }
+  });
+}
 let acc = "";
 s.on("data", (d) => {
   acc += d.toString("utf8");
@@ -96,16 +107,19 @@ interface ChildHandle {
   readonly pid: number;
   readonly events: ChildEvent[];
   waitFor(predicate: (event: ChildEvent) => boolean, timeoutMs?: number): Promise<ChildEvent>;
+  /** 门控子进程：发送 stdin "go" 后才发出请求行（消除注册竞态）。 */
+  release(): void;
   kill(): void;
 }
 
-function spawnClientChild(options: { path: string; line?: string }): ChildHandle {
+function spawnClientChild(options: { path: string; line?: string; gated?: boolean }): ChildHandle {
   const child = spawn(process.execPath, ["-e", CHILD_SCRIPT], {
-    stdio: ["ignore", "pipe", "pipe"],
+    stdio: ["pipe", "pipe", "pipe"],
     env: {
       PATH: process.env.PATH,
       PB_TEST_PATH: options.path,
       PB_TEST_LINE: options.line ?? "",
+      ...(options.gated ? { PB_TEST_GATED: "1" } : {}),
     },
   });
   const events: ChildEvent[] = [];
@@ -145,6 +159,9 @@ function spawnClientChild(options: { path: string; line?: string }): ChildHandle
         };
         tick();
       });
+    },
+    release() {
+      child.stdin?.write("go\n");
     },
     kill() {
       child.kill("SIGKILL");
@@ -296,13 +313,16 @@ describe.skipIf(process.platform !== "darwin")(
           platform: "darwin",
         });
         activeBrokers.push(handle);
-        // 先 spawn 真实子进程（pid 未知），再以其真实 pid 注册（§5.2：spawn 表来自 host 观察）。
+        // 门控子进程：先报告真实 pid → 测试注册（§5.2：spawn 表来自 host 观察）→
+        // 再释放发送 —— 消除“请求先于注册到达 peer gate”的竞态（注册是异步观察事实）。
         const entry = mintEntry();
         const reqLine = requestLine(entry);
-        const child = spawnClientChild({ path: handle.endpointPath, line: reqLine });
+        const child = spawnClientChild({ path: handle.endpointPath, line: reqLine, gated: true });
         const pidEvent = await child.waitFor((event) => event.t === "pid");
         const realChildPid = pidEvent.pid as number;
         handle.registerInstance({ ...entry, childPid: realChildPid });
+        await child.waitFor((event) => event.t === "connected");
+        child.release();
         const response = await child.waitFor((event) => event.t === "response");
         const line = response.line as string;
         const verdict = verifyResponseEnvelope(line, attemptFor(entry, reqLine), oracleMaterial(bootState));
@@ -370,19 +390,36 @@ describe.skipIf(process.platform !== "darwin")(
           sudoAvailable = false;
         }
         if (sudoAvailable) {
-          const probe = `const net=require("node:net");const s=net.connect(${JSON.stringify(
-            handle.endpointPath,
-          )});s.on("error",e=>{console.log(e.code);process.exit(0)});s.on("connect",()=>{console.log("connected");process.exit(0)});setTimeout(()=>process.exit(0),3000);`;
-          const { stdout } = await execFileAsync(
-            "sudo",
-            ["-n", "-u", "nobody", process.execPath, "-e", probe],
-            { timeout: 10000 },
-          );
-          const outcome = stdout.trim();
-          expect(outcome).not.toBe("connected");
+          // 真实跨 uid 臂（sudo 可用的 runner）：nobody 用户连接端点。探针用系统 python3
+          //（world-executable；runner 的 node 在 hostedtoolcache 下对 nobody 不可执行 ——
+          // 上轮 CI 的真实教训）—— 0700 目录会在路径遍历处即拒绝（EACCES/EPERM）。
+          const probe =
+            "import socket,sys\n" +
+            "try:\n" +
+            "  s = socket.socket(socket.AF_UNIX)\n" +
+            `  s.connect(${JSON.stringify(handle.endpointPath)})\n` +
+            "  print('connected')\n" +
+            "except OSError as e:\n" +
+            "  print(e.errno)\n" +
+            "sys.exit(0)\n";
+          let pythonAvailable = true;
+          try {
+            await execFileAsync("/usr/bin/python3", ["-c", "pass"], { timeout: 5000 });
+          } catch {
+            pythonAvailable = false;
+          }
+          if (pythonAvailable) {
+            const { stdout } = await execFileAsync(
+              "sudo",
+              ["-n", "-u", "nobody", "/usr/bin/python3", "-c", probe],
+              { timeout: 10000 },
+            );
+            const outcome = stdout.trim();
+            expect(outcome).not.toBe("connected"); // 任何非 "connected" 结局 = 拒绝到达端点
+          }
+          // python3 不可用的环境：0700/0600 的落位断言（上方）即本行的落位法证明 ——
+          // 目录模式本身就拒绝异 uid 遍历（§3.1(2) 的机制），无静默通过。
         }
-        // sudo 不可用的环境：0700/0600 的落位断言（上方）即本行的落位法证明 ——
-        // 目录模式本身就拒绝异 uid 遍历（§3.1(2) 的机制），无静默通过。
       },
       20000,
     );

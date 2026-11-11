@@ -380,9 +380,11 @@ const SAVED_ENV_KEYS = [PAYSWAP_BROKER_HELPER_PATH_ENV_KEY, PAYSWAP_BROKER_HELPE
 const savedEnv: Record<string, string | undefined> = {};
 
 afterEach(async () => {
+  // 只恢复本套件显式保存过的键 —— 绝不删除外部（CI）供给的键（D13.9：gates-macos
+  // 会供给真实 helper，其存在不是本套件可以处置的状态）。
   for (const key of SAVED_ENV_KEYS) {
+    if (!(key in savedEnv)) continue;
     const saved = savedEnv[key];
-    // 仅字符串才回写：把 undefined 赋给 process.env 会变成字面量 "undefined" 字符串。
     if (typeof saved === "string") {
       process.env[key] = saved;
     } else {
@@ -561,6 +563,13 @@ describe.skipIf(process.platform === "win32")(
     it(
       "darwin without any provisioned helper stays degraded_refusing (default unchanged; seam regression row)",
       async () => {
+        // 本行语义 = "未供给任何 helper 的 darwin 默认态"（§5.4）—— gates-macos CI 供给
+        // 真实 helper（D13.9），故显式清除两键（save/delete/restore）；供给态的行在本套件
+        // 其余各行 + macOS 平台套件。
+        savedEnv[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY] = process.env[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY];
+        savedEnv[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY] = process.env[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY];
+        delete process.env[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY];
+        delete process.env[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY];
         const { handle } = await startRelayBroker({});
         expect(handle.mode).toBe("degraded_refusing");
         expect(handle.degradedReason).toContain("darwin");
@@ -568,7 +577,7 @@ describe.skipIf(process.platform === "win32")(
       20000,
     );
 
-    it(
+    it.skipIf(process.platform !== "linux")(
       "linux keeps the direct ss+procfs path — the relay seam never forks a second Linux implementation (D13.8)",
       async () => {
         const fake = writeFakeHelper("claim-parent");
@@ -577,6 +586,8 @@ describe.skipIf(process.platform === "win32")(
           peerRelayHelper: fake.config,
         });
         // Linux：显式 relay 配置也不应分叉 —— 直接路径验证（ss+procfs），helper 不 spawn。
+        // 本行只在 Linux 有意义（ss+procfs 只存在于 Linux；darwin runner 上注入 platform
+        // "linux" 无 ss 二进制 → degraded 是正确而非异常）。证据边界见 ADR-13 D13.10。
         expect(handle.mode).toBe("peer_verified");
         expect(fs.existsSync(fake.sentinelPath)).toBe(false);
       },

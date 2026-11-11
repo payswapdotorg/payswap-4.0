@@ -989,12 +989,28 @@ describe("P1.3 Step 3 — fail-closed discipline (all platforms)", () => {
   it(
     "platform default: a platform without a peer-credential reader boots degraded_refusing (fail-closed on unsupported platforms, §5.4)",
     async () => {
-      const { handle } = await startBroker({ platform: "darwin" });
-      expect(handle.mode).toBe("degraded_refusing");
-      expect(handle.degradedReason).toContain("darwin");
-      const { handle: winHandle } = await startBroker({ platform: "win32" });
-      expect(winHandle.mode).toBe("degraded_refusing");
-      expect(winHandle.degradedReason).toContain("win32");
+      // ADR-13 D13.9 的前提修正：gates-macos CI 会经 PAYSWAP_BROKER_HELPER_{PATH,SHA256}
+      // 供给真实 helper —— 本行的语义是"**未供给**任何 helper 的 darwin 默认态"，因此在
+      // 本行内显式清除两键（save/delete/restore），供给态的行在 peer-relay/macOS 套件。
+      const helperPathKey = "PAYSWAP_BROKER_HELPER_PATH";
+      const helperShaKey = "PAYSWAP_BROKER_HELPER_SHA256";
+      const savedPath = process.env[helperPathKey];
+      const savedSha = process.env[helperShaKey];
+      delete process.env[helperPathKey];
+      delete process.env[helperShaKey];
+      try {
+        const { handle } = await startBroker({ platform: "darwin" });
+        expect(handle.mode).toBe("degraded_refusing");
+        expect(handle.degradedReason).toContain("darwin");
+        const { handle: winHandle } = await startBroker({ platform: "win32" });
+        expect(winHandle.mode).toBe("degraded_refusing");
+        expect(winHandle.degradedReason).toContain("win32");
+      } finally {
+        if (typeof savedPath === "string") process.env[helperPathKey] = savedPath;
+        else delete process.env[helperPathKey];
+        if (typeof savedSha === "string") process.env[helperShaKey] = savedSha;
+        else delete process.env[helperShaKey];
+      }
     },
     20000,
   );
