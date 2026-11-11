@@ -99,6 +99,14 @@ namespace PayswapBrokerPeerHelper
             return false;
         }
 
+        /** 剥掉 \\.\pipe\ / \\?\pipe\ 前缀，返回裸管道名（.NET Framework 两侧 API 的期望形态）。 */
+        private static string NormalizePipeName(string value)
+        {
+            if (value.StartsWith("\\\\.\\pipe\\", StringComparison.Ordinal)) return value.Substring(9);
+            if (value.StartsWith("\\\\?\\pipe\\", StringComparison.Ordinal)) return value.Substring(9);
+            return value;
+        }
+
         // ------------------------------------------------------------------
         // 主路径：stdin token → 看门狗 → 公共管道服务循环
         // ------------------------------------------------------------------
@@ -106,8 +114,12 @@ namespace PayswapBrokerPeerHelper
         private static int RunRelay(string[] args)
         {
             Dictionary<string, string> parsed = ParseArguments(args);
-            string endpoint = RequireArgument(parsed, "--endpoint");
-            string ingress = RequireArgument(parsed, "--ingress");
+            // 管道名规范化（round-2 CI 根因修复）：.NET Framework 的 NamedPipeClientStream
+            // 无条件自拼 \\[server]\pipe\[name] —— 带前缀的 ingress 名会被拼成畸形路径，
+            // Connect 永远失败（探针拿不到头行 → degraded）。两侧统一剥掉 \\.\pipe\ /
+            // \\?\pipe\ 前缀，以裸名供 API 使用（server 侧前缀直通与拼名行为不作假设）。
+            string endpoint = NormalizePipeName(RequireArgument(parsed, "--endpoint"));
+            string ingress = NormalizePipeName(RequireArgument(parsed, "--ingress"));
             int parentPid = ParsePositiveInt(RequireArgument(parsed, "--parent-pid"));
             string parentImage = RequireArgument(parsed, "--parent-image");
 
@@ -296,9 +308,11 @@ namespace PayswapBrokerPeerHelper
             }
             catch
             {
-                // 读取故障 = host 终结等价 —— 看门狗/stdin EOF 路径收口
+                // 读取故障 = host 终结等价 —— 下方硬终止收口
             }
-            Shutdown.Set();
+            // stdin EOF = host 终结（stop() 的优雅先行或 host 死亡）—— 与看门狗同理：
+            // accept 循环可能正阻塞，事件信号不可见，硬终止（host 的 kill 是 belt）。
+            Environment.Exit(0);
         }
 
         private static bool ParseControlLine(string line, out int add, out string image)
@@ -379,14 +393,15 @@ namespace PayswapBrokerPeerHelper
 
         private static void MonitorParent(int parentPid)
         {
-            while (!Shutdown.WaitOne(ParentPollMs))
+            while (true)
             {
+                bool alive;
                 try
                 {
                     Process parent = Process.GetProcessById(parentPid);
                     try
                     {
-                        if (parent.HasExited) break;
+                        alive = !parent.HasExited;
                     }
                     finally
                     {
@@ -395,10 +410,15 @@ namespace PayswapBrokerPeerHelper
                 }
                 catch
                 {
-                    break; // 进程不存在（ArgumentException）= 父亡
+                    alive = false; // 进程不存在（ArgumentException）= 父亡
                 }
+                if (!alive) break;
+                if (Shutdown.WaitOne(ParentPollMs)) return; // 其它路径已请求停机
             }
-            Shutdown.Set();
+            // 父亡：立即终止（round-2 CI 教训：accept 循环可能正阻塞在 60s 界的
+            // WaitForConnection 里，事件信号对它不可见）—— 硬终止才是 §3.1(3)/§10.3
+            // 端点随 host 消亡的保证；host 侧的 kill 只是 belt。
+            Environment.Exit(0);
         }
 
         // ------------------------------------------------------------------
@@ -501,6 +521,17 @@ namespace PayswapBrokerPeerHelper
                 Console.Out.WriteLine("SDDL:" + sddl);
                 Console.Out.WriteLine("SID:" + (sid == null ? "" : sid.Value));
                 Console.Out.WriteLine("MAXINSTANCES:1");
+                // 语义面（round-2 CI 教训：SDDL 渲染因账户形态而异 —— 内建管理员 -500
+                // 显示为 LA 速记、权利掩码显示为十六进制而非 GRGW 助记）—— 规则行直接
+                // 给出 identity|mask|allow，断言据此做语义判定。
+                Console.Out.WriteLine("READWRITE_MASK:" + ((int)PipeAccessRights.ReadWrite).ToString());
+                foreach (PipeAccessRule rule in security.GetAccessRules(true, true, typeof(SecurityIdentifier)))
+                {
+                    SecurityIdentifier identity = rule.IdentityReference as SecurityIdentifier;
+                    Console.Out.WriteLine("RULE:" + (identity == null ? "" : identity.Value) + "|" +
+                        ((int)rule.PipeAccessRights).ToString() + "|" +
+                        (rule.AccessControlType == AccessControlType.Allow ? "allow" : "deny"));
+                }
             }
         }
 

@@ -301,7 +301,7 @@ describe.skipIf(process.platform !== "win32")(
       "boots peer-verified with kernel-sourced facts: the real self-probe identifies the host through GetNamedPipeClientProcessId over the named pipe",
       async () => {
         const { handle, audit } = await startRealHelperBroker();
-        expect(handle.mode).toBe("peer_verified");
+        expect(handle.mode, `boot degraded: ${handle.degradedReason ?? "(no reason)"}`).toBe("peer_verified");
         // 探针身份法则（win32 形态）：pid = host 自身；uid = 0 哨兵（同用户边界由 DACL 承担）。
         expect(handle.probe.verified).toBe(true);
         expect(handle.probe.pid).toBe(process.pid);
@@ -319,7 +319,7 @@ describe.skipIf(process.platform !== "win32")(
       "the full §5.5 chain through the real helper: a registered real child's request returns a request-attributed signed envelope (GetNamedPipeClientProcessId = the child's real pid)",
       async () => {
         const { handle, bootState, audit } = await startRealHelperBroker();
-        expect(handle.mode).toBe("peer_verified");
+        expect(handle.mode, `boot degraded: ${handle.degradedReason ?? "(no reason)"}`).toBe("peer_verified");
         // 门控子进程：上报 pid → 注册（真实 pid + 真实映像 spawnfile）→ release 后连接。
         const entry = mintEntry({ childImagePath: process.execPath });
         const reqLine = requestLine(entry);
@@ -354,7 +354,7 @@ describe.skipIf(process.platform !== "win32")(
       "an impostor process (real pid, unregistered) is dropped at the pipe: no relay, no refusal line (§5.3(1)/(4))",
       async () => {
         const { handle, bootState } = await startRealHelperBroker();
-        expect(handle.mode).toBe("peer_verified");
+        expect(handle.mode, `boot degraded: ${handle.degradedReason ?? "(no reason)"}`).toBe("peer_verified");
         // 未注册的真实进程连接 —— 管道口门拒绝（GetNamedPipeClientProcessId ∉ 表）。
         const impostor = spawnClientChild({ path: handle.endpointPath, line: requestLine(mintEntry()) });
         const endEvent = await impostor.waitFor((event) => event.t === "close" || event.t === "error");
@@ -379,7 +379,7 @@ describe.skipIf(process.platform !== "win32")(
       "the image-path gate: a registered pid with a wrong expected image is dropped at the pipe (QueryFullProcessImageName mismatch)",
       async () => {
         const { handle } = await startRealHelperBroker();
-        expect(handle.mode).toBe("peer_verified");
+        expect(handle.mode, `boot degraded: ${handle.degradedReason ?? "(no reason)"}`).toBe("peer_verified");
         // 注册真实 pid，但期望映像指向不存在的路径 —— 映像门拒绝（§5.3(1)）。
         const entry = mintEntry({ childImagePath: "C:\\payswap-arm-test\\definitely-not-the-image.exe" });
         const child = spawnClientChild({ path: handle.endpointPath, line: requestLine(entry), gated: true });
@@ -408,15 +408,33 @@ describe.skipIf(process.platform !== "win32")(
         expect(sddl.length).toBeGreaterThan(0);
         expect(sid).toMatch(/^S-1-5-/);
         expect(maxInstances).toBe("1");
-        // 显式授权面：当前用户 SID 恰得读+写（GRGW），无继承（D:P 保护位）。
-        expect(sddl).toContain(`(A;;GRGW;;;${sid})`);
-        expect(sddl).toContain("D:P");
+        // 语义判定（round-2 CI 教训：SDDL 渲染因账户形态而异 —— 内建管理员 -500 显示
+        // 为 LA 速记、权利掩码显示为十六进制而非 GRGW 助记）：直接断言规则行。
+        const readWriteMask = Number.parseInt(
+          lines.find((line) => line.startsWith("READWRITE_MASK:"))?.slice("READWRITE_MASK:".length) ?? "0",
+          10,
+        );
+        expect(readWriteMask).toBeGreaterThan(0);
+        const rules = lines
+          .filter((line) => line.startsWith("RULE:"))
+          .map((line) => line.slice("RULE:".length).split("|"));
+        // 授权面恰两条：当前用户 + LocalSystem（先例的固定基底），无其它任何主体。
+        expect(rules).toHaveLength(2);
+        const userRule = rules.find((rule) => rule[0] === sid);
+        expect(userRule).toBeDefined();
+        expect(userRule?.[2]).toBe("allow");
+        expect(Number.parseInt(userRule?.[1] ?? "0", 10) & readWriteMask).toBe(readWriteMask);
+        expect(rules.some((rule) => rule[0] === "S-1-5-18")).toBe(true);
         // 更宽授权 = 违约（Everyone/匿名/Authenticated Users/内建 Users 的任何 grant）。
+        for (const rule of rules) {
+          expect(["S-1-1-0", "S-1-5-7", "S-1-5-11", "S-1-5-32-545"]).not.toContain(rule[0]);
+        }
+        // 无继承（D:P 保护位）；宽 SID 不以任何渲染形态出现。
+        expect(sddl).toContain("D:P");
         expect(sddl).not.toContain("S-1-1-0");
         expect(sddl).not.toContain("S-1-5-7");
         expect(sddl).not.toContain("S-1-5-11");
         expect(sddl).not.toContain("S-1-5-32-545");
-        expect(sddl).not.toMatch(/\(A[^)]*;;[^;]*;(WD|AN|AU|BU)[;)]/);
       },
       30000,
     );
@@ -466,7 +484,7 @@ describe.skipIf(process.platform !== "win32")(
       "single server instance (§3.2(2)): while one client holds the connection, a second client's connect fails busy (ERROR_PIPE_BUSY)",
       async () => {
         const { handle } = await startRealHelperBroker();
-        expect(handle.mode).toBe("peer_verified");
+        expect(handle.mode, `boot degraded: ${handle.degradedReason ?? "(no reason)"}`).toBe("peer_verified");
         // 客户端 A：注册后连接并静默持有（单实例槽被占）。
         const holderEntry = mintEntry({ childImagePath: process.execPath });
         const holder = spawnClientChild({ path: handle.endpointPath, gated: true, holdMs: 20000 });

@@ -1091,7 +1091,11 @@ describe("P1.3 Step 3 — fail-closed discipline (all platforms)", () => {
       // typed code 全部落审计；无 stack trace。
       const refused = audit.filter((event) => event.outcome === "refused");
       expect(refused.some((event) => event.code === "peer_verification_failed")).toBe(true);
-      expect(refused.some((event) => event.code === "unauthorized")).toBe(true);
+      // §5.5(3) 的 unauthorized 深度只在 peer_verified 模式可达（Linux ss+procfs /
+      // 已供给 helper 的平台）。win32 默认无 helper = degraded（§5.4：peer gate 先于
+      // token 步，一切拒绝都是 peer_verification_failed）—— 该深度在 win32 由平台
+      // 套件经真实 helper 的链行证明（ADR-14 D14.10）。
+      expect(refused.some((event) => event.code === "unauthorized")).toBe(handle.mode === "peer_verified");
       // 凭据材料零泄漏：token / verify key / endpoint path 都不得出现在审计里。
       const auditJson = JSON.stringify(audit);
       expect(auditJson).not.toContain(entry.token);
