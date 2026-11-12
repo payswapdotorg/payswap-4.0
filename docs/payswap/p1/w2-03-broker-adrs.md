@@ -1454,7 +1454,7 @@ POSIX; a mock never runs there).
 
 ---
 
-## ADR-15 — Helper-binary packaging for the peer-verification arms: one prepare discipline, one manifest, two distribution vehicles, zero broker-code change (the D13.9/D14.10 gap closure — decided before implementation)
+## ADR-15 — Helper-binary packaging for the peer-verification arms: Windows in P1, the Darwin packaging deferred to the P9 platform-hardening submilestone — one prepare discipline, one manifest, two distribution vehicles, zero broker-code change (the D13.9/D14.10 gap closure — decided before implementation)
 
 **Context.** ADR-13 D13.9 and ADR-14 D14.10 record the packaging gap: the
 arms are proven on their CI runners with env-key provisioning
@@ -1488,44 +1488,64 @@ This ADR defines the packaging as a scope decision ahead of implementation
 (the ADR-1/ADR-2 forward-decision pattern of this file): the delivery PR
 cites this ADR, lands RED-first, and carries the register sentence.
 
+**Sequencing decision (product-owner; recorded here and in the roadmap
+register's P9 section).** The P1 packaging delivery is **Windows-only**.
+The Darwin helper's production packaging — the darwin compile/stage step
+of the prepare script, the darwin SEA embedding/extraction, and the darwin
+desktop resource wiring (D15.1–D15.4's darwin halves) — is **deferred to
+the final platform-hardening submilestone under P9**; no P10 is created.
+The already-merged macOS arm (PR #26, ADR-13) and its security behavior
+stay intact, and `gates-macos` keeps compiling and exercising `helper.c`
+as the regression gate for that merged implementation. Until the P9
+submilestone proves the darwin packaging, production darwin continues to
+boot `degraded_refusing` where the helper is unavailable — ADR-13 D13.9's
+honest state, unchanged. The deferral changes the schedule, never the
+security: no token-only fallback, no `verifyHelperBinary` bypass, no
+weakening of peer verification, and no unsupported connection appearing
+supported.
+
 **Decision.**
 
 1. **D15.1 — One prepare discipline, CLI-owned, byte-for-byte the gates'
-   compile.** A single CLI-owned prepare script
+   compile; P1 ships win32.** A single CLI-owned prepare script
    (`apps/zcode-cli/packages/cli/scripts/prepare-payswap-broker-peer-helper.mjs`)
-   compiles the helper from `apps/zcode-cli/native/payswap-broker-peer-macos/helper.c`
-   (darwin) and `apps/zcode-cli/native/payswap-broker-peer-windows/Program.cs`
-   (win32) with exactly the CI-gate discipline: darwin `cc -O2 -Wall
-   -Wextra -Werror` (`-arch <target-arch>` when cross-compiling within
-   darwin), win32 OS-bundled .NET Framework `csc.exe` with `/nologo
-   /optimize+ /target:exe /platform:<arch> /warnaserror+
-   /win32manifest:app.manifest` (x64 by default; arm64 only via an explicit
-   Roslyn `ZCODE_CSC_PATH`, the browser-import-helper precedent's rule).
-   Any flag change re-opens the platform rows — the packaged binary must be
-   the proven binary. Output stages to
+   compiles the Windows helper from
+   `apps/zcode-cli/native/payswap-broker-peer-windows/Program.cs` with
+   exactly the CI-gate discipline: the OS-bundled .NET Framework `csc.exe`
+   with `/nologo /optimize+ /target:exe /platform:<arch> /warnaserror+
+   /win32manifest:app.manifest` (x64 by default; arm64 only via an
+   explicit Roslyn `ZCODE_CSC_PATH`, the browser-import-helper
+   precedent's rule). Any flag change re-opens the platform rows — the
+   packaged binary must be the proven binary. Output stages to
    `packages/desktop/bundled-tools/<platformKey>/payswap-broker-peer/`
-   (the runtime-tools staging root). Linux is a deliberate no-op: the
-   Linux arm has no helper (ADR-3 direct reader; D13.8's
-   no-second-Linux-implementation rule). Host-platform builds fail loudly
-   when the toolchain is missing (a darwin/win32 release build that would
-   ship degraded must be a deliberate act, not an accident); foreign-host
-   cross-builds skip the helper and stage an explicit `helper: null`
-   manifest (D15.2) — the SEA/desktop artifact still builds, and the
-   platform boots `degraded_refusing` honestly.
+   (the runtime-tools staging root). **Darwin and Linux are deliberate
+   no-ops in P1**: the Linux arm has no helper (ADR-3 direct reader;
+   D13.8's no-second-Linux-implementation rule), and the darwin helper's
+   packaging is the P9 deferral above — in P1 the darwin compile remains
+   exclusively the `gates-macos` regression gate's concern. A win32
+   release build running on a win32 host must fail loudly when the
+   required compiler is unavailable (a Windows release that would ship
+   degraded must be a deliberate act, not an accident); any build that
+   does not package a helper for its target — darwin and linux targets
+   in P1, and every foreign-host cross-build — stages an explicit
+   `helper: null` manifest (D15.2): the SEA/desktop artifact still
+   builds, and the platform boots `degraded_refusing` honestly.
 
 2. **D15.2 — The per-target helper manifest (v1), shipped as a pair.**
    `manifest.json` staged next to the binary records
    `{ "version": 1, "target": "<sea-target>", "helper": { "binaryName",
    "sha256", "size" } | null }` — the digest computed from the compiled
-   binary at prepare time; `null` is the explicit absent record. Both
-   distribution vehicles embed binary + manifest as an inseparable pair;
-   a binary without its manifest (or vice versa) is never adopted. The
-   `target` field uses the SEA target family (`darwin-x64`, `win-arm64`, …)
-   exactly as the runtime-tools manifest does.
+   binary at prepare time; `null` is the explicit absent record (every
+   target P1 does not package a helper for: darwin, linux, and
+   foreign-host cross-builds). Both distribution vehicles embed binary +
+   manifest as an inseparable pair; a binary without its manifest (or
+   vice versa) is never adopted. The `target` field uses the SEA target
+   family (`win-x64`, `win-arm64`, `darwin-x64`, …) exactly as the
+   runtime-tools manifest does.
 
-3. **D15.3 — SEA embedding and extraction (the runtime-tools pattern).**
-   The SEA collector embeds, for darwin/win targets only:
-   `zcode-payswap-broker-peer/<sha256>/<binaryName>` plus
+3. **D15.3 — SEA embedding and extraction (the runtime-tools pattern);
+   win targets only in P1.** The SEA collector embeds, for win targets
+   only: `zcode-payswap-broker-peer/<sha256>/<binaryName>` plus
    `zcode-payswap-broker-peer/manifest.json`. At runtime,
    `ensureSeaPayswapBrokerPeerHelper()` (a `sea-runtime-tools.ts` sibling,
    wired at the same `main.ts` injection site) validates the manifest
@@ -1536,24 +1556,27 @@ cites this ADR, lands RED-first, and carries the register sentence.
    against the manifest, atomic tmp-then-rename, marker file, `chmod
    0755` — and injects `PAYSWAP_BROKER_HELPER_PATH` +
    `PAYSWAP_BROKER_HELPER_SHA256` into `process.env`, only when the
-   platform is darwin/win32, a helper entry exists, and the operator has
-   not already set the keys (the runtime-tools precedence rule verbatim).
+   platform is win32, a helper entry exists, and the operator has not
+   already set the keys (the runtime-tools precedence rule verbatim).
    Non-SEA (node dev form) never injects: env-key provisioning remains
-   the dev/CI discipline (D13.9 unchanged). Linux SEAs embed nothing
-   broker-helper-related.
+   the dev/CI discipline (D13.9 unchanged). Darwin and Linux SEAs embed
+   nothing broker-helper-related before the P9 submilestone: a `null`
+   /absent record produces no injection and the existing honest boot law
+   applies unchanged.
 
 4. **D15.4 — Desktop staging and supply (the browser-import-helper
-   pattern).** The desktop prepare chain calls the same CLI-owned prepare
-   script (one implementation, both vehicles); electron-builder
-   `extraResources` copies the staged pair into the app resources; the
-   desktop's agent-env assembly resolves
+   pattern); win32 only in P1.** The desktop prepare chain calls the same
+   CLI-owned prepare script (one implementation, both vehicles);
+   electron-builder `extraResources` copies the staged pair into the app
+   resources; the desktop's agent-env assembly resolves
    `process.resourcesPath/payswap-broker-peer/<binary>`, reads the staged
-   manifest, verifies the binary digest at injection time, and injects the
-   same two env keys into the agent env (the CUA-helper-app supply
+   manifest, verifies the binary digest at injection time, and injects
+   the same two env keys into the agent env (the CUA-helper-app supply
    precedent) — with the same precedence rule and the same honest no-
    injection on any mismatch (agent boots `degraded_refusing`, §5.4
    diagnostics reachable). Dev fallbacks follow the `bundled-tools`
-   relative-path family.
+   relative-path family. Darwin desktop resources carry no helper before
+   the P9 submilestone — the same honest no-injection law.
 
 5. **D15.5 — Zero broker-code change; the env seam stays the single
    supply point.** `resolveDefaultPeerRelayHelper` (D13.9) is unchanged —
@@ -1563,7 +1586,9 @@ cites this ADR, lands RED-first, and carries the register sentence.
    post-extraction tampering (the extraction-time check and the
    spawn-time check are two verifications of one digest, not a
    redundancy). The env keys stay host-only and stripped from every child
-   env (the D13.9 runtimeEnv strip lists, unchanged).
+   env (the D13.9 runtimeEnv strip lists, unchanged). A
+   packaging-supplied helper is not a trusted bypass: every supply source
+   passes the same spawn-time verification.
 
 6. **D15.6 — The manifest's trust basis is the distribution vehicle.** In
    the SEA, manifest and binary live inside the postject-injected blob —
@@ -1584,54 +1609,113 @@ cites this ADR, lands RED-first, and carries the register sentence.
    no injection; cache-marker currency; atomic install); injection
    precedence rows (operator env wins; non-SEA no-op; absent/`null`
    helper no-op; wrong-target refusal); collector rows (staged fake
-   binary → correct asset keys + manifest; absent helper → `helper: null`
-   manifest, no build failure); desktop-injection resolver rows (fake
-   `resourcesPath` + manifest → the env pair; digest mismatch → no
-   injection). Platform rows (gates-macos/gates-windows): the prepare
-   script compiles the real helper with the gates discipline and the
-   existing §5.1/§5.3 platform suites re-run against the prepare-script
-   output (path + manifest digest) instead of the ad-hoc CI compile —
-   proving the packaged artifact is the proven artifact. The full SEA
-   assembly extends the existing `build-sea` test suite with the new
-   collector (fake binaries). A mock never greens a platform row
-   (playbook §5(5)).
+   binary → correct asset keys + manifest; absent helper → `helper:
+   null` manifest, no build failure); desktop-injection resolver rows
+   (fake `resourcesPath` + manifest → the env pair; digest mismatch → no
+   injection). Windows platform rows (gates-windows): the prepare script
+   compiles the real helper with the gates discipline and the existing
+   §5.3 platform suite re-runs against the prepare-script output (path +
+   manifest digest) instead of the ad-hoc CI compile — proving the
+   packaged artifact is the proven artifact. `gates-macos` is unchanged:
+   the regression gate for the already-merged darwin arm, env-keyed,
+   with no packaging rows in P1. The full SEA assembly extends the
+   existing `build-sea` test suite with the new collector (fake
+   binaries). A mock never greens a platform row (playbook §5(5)).
 
-8. **D15.8 — Scope guard: this is P1.3 follow-through, not a new P1
-   acceptance clause.** P1's acceptance (roadmap §P1) is behavioral and
-   already satisfied by the arms' fail-closed rows; packaging closes the
-   recorded production-deployment residual without redefining milestone
-   scope. The register sentence for the closure rides the implementation
-   PR's evidence, per the register's own law.
+8. **D15.8 — Scope guard and the P9 deferral record.** This is P1.3
+   follow-through for the Windows helper, not a new P1 acceptance
+   clause: P1's acceptance (roadmap §P1) is behavioral and already
+   satisfied by the arms' fail-closed rows; the Windows packaging closes
+   the recorded production-deployment residual without redefining
+   milestone scope. The Darwin helper's packaging, SEA extraction and
+   desktop resource wiring are deferred to the final platform-hardening
+   submilestone under P9 (the sequencing decision above; recorded in the
+   roadmap register's P9 section; no P10). Until that submilestone
+   passes, macOS production remains honestly fail-closed —
+   `degraded_refusing` where the helper is unavailable — and nothing in
+   the deferral authorizes a token-only fallback, a `verifyHelperBinary`
+   bypass, weakened peer verification, or an unsupported connection
+   appearing supported. The register sentences ride the PRs that prove
+   them: the Windows closure sentence rides the Windows delivery PR
+   (register law); the P9 submilestone's sentence rides its own future
+   delivery.
 
 **Rejected alternatives (recorded).**
 
+- *Packaging both platforms in P1 (this ADR's original scope):*
+  superseded by the product-owner sequencing decision — the darwin
+  packaging moves to the P9 final platform-hardening submilestone; the
+  Windows packaging is the P1 delivery. Recorded so a future reader does
+  not silently restore the dual-platform scope.
 - *Env-only provisioning forever (status quo):* production darwin/win32
   permanently `degraded_refusing`; the arms' verified boot unrealized in
-  every shipped artifact. Rejected — this ADR.
+  every shipped artifact. Rejected — this ADR (win32 in P1; darwin via
+  the P9 submilestone).
 - *First-boot download (install-on-demand):* adds a network-trust surface
-  to the money-path trust chain and defeats the pinned-digest discipline's
-  offline honesty; the env keys already are the manual equivalent.
-  Rejected for v1; do not re-attempt without a TL decision.
-- *N-API addon or install-time build:* ADR-3/13/14's build-burden reasons;
-  additionally the SEA has no install step. Rejected (recorded so it is
-  not re-attempted).
+  to the money-path trust chain and defeats the pinned-digest
+  discipline's offline honesty; the env keys already are the manual
+  equivalent. Rejected for v1; do not re-attempt without a TL decision.
+- *N-API addon or install-time build:* ADR-3/13/14's build-burden
+  reasons; additionally the SEA has no install step. Rejected (recorded
+  so it is not re-attempted).
 - *Two manifest formats (SEA and desktop):* divergence between the
-  vehicles is a stale-helper adoption surface. One format, both vehicles.
+  vehicles is a stale-helper adoption surface. One format, both
+  vehicles.
 - *A resolution bypass flag for distribution-supplied binaries:* never —
   D13.4's spawn-time verification applies to every supply source; the
   seam has exactly one verification point.
+- *A token-only or trust-flag fallback to make the deferred macOS
+  packaging look supported:* never — fail-closed OS peer verification is
+  the ADR-13 law; the deferral changes the schedule, not the security.
 - *Linux helper "for symmetry":* the Linux arm has no helper by design
   (D13.8); adding one would fork the direct reader. Rejected.
 
-**Consequences.** Release builds that run on darwin/win32 hosts carry the
-helper in both vehicles and production boots verified; cross-builds and
-explicit operator choices can still ship the honest degraded state, but
-only as a recorded `helper: null`/absent manifest, never silently. Linux,
-the dev/CI env-key discipline, the broker's boot law, and the arms'
-platform rows are untouched. The delivery plan is a single implementation
-PR (prepare script + collector + SEA extractor + desktop resolver wiring +
-the D15.7 test map + the register sentence), RED-first, citing this ADR.
+**Consequences.** Windows release builds carry the helper in both
+vehicles and production win32 boots verified; every other target —
+darwin until the P9 submilestone, linux by design, and any foreign-host
+cross-build — ships the honest absent record and boots
+`degraded_refusing` where the helper is unavailable, never silently.
+`gates-macos` is unchanged as the regression gate for the already-merged
+darwin arm. The dev/CI env-key discipline, the broker's boot law, and
+the arms' platform rows are untouched. The delivery plan is a single
+Windows implementation PR (prepare script + collector + SEA extractor +
+desktop resolver wiring + the D15.7 test map + the register sentence),
+RED-first, citing this ADR.
 
 **Evidence.** Planned per D15.7 (this ADR is the scope decision; the
 delivery PR carries the RED→GREEN record, the CI gate runs, and the
 register sentence).
+
+---
+
+## TL acceptance record — ADR-15 (helper-binary packaging scope)
+
+Checklist-based acceptance against the TL handoff's A1–A4 requirements,
+ADR-13, ADR-14, the actual runtime paths and the merged Git state, per
+playbook §1 and §9 (in-scope contract acceptance is a TL responsibility;
+no external sign-off is required or sought). All facts verified on
+`main` @ `0ec69fc6` plus this branch's amendment head.
+
+| # | Requirement | Where satisfied | Verdict |
+|---|---|---|---|
+| 1 | macOS/Windows arms already landed; neither implementation undone (A1) | PR #26 (ADR-13) + PR #27 (ADR-14) merged on `main` @ `0ec69fc6`; this ADR changes packaging scope only | met |
+| 2 | P1 packaging scope = Windows through CLI SEA + desktop; gates-windows compile discipline exact (A2) | D15.1 (csc flags mirror `gates-windows`; any flag change re-opens the platform rows) | met |
+| 3 | One prepare script + one strict manifest format (A2) | D15.1 (single CLI-owned script, both vehicles) + D15.2 (manifest v1, inseparable pair) | met |
+| 4 | Digest verified before injection and again at the existing spawn-time boundary (A2) | D15.3/D15.4 (extraction-time + injection-time verification) + D15.5 (`verifyHelperBinary` unchanged, the single verification point) | met |
+| 5 | Missing/mismatched helper never silently adopted (A2) | D15.2 (`helper: null` explicit absent record) + D15.3/D15.4 (mismatch → no injection → honest `degraded_refusing`) | met |
+| 6 | Win32 release build on win32 host fails loudly on missing compiler (A2) | D15.1 (loud-failure law) | met |
+| 7 | Foreign-host build records an explicit absent helper, never fakes a verified binary (A2) | D15.1 (foreign-host cross-builds stage `helper: null`) | met |
+| 8 | macOS packaging deferred to the P9 submilestone; implementation + security behavior intact; `gates-macos` regression retained; honest `degraded_refusing` until proven (A1/A2) | Sequencing decision + D15.8 + the roadmap register's P9 record (this PR); `gates-macos` unchanged (D15.7) | met |
+| 9 | No token-only fallback, no `verifyHelperBinary` bypass, no peer-verification weakening, no false supported status (A2) | Sequencing decision + D15.5 + D15.8 + the rejected token-only alternative | met |
+| 10 | The implementation PR must prove the packaged artifact, not a separately compiled test binary (A3) | D15.7 (the §5.3 platform suite re-runs against the prepare-script output with the shipped manifest/digest) | met |
+| 11 | POSIX host half may use fakes; fakes never green a platform row (A3) | D15.7 (host half POSIX-runnable with fakes; the mock-never-greens rule, playbook §5(5)) | met |
+| 12 | Operator-env precedence and spawn-time digest verification preserved; a packaging-supplied helper is no trusted bypass (A3) | D15.3 (precedence rule verbatim) + D15.5 | met |
+| 13 | Referenced paths, build commands, asset names, env keys and distribution entry points verified (A4) | `sea-runtime-tool-{assets,prepare}.mjs`, `sea-runtime-tools.ts`, the `main.ts` injection site, the `bundled-tools/<platformKey>/` staging root, `extraResources` + `process.resourcesPath`, `desktopRuntimeEnv.ts`, `peer-relay.ts` (`resolveDefaultPeerRelayHelper`, `verifyHelperBinary`), `PAYSWAP_BROKER_HELPER_{PATH,SHA256}`, `ZCODE_CSC_PATH` — all present on `main` @ `0ec69fc6` | met |
+| 14 | Register reconciliation: superseded P1 statements removed, P2 preserved-branch status accurate, P9 submilestone recorded (roadmap law) | The roadmap register edits in this PR (P1 row, P2 row `in_progress` on `p2/gate-e2-stripe`, the P9 section record, the reconciliation date) | met |
+| 15 | The Windows delivery remains its own RED-first PR after this scope decision | Consequences (a single Windows implementation PR, RED-first, citing this ADR) | met |
+
+**Deferred-scope integrity note.** The darwin deferral moves work, not
+risk: until the P9 submilestone lands, every darwin production surface
+keeps ADR-13's fail-closed boot law, `gates-macos` keeps proving the
+merged implementation on every PR, and the darwin helper's env-key
+dev/CI discipline (D13.9) is unchanged.
