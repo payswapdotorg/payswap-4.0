@@ -61,6 +61,9 @@ jobs:
       - name: Run the PaySwap desktop Browser E2E battery (container harness, replay-isolated)
         env:
           ZCODE_E2E_RUN_ID: payswap-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          # 修复原因（run 43161767622）：无摄像头容器里 getUserMedia 以 NotFoundError 短路，
+          # permission-bar spec 等不到确认条；假设备恢复真实权限请求流（wdio 注入点本分支已备）。
+          ZCODE_E2E_EXTRA_APP_ARGS: --use-fake-device-for-media-stream
           E2E_SPEC: >-
             ./test/e2e/payswap-approval-card.test.ts,
             ./test/e2e/payswap-plugin-lifecycle.test.ts,
@@ -68,7 +71,7 @@ jobs:
             ./test/e2e/browser-human-viewport-preference.test.ts,
             ./test/e2e/browser-open-external-file-url.test.ts,
             ./test/e2e/browser-permission-prompt.test.ts,
-            ./test/e2e/browser-permission-site-settings.test.ts,
+            ./test/e2e/browser-permission/browser-permission-site-settings.test.ts,
             ./test/e2e/browser-tab-close-cross-workspace.test.ts,
             ./test/e2e/browser-tab-close-idempotent.test.ts,
             ./test/e2e/browser-tab-residency.test.ts
@@ -79,6 +82,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: payswap-desktop-e2e-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
-          path: packages/desktop/.e2e-artifacts/
+          # 修复原因（run 43161767622 的 artifact 为空）：harness 诊断落在 .e2e-artifacts，
+          # 而 e2e 隔离 home（含真实落盘的 cli config —— lifecycle 诊断证据）在
+          # .e2e-home-<runId>。一并收集（仅含合成 e2e 数据与假凭据，可安全上传）。
+          path: |
+            packages/desktop/.e2e-artifacts/
+            packages/desktop/.e2e-home-*/.zcode/cli/
           if-no-files-found: ignore
           retention-days: 14

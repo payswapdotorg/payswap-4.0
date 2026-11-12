@@ -85,6 +85,49 @@ async function payswapUniverseEnabled(): Promise<boolean | undefined> {
 }
 
 /**
+ * 有界等待 config.json 中 payswap 条目达到预期 —— 持久化事实，而非 universe 内存镜像。
+ * 修复原因（CI run 43161767622，该 spec 历史上首次跑过 enable 步）：universe 翻转后
+ * 立即读盘与配置落盘存在竞态；改为有界等待。超时时倾倒候选配置路径的存在性与内容，
+ * 供 CI 日志定位真实写入位置（用户配置 / workspace 配置 / data-base 变体）。
+ */
+async function waitForPayswapConfigEntry(
+  predicate: (entry: {
+    enabled: boolean | undefined;
+    financialWorkspace: unknown;
+  }) => boolean,
+  message: string,
+  timeoutMs = 30_000,
+): Promise<void> {
+  try {
+    await browser.waitUntil(async () => predicate(await readPayswapConfigEntry()), {
+      timeout: timeoutMs,
+      timeoutMsg: message,
+    });
+  } catch (error) {
+    await dumpPayswapConfigCandidates();
+    throw error;
+  }
+}
+
+async function dumpPayswapConfigCandidates(): Promise<void> {
+  const homeDir = getE2EAppDataPaths().homeDir;
+  const candidates = [
+    join(homeDir, ".zcode", "cli", "config.json"),
+    join(homeDir, "ZCodeProject", ".zcode", "config.json"),
+    join(homeDir, ".zcode", "config.json"),
+  ];
+  for (const path of candidates) {
+    try {
+      const content = await readFile(path, "utf8");
+      console.log(`[lifecycle-e2e] config candidate ${path}:
+${content}`);
+    } catch {
+      console.log(`[lifecycle-e2e] config candidate ${path}: <absent>`);
+    }
+  }
+}
+
+/**
  * 在真实 plugin-ui 沙箱 guest 中寻找 PaySwap Class A 面板内容。
  * 与 PLM-UI-001 的 waitForSandboxReady 同款遍历：zcode-sandbox:// guest 的
  * main frame 与子 frame 里查询 h1 文本（面板是静态骨架，heading 即就绪标记）。
@@ -190,7 +233,12 @@ describe("P1.8：官方 PaySwap 插件既有生命周期 browser-verified 臂", 
     await waitForPluginControl("plugin-store-component-section", { componentKind: "mcp" }, 30_000);
     await backToStoreList();
     await setPayswapEnabledThroughSwitch(true);
-    expect((await readPayswapConfigEntry()).enabled).toBe(true);
+    // 修复原因：见 waitForPayswapConfigEntry —— T1 的持久化事实用有界等待观察，
+    // 不再依赖 universe 翻转后的立即读盘（首次 CI 全量运行 line-193 的证据缺口）。
+    await waitForPayswapConfigEntry(
+      (entry) => entry.enabled === true,
+      "T1 enable 后 enabledPlugins[payswap] 未在 30s 内落盘",
+    );
 
     // --- S1：Class A 表面经真实 plugin-ui 沙箱打开（side-pane 市场详情入口） ---
     await openPluginCard(PAYSWAP_PLUGIN_ID);
