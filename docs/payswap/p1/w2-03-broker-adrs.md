@@ -1451,3 +1451,187 @@ suite; new `gates-windows` job compiles the helper with the OS-bundled `csc.exe`
 (warnings are errors) and runs the peer-verification fail-closed rows +
 the platform suite on `windows-latest` (the host half is already pinned on
 POSIX; a mock never runs there).
+
+---
+
+## ADR-15 — Helper-binary packaging for the peer-verification arms: one prepare discipline, one manifest, two distribution vehicles, zero broker-code change (the D13.9/D14.10 gap closure — decided before implementation)
+
+**Context.** ADR-13 D13.9 and ADR-14 D14.10 record the packaging gap: the
+arms are proven on their CI runners with env-key provisioning
+(`PAYSWAP_BROKER_HELPER_{PATH,SHA256}`), but no production distribution
+ships the helper binary, so production darwin and win32 boot
+`degraded_refusing` — the honest state, but not the intended one. Two
+production surfaces host the broker, and both already ship native binaries:
+
+1. **The CLI SEA** (`@zcode/cli` single executable): native tools are
+   compiled/prepared into `packages/desktop/bundled-tools/<platformKey>/…`
+   (`prepareSeaRuntimeToolAssets`), embedded as SEA assets under
+   `zcode-runtime-tools/<id>/<sha256>/<binary>` plus a `manifest.json`
+   (`collectSeaRuntimeToolAssets`), and at runtime `ensureSeaRuntimeTools`
+   (`packages/cli/src/sea-runtime-tools.ts`) extracts each tool to
+   `~/.zcode/cache/runtime_tools/<target>/<id>/<version>-<sha256>/` with
+   size + SHA-256 re-verification against the manifest, an atomic
+   tmp-then-rename install, a marker file, `chmod 0755`, and env-var
+   injection at `main.ts` startup that never overrides an operator-set
+   value.
+2. **The desktop app** (`@zcode/desktop`, which runs the same
+   `apps/zcode-cli/packages/cli/dist/zcode.cjs` agent bundle under
+   `ELECTRON_RUN_AS_NODE`): native helpers are staged into
+   `bundled-tools/<targetPlatform.key>/…` by prepare scripts, copied into
+   app resources by electron-builder `extraResources`, resolved at runtime
+   via `process.resourcesPath` with dev-tree fallbacks (the
+   `windowsChromeAppBoundKey` resolution family), and supplied to the
+   agent through the desktop's agent-env assembly (`desktopRuntimeEnv.ts`,
+   the CUA-helper-app supply precedent).
+
+This ADR defines the packaging as a scope decision ahead of implementation
+(the ADR-1/ADR-2 forward-decision pattern of this file): the delivery PR
+cites this ADR, lands RED-first, and carries the register sentence.
+
+**Decision.**
+
+1. **D15.1 — One prepare discipline, CLI-owned, byte-for-byte the gates'
+   compile.** A single CLI-owned prepare script
+   (`apps/zcode-cli/packages/cli/scripts/prepare-payswap-broker-peer-helper.mjs`)
+   compiles the helper from `apps/zcode-cli/native/payswap-broker-peer-macos/helper.c`
+   (darwin) and `apps/zcode-cli/native/payswap-broker-peer-windows/Program.cs`
+   (win32) with exactly the CI-gate discipline: darwin `cc -O2 -Wall
+   -Wextra -Werror` (`-arch <target-arch>` when cross-compiling within
+   darwin), win32 OS-bundled .NET Framework `csc.exe` with `/nologo
+   /optimize+ /target:exe /platform:<arch> /warnaserror+
+   /win32manifest:app.manifest` (x64 by default; arm64 only via an explicit
+   Roslyn `ZCODE_CSC_PATH`, the browser-import-helper precedent's rule).
+   Any flag change re-opens the platform rows — the packaged binary must be
+   the proven binary. Output stages to
+   `packages/desktop/bundled-tools/<platformKey>/payswap-broker-peer/`
+   (the runtime-tools staging root). Linux is a deliberate no-op: the
+   Linux arm has no helper (ADR-3 direct reader; D13.8's
+   no-second-Linux-implementation rule). Host-platform builds fail loudly
+   when the toolchain is missing (a darwin/win32 release build that would
+   ship degraded must be a deliberate act, not an accident); foreign-host
+   cross-builds skip the helper and stage an explicit `helper: null`
+   manifest (D15.2) — the SEA/desktop artifact still builds, and the
+   platform boots `degraded_refusing` honestly.
+
+2. **D15.2 — The per-target helper manifest (v1), shipped as a pair.**
+   `manifest.json` staged next to the binary records
+   `{ "version": 1, "target": "<sea-target>", "helper": { "binaryName",
+   "sha256", "size" } | null }` — the digest computed from the compiled
+   binary at prepare time; `null` is the explicit absent record. Both
+   distribution vehicles embed binary + manifest as an inseparable pair;
+   a binary without its manifest (or vice versa) is never adopted. The
+   `target` field uses the SEA target family (`darwin-x64`, `win-arm64`, …)
+   exactly as the runtime-tools manifest does.
+
+3. **D15.3 — SEA embedding and extraction (the runtime-tools pattern).**
+   The SEA collector embeds, for darwin/win targets only:
+   `zcode-payswap-broker-peer/<sha256>/<binaryName>` plus
+   `zcode-payswap-broker-peer/manifest.json`. At runtime,
+   `ensureSeaPayswapBrokerPeerHelper()` (a `sea-runtime-tools.ts` sibling,
+   wired at the same `main.ts` injection site) validates the manifest
+   (strict closed shape: version, target match against the running
+   platform/arch, binary-name, 64-hex digest, size), extracts to
+   `~/.zcode/cache/payswap_broker_peer/<target>/<sha256>/` with the same
+   disciplines — size + SHA-256 verification of the extracted bytes
+   against the manifest, atomic tmp-then-rename, marker file, `chmod
+   0755` — and injects `PAYSWAP_BROKER_HELPER_PATH` +
+   `PAYSWAP_BROKER_HELPER_SHA256` into `process.env`, only when the
+   platform is darwin/win32, a helper entry exists, and the operator has
+   not already set the keys (the runtime-tools precedence rule verbatim).
+   Non-SEA (node dev form) never injects: env-key provisioning remains
+   the dev/CI discipline (D13.9 unchanged). Linux SEAs embed nothing
+   broker-helper-related.
+
+4. **D15.4 — Desktop staging and supply (the browser-import-helper
+   pattern).** The desktop prepare chain calls the same CLI-owned prepare
+   script (one implementation, both vehicles); electron-builder
+   `extraResources` copies the staged pair into the app resources; the
+   desktop's agent-env assembly resolves
+   `process.resourcesPath/payswap-broker-peer/<binary>`, reads the staged
+   manifest, verifies the binary digest at injection time, and injects the
+   same two env keys into the agent env (the CUA-helper-app supply
+   precedent) — with the same precedence rule and the same honest no-
+   injection on any mismatch (agent boots `degraded_refusing`, §5.4
+   diagnostics reachable). Dev fallbacks follow the `bundled-tools`
+   relative-path family.
+
+5. **D15.5 — Zero broker-code change; the env seam stays the single
+   supply point.** `resolveDefaultPeerRelayHelper` (D13.9) is unchanged —
+   packaging only supplies its two inputs. `verifyHelperBinary` (D13.4)
+   remains the spawn-time gate: it re-hashes the extracted on-disk file
+   against the injected digest before any spawn, binding the file against
+   post-extraction tampering (the extraction-time check and the
+   spawn-time check are two verifications of one digest, not a
+   redundancy). The env keys stay host-only and stripped from every child
+   env (the D13.9 runtimeEnv strip lists, unchanged).
+
+6. **D15.6 — The manifest's trust basis is the distribution vehicle.** In
+   the SEA, manifest and binary live inside the postject-injected blob —
+   tampering with them means tampering with the executable. On the
+   desktop, they live inside the app resources covered by the app's
+   platform signing and installer integrity. The manifest discipline's
+   job is binding helper→digest within the shipped artifact and
+   preventing stale or mismatched helper adoption (the §3.4/§10.3
+   family), not defending against installation tampering: an attacker who
+   can rewrite the installation can already run arbitrary code as the
+   user, and that class is already recorded (D13.6/D14.4 — fabricated
+   relay facts still cannot pass §5.5(3) without the instance token, and
+   every response is host-signed per §6.4/§6.5).
+
+7. **D15.7 — The evidence boundary (D13.10/D14.10's form).** Host half,
+   POSIX-runnable (Linux CI, fakes): manifest validation rows (shape,
+   target match, digest format); extraction rows (size/hash mismatch →
+   no injection; cache-marker currency; atomic install); injection
+   precedence rows (operator env wins; non-SEA no-op; absent/`null`
+   helper no-op; wrong-target refusal); collector rows (staged fake
+   binary → correct asset keys + manifest; absent helper → `helper: null`
+   manifest, no build failure); desktop-injection resolver rows (fake
+   `resourcesPath` + manifest → the env pair; digest mismatch → no
+   injection). Platform rows (gates-macos/gates-windows): the prepare
+   script compiles the real helper with the gates discipline and the
+   existing §5.1/§5.3 platform suites re-run against the prepare-script
+   output (path + manifest digest) instead of the ad-hoc CI compile —
+   proving the packaged artifact is the proven artifact. The full SEA
+   assembly extends the existing `build-sea` test suite with the new
+   collector (fake binaries). A mock never greens a platform row
+   (playbook §5(5)).
+
+8. **D15.8 — Scope guard: this is P1.3 follow-through, not a new P1
+   acceptance clause.** P1's acceptance (roadmap §P1) is behavioral and
+   already satisfied by the arms' fail-closed rows; packaging closes the
+   recorded production-deployment residual without redefining milestone
+   scope. The register sentence for the closure rides the implementation
+   PR's evidence, per the register's own law.
+
+**Rejected alternatives (recorded).**
+
+- *Env-only provisioning forever (status quo):* production darwin/win32
+  permanently `degraded_refusing`; the arms' verified boot unrealized in
+  every shipped artifact. Rejected — this ADR.
+- *First-boot download (install-on-demand):* adds a network-trust surface
+  to the money-path trust chain and defeats the pinned-digest discipline's
+  offline honesty; the env keys already are the manual equivalent.
+  Rejected for v1; do not re-attempt without a TL decision.
+- *N-API addon or install-time build:* ADR-3/13/14's build-burden reasons;
+  additionally the SEA has no install step. Rejected (recorded so it is
+  not re-attempted).
+- *Two manifest formats (SEA and desktop):* divergence between the
+  vehicles is a stale-helper adoption surface. One format, both vehicles.
+- *A resolution bypass flag for distribution-supplied binaries:* never —
+  D13.4's spawn-time verification applies to every supply source; the
+  seam has exactly one verification point.
+- *Linux helper "for symmetry":* the Linux arm has no helper by design
+  (D13.8); adding one would fork the direct reader. Rejected.
+
+**Consequences.** Release builds that run on darwin/win32 hosts carry the
+helper in both vehicles and production boots verified; cross-builds and
+explicit operator choices can still ship the honest degraded state, but
+only as a recorded `helper: null`/absent manifest, never silently. Linux,
+the dev/CI env-key discipline, the broker's boot law, and the arms'
+platform rows are untouched. The delivery plan is a single implementation
+PR (prepare script + collector + SEA extractor + desktop resolver wiring +
+the D15.7 test map + the register sentence), RED-first, citing this ADR.
+
+**Evidence.** Planned per D15.7 (this ADR is the scope decision; the
+delivery PR carries the RED→GREEN record, the CI gate runs, and the
+register sentence).
