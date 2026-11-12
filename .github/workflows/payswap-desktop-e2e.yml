@@ -1,0 +1,84 @@
+# PaySwap P1 — desktop Browser E2E battery on a supported desktop runner.
+#
+# Why this job exists (the register's recorded blocker, superseded here):
+# the E3-acceptance desktop Browser E2E clause, the D12.7 real-window arms and
+# the plugin-lifecycle arm were blocked in the dev sandbox on a precisely
+# characterized renderer/process defect family (electron ThreadPoolForeground
+# int3 traps during the enable→rebuild chain; deterministic across three
+# verification generations, including a documents-plugin control probe that
+# eliminates a PaySwap-specific cause). The TL handoff's rule: a sandbox
+# limitation is not a pass and is not a reason to weaken the acceptance
+# requirement — the battery runs on a desktop-capable environment instead.
+#
+# The environment is the repository's own container harness
+# (Dockerfile.desktop-e2e + scripts/test-desktop-e2e-container.sh): node 24 +
+# every Electron runtime library + Xvfb + dbus, the frozen-lockfile workspace
+# install inside the image, the repo's chromedriver preflight into a cache
+# volume, replay-isolated networking (--network none; the PaySwap/browser
+# specs need no external network), and spec selection via ZCODE_E2E_SPEC.
+#
+# The battery (10 specs):
+# - payswap-approval-card: the D12.7 real-window approval rows (channel
+#   fail-closed, T3 live flip, the full card flow, N15 replay, deny +
+#   wrong-secret, forged-sender, T7 item 3 card-face arm).
+# - payswap-plugin-lifecycle: the official-seed S0b baseline → T1 enable →
+#   S1 Class-A surface through the real plugin-ui sandbox guest → T6
+#   declared-boolean option → T2 opt-in → T4 disable → T5 uninstall →
+#   restore (the marketplace pipeline end to end).
+# - the eight existing Browser specs (the E3-acceptance preservation clause:
+#   "the Browser battery unchanged").
+name: payswap-desktop-e2e
+
+on:
+  pull_request:
+    paths:
+      - "packages/desktop/**"
+      - "packages/ui/**"
+      - "packages/shared/**"
+      - "apps/zcode-cli/**"
+      - "scripts/test-desktop-e2e-container.sh"
+      - "Dockerfile.desktop-e2e"
+      - ".github/workflows/payswap-desktop-e2e.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: payswap-desktop-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      # 修复原因（先例：test-desktop-e2e-container.sh 的驱动卷纪律）：chromedriver 必须由
+      # 仓库自己的 preflight 解析（与容器内 Chromium 精确版本配对），不能依赖 runner 预装。
+      # 镜像构建 + 驱动预取 + 回放隔离运行全部由该脚本串起；退出码即 docker run 的退出码。
+      - name: Run the PaySwap desktop Browser E2E battery (container harness, replay-isolated)
+        env:
+          ZCODE_E2E_RUN_ID: payswap-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          E2E_SPEC: >-
+            ./test/e2e/payswap-approval-card.test.ts,
+            ./test/e2e/payswap-plugin-lifecycle.test.ts,
+            ./test/e2e/browser-empty-state-deferred-guest.test.ts,
+            ./test/e2e/browser-human-viewport-preference.test.ts,
+            ./test/e2e/browser-open-external-file-url.test.ts,
+            ./test/e2e/browser-permission-prompt.test.ts,
+            ./test/e2e/browser-permission-site-settings.test.ts,
+            ./test/e2e/browser-tab-close-cross-workspace.test.ts,
+            ./test/e2e/browser-tab-close-idempotent.test.ts,
+            ./test/e2e/browser-tab-residency.test.ts
+        run: bash scripts/test-desktop-e2e-container.sh
+
+      - name: Upload E2E artifacts (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payswap-desktop-e2e-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: packages/desktop/.e2e-artifacts/
+          if-no-files-found: ignore
+          retention-days: 14
