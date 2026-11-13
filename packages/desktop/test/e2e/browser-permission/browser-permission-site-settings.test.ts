@@ -102,25 +102,38 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
     expect(originText).toBe(testServer.origin);
 
     // geolocation 逐项改为「允许」→ guest 内 permissions.query 立即变 granted
-    // 修复原因（CI run 43447139431）：Radix 选项的 WebDriver 坐标点击偶发不落位（无错
-    // 报但 onSelect 未触发 → 保存提示不出现；同族坐标交互问题）。真实用户的自然反应是
-    // 重开下拉重选 —— 有界重试 2 次，断言语义不变（保存提示必须出现）。
-    for (let attempt = 1; attempt <= 2; attempt += 1) {
-      await clickTestIdByWebDriver("site-permission-setting-geolocation");
-      await clickTestIdByWebDriver("site-permission-option-allow");
-      const saved = await browser.waitUntil(
-        async () =>
-          !!(await browser.execute(
-            () => !!document.querySelector('[data-testid="browser-permission-saved"]'),
-          )),
-        { timeout: attempt === 1 ? 6_000 : 10_000, timeoutMsg: "保存提示没有出现" },
-      ).then(
-        () => true,
-        () => false,
-      );
-      if (saved) break;
-      if (attempt === 2) {
-        throw new Error("保存提示没有出现（两次选择「允许」后仍未保存）");
+    // 修复原因（CI run 43447139431/43454124420）：设置标签页里 Radix 控件的 WebDriver
+    // 坐标点击偶发不落位——两种表现：触发器 10s 不可点击（run 43454124420），或点击
+    // 无报错但 onSelect 未触发 → 保存提示不出现（run 43447139431）。同族坐标交互
+    // 问题。真实用户的自然反应是重开重选 —— 有界重试 3 次（两次点击 + 保存提示为
+    // 一个完整尝试），断言语义不变（保存提示必须出现、granted 必须兑现）。
+    let settingsSaved = false;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        await clickTestIdByWebDriver("site-permission-setting-geolocation", {
+          timeout: 15_000,
+        });
+        await clickTestIdByWebDriver("site-permission-option-allow", { timeout: 10_000 });
+      } catch (error) {
+        if (attempt === 3) throw error;
+        await browser.pause(750);
+        continue;
+      }
+      settingsSaved = await browser
+        .waitUntil(
+          async () =>
+            !!(await browser.execute(
+              () => !!document.querySelector('[data-testid="browser-permission-saved"]'),
+            )),
+          { timeout: attempt === 1 ? 6_000 : 10_000, timeoutMsg: "保存提示没有出现" },
+        )
+        .then(
+          () => true,
+          () => false,
+        );
+      if (settingsSaved) break;
+      if (attempt === 3) {
+        throw new Error("保存提示没有出现（三次选择「允许」后仍未保存）");
       }
     }
     await browser.waitUntil(
