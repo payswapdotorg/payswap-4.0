@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { TID_SIDE_PANE_TOGGLE } from "@zcode/shared/test-ids";
 import {
   clearAppData,
+  DEFAULT_WORKSPACE,
   getE2EAppDataPaths,
   waitForDefaultWorkspaceReady,
 } from "./helpers/desktop-app.js";
@@ -59,24 +60,50 @@ interface PayswapCliConfig {
   };
 }
 
-async function readCliConfig(): Promise<PayswapCliConfig> {
-  const configPath = join(getE2EAppDataPaths().homeDir, ".zcode", "cli", "config.json");
-  try {
-    return JSON.parse(await readFile(configPath, "utf8")) as PayswapCliConfig;
-  } catch {
-    return {};
+/**
+ * 修复原因（CI run 43174278149 —— 该 spec 历史上首次在 desktop-capable 环境真正
+ * 跑过 enable 步）：插件的 enabled/options 持久化由 CLI 分层写入 workspace 层
+ * （<home>/ZCodeProject/.zcode/config.json，见该 run 的候选倾倒证据；分层优先级
+ * 见 apps/zcode-cli plugins-command 的 user/workspace 注释），旧 reader 只读用户层
+ * <home>/.zcode/cli/config.json（workspace 会话下该文件 absent）→ T1 的落盘断言
+ * 永远超时。改为读取两级真实 config.json 的并集（workspace 层后读、覆盖 user 层，
+ * 与 CLI 的 effective 语义一致）；T5 清理断言因此要求两级都没有 payswap 条目
+ * —— 比旧断言更强，不足削弱。
+ */
+async function readCliConfigs(): Promise<PayswapCliConfig[]> {
+  const { homeDir } = getE2EAppDataPaths();
+  const candidates = [
+    join(homeDir, ".zcode", "cli", "config.json"),
+    join(DEFAULT_WORKSPACE, ".zcode", "config.json"),
+    join(homeDir, ".zcode", "config.json"),
+  ];
+  const configs: PayswapCliConfig[] = [];
+  for (const configPath of candidates) {
+    try {
+      configs.push(JSON.parse(await readFile(configPath, "utf8")) as PayswapCliConfig);
+    } catch {
+      /* 该层 absent 是合法状态：分层落盘只写实际发生变更的层。 */
+    }
   }
+  return configs;
 }
 
 async function readPayswapConfigEntry(): Promise<{
   enabled: boolean | undefined;
   financialWorkspace: unknown;
 }> {
-  const config = await readCliConfig();
-  return {
-    enabled: config.plugins?.enabledPlugins?.[PAYSWAP_PLUGIN_ID],
-    financialWorkspace: config.plugins?.options?.[PAYSWAP_PLUGIN_ID]?.financialWorkspace,
-  };
+  let enabled: boolean | undefined;
+  let financialWorkspace: unknown;
+  // 候选顺序即优先级：后面的层（workspace）覆盖前面的层（user），与 CLI 的
+  // effective 读取语义一致；两级都无条目时保持 undefined（T5 清理断言的事实）。
+  for (const config of await readCliConfigs()) {
+    const layerEnabled = config.plugins?.enabledPlugins?.[PAYSWAP_PLUGIN_ID];
+    if (layerEnabled !== undefined) enabled = layerEnabled;
+    const layerFinancialWorkspace =
+      config.plugins?.options?.[PAYSWAP_PLUGIN_ID]?.financialWorkspace;
+    if (layerFinancialWorkspace !== undefined) financialWorkspace = layerFinancialWorkspace;
+  }
+  return { enabled, financialWorkspace };
 }
 
 /** 插件宇宙（listPlugins）里的 payswap enabled 态 —— S 状态的运行时事实。 */

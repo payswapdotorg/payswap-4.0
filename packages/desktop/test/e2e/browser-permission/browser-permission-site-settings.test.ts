@@ -57,8 +57,22 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
     await prepareV4ConversationE2E({ skipProvider: true });
     await openFirstBrowserTab();
     await navigateTo(testServer.origin);
-    // URL 输入仍聚焦时滑杆按设计隐藏；真实点击网页结束地址编辑，再使用站点权限入口。
-    await clickTestIdByWebDriver(TID_BROWSER_WEBVIEW);
+    // URL 输入仍聚焦时滑杆按设计隐藏（BrowserToolbar 的 group-has-[input:focus] 隐藏规则）。
+    // 修复原因（CI run 43174278149，该 spec 首次在容器环境运行）：WebDriver 对
+    // <webview> 的坐标点击在容器里没有把焦点转移给 guest —— 地址输入保持 focus，
+    // 滑杆容器持续 display:none，click 永远等不到 interactable。改为先显式断言
+    // 「聚焦编辑时隐藏」这一设计契约（比旧行为更强的正向覆盖），再用键盘 Tab
+    // 结束地址编辑——与布局/焦点路由无关的真实用户手势。
+    expect(
+      await browser.execute(
+        (triggerId: string) => {
+          const trigger = document.querySelector<HTMLElement>(`[data-testid="${triggerId}"]`);
+          return trigger !== null && trigger.checkVisibility() === false;
+        },
+        "browser-permission-trigger",
+      ),
+    ).toBe(true);
+    await browser.keys("Tab");
 
     // 未授权默认 denied
     expect(await runInGuest("window.__permissionState('geolocation')")).toBe("denied");

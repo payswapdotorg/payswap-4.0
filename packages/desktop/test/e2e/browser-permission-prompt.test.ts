@@ -56,9 +56,31 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
 
   afterEach(async function () {
     if (this.currentTest?.state !== "failed") return;
+    // 修复原因（run 43174278149 的诊断缺口）：pageResult undefined + 无确认条只能
+    // 间接推断 guest 崩溃重建；补 webContents 清单（id/type/url/crashed）与当前
+    // origin/确认条计数，让下一次失败能直接读到 guest 换代证据。
+    const webContentsInventory = await browser.electron
+      .execute(async (electron) => {
+        return electron.webContents.getAllWebContents().map((contents) => ({
+          id: contents.id,
+          type: contents.getType(),
+          url: contents.getURL().slice(0, 120),
+          crashed:
+            typeof (contents as unknown as { isCrashed?: () => boolean }).isCrashed ===
+            "function"
+              ? (contents as unknown as { isCrashed: () => boolean }).isCrashed()
+              : null,
+        }));
+      })
+      .catch((error: unknown) => `inventory unavailable: ${String(error)}`);
     console.info("[permission-e2e] camera diagnosis", {
-      pageResult: await runInGuest("window.__mediaResult"),
-      state: await runInGuest("window.__permissionState('camera')"),
+      pageResult: await runInGuest("window.__mediaResult").catch(() => "<guest unavailable>"),
+      state: await runInGuest("window.__permissionState('camera')").catch(
+        () => "<guest unavailable>",
+      ),
+      currentOrigin: await runInGuest("location.origin").catch(() => "<guest unavailable>"),
+      promptCount: await countPermissionPrompts().catch(() => -1),
+      webContentsInventory,
     });
   });
 
@@ -86,49 +108,59 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
 
     // ── 场景一：默认拒绝（CNVD 核心断言：不再被 Electron 自动授予）
     await navigateTo(blockServer.origin);
+    // 两个测试 server 服务同一张页面（title 相同），导航断言无法区分实际 origin；
+    // 显式断言当前 origin（guest 崩溃重建会恢复到 lastRestorableUrl，见 requestMediaAndAwait）。
+    expect(await runInGuest("location.origin")).toBe(blockServer.origin);
     expect(await runInGuest("window.__permissionState('camera')")).toBe("denied");
 
     // ── 场景二：确认条 → 不允许（本次拒绝，不记忆：二次请求重新弹）
     // executeJavaScript 会等待 Promise；请求先以 void 返回，测试才能点击正在等待的权限确认条。
-    await runInGuest(
-      "void window.__getUserMediaResult().then((value) => { window.__mediaResult = value; })",
+    await requestMediaAndAwait(
+      "window.__mediaResult",
+      countPermissionPrompts,
+      (count) => count > 0,
+      15_000,
+      "权限确认条没有出现",
     );
-    await waitForPermissionPrompt();
     await clickTestIdByWebDriver(TID_BROWSER_PERMISSION_DENY);
     await browser.waitUntil(
       async () => (await runInGuest("window.__mediaResult")) === "NotAllowedError",
       { timeout: 15_000, timeoutMsg: "点「不允许」后 getUserMedia 应被拒绝" },
     );
     // 不记忆：二次请求确认条重新出现
-    await runInGuest(
-      "void window.__getUserMediaResult().then((value) => { window.__mediaResult2 = value; })",
+    await requestMediaAndAwait(
+      "window.__mediaResult2",
+      countPermissionPrompts,
+      (count) => count > 0,
+      15_000,
+      "权限确认条没有出现",
     );
-    await waitForPermissionPrompt();
     await clickTestIdByWebDriver(TID_BROWSER_PERMISSION_DENY);
 
     // ── 场景三：确认条 → 访问此网站时允许（持久）
     await navigateTo(allowServer.origin);
+    expect(await runInGuest("location.origin")).toBe(allowServer.origin);
     expect(await runInGuest("window.__permissionState('camera')")).toBe("denied");
-    await runInGuest(
-      "void window.__getUserMediaResult().then((value) => { window.__mediaResult = value; })",
+    await requestMediaAndAwait(
+      "window.__mediaResult",
+      countPermissionPrompts,
+      (count) => count > 0,
+      15_000,
+      "权限确认条没有出现",
     );
-    await waitForPermissionPrompt();
     await clickTestIdByWebDriver(TID_BROWSER_PERMISSION_ALLOW_ALWAYS);
     // 允许后 permissions.query 变为 granted；无摄像头设备时 getUserMedia 是 NotFoundError（权限已过）
     await browser.waitUntil(
       async () => (await runInGuest("window.__permissionState('camera')")) === "granted",
       { timeout: 15_000, timeoutMsg: "「访问此网站时允许」后 permissions.query 应为 granted" },
     );
-    // 二次请求不再弹确认条
-    await runInGuest(
-      "void window.__getUserMediaResult().then((value) => { window.__mediaResult2 = value; })",
-    );
-    await browser.waitUntil(
-      async () => {
-        const result = await runInGuest("window.__mediaResult2");
-        return result === "ok" || result === "NotFoundError";
-      },
-      { timeout: 15_000, timeoutMsg: "允许后二次 getUserMedia 应完成（ok 或无设备）" },
+    // 二次请求不再弹确认条（完成即断言目标；guest 换代恢复见 requestMediaAndAwait）
+    await requestMediaAndAwait(
+      "window.__mediaResult2",
+      async () => runInGuest("window.__mediaResult2"),
+      (result) => result === "ok" || result === "NotFoundError",
+      15_000,
+      "允许后二次 getUserMedia 应完成（ok 或无设备）",
     );
     expect(await countPermissionPrompts()).toBe(0);
     // Electron 查询参数可能带尾部斜杠；授权后刷新仍应命中同一 origin 的持久记录。
@@ -181,8 +213,7 @@ async function readBrowserGuestWebContentsId(): Promise<number> {
   return webContentsId;
 }
 
-async function runInGuest<T>(script: string): Promise<T> {
-  const webContentsId = await readBrowserGuestWebContentsId();
+async function runInGuestWithId<T>(webContentsId: number, script: string): Promise<T> {
   return browser.electron.execute(
     async (electron, guestId: number, code: string) => {
       const guest = electron.webContents.fromId(guestId);
@@ -196,15 +227,57 @@ async function runInGuest<T>(script: string): Promise<T> {
   ) as Promise<T>;
 }
 
+async function runInGuest<T>(script: string): Promise<T> {
+  return runInGuestWithId<T>(await readBrowserGuestWebContentsId(), script);
+}
+
 async function countPermissionPrompts(): Promise<number> {
   return browser.execute((testIdValue: string) => {
     return document.querySelectorAll(`[data-testid="${testIdValue}"]`).length;
   }, TID_BROWSER_PERMISSION_PROMPTS);
 }
 
-async function waitForPermissionPrompt(): Promise<void> {
-  await browser.waitUntil(async () => (await countPermissionPrompts()) > 0, {
-    timeout: 15_000,
-    timeoutMsg: "权限确认条没有出现",
-  });
+/**
+ * 修复原因（CI run 43174278149 场景三）：容器里 guest renderer 崩溃会触发 app 的
+ * render-process-gone 原位重建（UnifiedBrowserView generation 换代，新 guest
+ * webContents id）——已发出的 getUserMedia 随旧 guest 消失（__mediaResult 永远
+ * pending），权限确认条也因弹层的 guest 归属过滤（请求携带旧 id）不再渲染。
+ * 等待期间检测 guest 换代，并在新 guest（同 origin 的恢复页）上重新发起同一
+ * 请求；全部断言保持不变，崩溃见证写日志供 register 记录。环境无崩溃（id
+ * 不变）时行为与旧实现完全一致。
+ */
+async function requestMediaAndAwait<T>(
+  resultKey: "window.__mediaResult" | "window.__mediaResult2",
+  observe: () => Promise<T>,
+  isSettled: (observed: T) => boolean,
+  timeoutMs: number,
+  timeoutMsg: string,
+): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  let firedGuestId = await readBrowserGuestWebContentsId();
+  await runInGuestWithId(
+    firedGuestId,
+    `void window.__getUserMediaResult().then((value) => { ${resultKey} = value; })`,
+  );
+  let lastObserved = await observe();
+  while (!isSettled(lastObserved)) {
+    if (Date.now() >= deadline) {
+      throw new Error(timeoutMsg);
+    }
+    const currentGuestId = await readBrowserGuestWebContentsId().catch(() => null);
+    if (currentGuestId !== null && currentGuestId !== firedGuestId) {
+      console.info(
+        "[permission-e2e] guest rebuilt during media wait; re-firing on the new guest",
+        { firedGuestId, currentGuestId, resultKey },
+      );
+      firedGuestId = currentGuestId;
+      await runInGuestWithId(
+        currentGuestId,
+        `void window.__getUserMediaResult().then((value) => { ${resultKey} = value; })`,
+      );
+    }
+    await browser.pause(150);
+    lastObserved = await observe();
+  }
+  return lastObserved;
 }

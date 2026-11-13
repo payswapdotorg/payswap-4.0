@@ -82,11 +82,22 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: payswap-desktop-e2e-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
-          # 修复原因（run 43161767622 的 artifact 为空）：harness 诊断落在 .e2e-artifacts，
-          # 而 e2e 隔离 home（含真实落盘的 cli config —— lifecycle 诊断证据）在
-          # .e2e-home-<runId>。一并收集（仅含合成 e2e 数据与假凭据，可安全上传）。
+          # 修复原因一（run 43161767622 的 artifact 为空）：harness 诊断落在 .e2e-artifacts，
+          # 而 e2e 隔离 home（含真实落盘的 config —— lifecycle 诊断证据）在
+          # .e2e-home-<runId>。
+          # 修复原因二（run 43174278149 仍为空，"No files were found"）：.e2e-artifacts 与
+          # .e2e-home-* 都以点开头，upload-artifact 默认 include-hidden-files: false 会跳过
+          # 全部隐藏路径——必须显式开启，否则任何路径都匹配不到。
+          # 同时纳入 app 主进程日志（<home>/.zcode/v2/logs/，permission policy 的
+          # decision/prompt-timeout 链路与 guest 崩溃重建定位都在 main 日志）与
+          # workspace 级 .zcode/（插件 enabled/options 的真实分层落盘位置）。
+          # 仅含合成 e2e 数据与假凭据，可安全上传。
           path: |
             packages/desktop/.e2e-artifacts/
             packages/desktop/.e2e-home-*/.zcode/cli/
+            packages/desktop/.e2e-home-*/.zcode/v2/logs/
+            packages/desktop/.e2e-home-*/.zcode/config.json
+            packages/desktop/.e2e-home-*/ZCodeProject/.zcode/
+          include-hidden-files: true
           if-no-files-found: ignore
           retention-days: 14
