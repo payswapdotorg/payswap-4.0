@@ -289,6 +289,13 @@ async function countPermissionPrompts(): Promise<number> {
  * 等待期间检测 guest 换代，并在新 guest（同 origin 的恢复页）上重新发起同一
  * 请求；全部断言保持不变，崩溃见证写日志供 register 记录。环境无崩溃（id
  * 不变）时行为与旧实现完全一致。
+ *
+ * 修复原因（CI run 43456602866 场景二）：另一同族表现 —— 请求发出后 Chromium 层
+ * 偶发不再调用 request handler（media 管线 teardown 竞态；desktop 日志零
+ * permission 活动、promise 永久 pending、guest 未换代未崩溃）。补有界重发：
+ * 结果键仍未结算且 4s 无进展时重发同一 getUserMedia（用户「没弹窗再点一次」的
+ * 自然手势；策略层同 origin+permission 的 inflight 去重让并发请求共享同一弹条，
+ * 不会双弹）。最多 3 次发射，全部断言不变。
  */
 async function requestMediaAndAwait<T>(
   resultKey: "window.__mediaResult" | "window.__mediaResult2",
@@ -298,11 +305,18 @@ async function requestMediaAndAwait<T>(
   timeoutMsg: string,
 ): Promise<T> {
   const deadline = Date.now() + timeoutMs;
+  const refireIntervalMs = 4_000;
+  const maxFires = 3;
   let firedGuestId = await readBrowserGuestWebContentsId();
-  await runInGuestWithId(
-    firedGuestId,
-    `void window.__getUserMediaResult().then((value) => { ${resultKey} = value; })`,
-  );
+  const fireRequest = async (guestId: number): Promise<void> => {
+    await runInGuestWithId(
+      guestId,
+      `void window.__getUserMediaResult().then((value) => { ${resultKey} = value; })`,
+    );
+  };
+  await fireRequest(firedGuestId);
+  let lastFireAt = Date.now();
+  let fires = 1;
   let lastObserved = await observe();
   while (!isSettled(lastObserved)) {
     if (Date.now() >= deadline) {
@@ -315,10 +329,21 @@ async function requestMediaAndAwait<T>(
         { firedGuestId, currentGuestId, resultKey },
       );
       firedGuestId = currentGuestId;
-      await runInGuestWithId(
-        currentGuestId,
-        `void window.__getUserMediaResult().then((value) => { ${resultKey} = value; })`,
+      await fireRequest(currentGuestId);
+      lastFireAt = Date.now();
+      fires += 1;
+    } else if (
+      fires < maxFires &&
+      Date.now() - lastFireAt >= refireIntervalMs &&
+      (await runInGuest(`${resultKey} === undefined`).catch(() => false)) === true
+    ) {
+      console.info(
+        "[permission-e2e] request still pending with no progress; re-firing (media pipeline teardown race)",
+        { resultKey, fires },
       );
+      await fireRequest(firedGuestId);
+      lastFireAt = Date.now();
+      fires += 1;
     }
     await browser.pause(150);
     lastObserved = await observe();

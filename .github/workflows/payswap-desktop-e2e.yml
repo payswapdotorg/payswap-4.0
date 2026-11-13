@@ -67,11 +67,17 @@ jobs:
           # Chromium 的窗口遮挡判定不稳定（occlusion 误报），元素 checkVisibility 间歇性
           # false → "did not become interactable"（round2 绿 / round3 同码红，地址输入与
           # 滑杆两处）。补 occlusion/后台化缓解开关——纯环境稳定化，不动断言。
+          # 修复原因（run 43461767622 同族，Xvfb 无 WM）：无窗口管理器下 Chromium 的原生
+          # 窗口遮挡计算不稳定（元素 checkVisibility 间歇 false → "element not
+          # interactable"，历轮命中：地址输入/刷新按钮/滑杆/权限选项，逐元素重试治标）。
+          # --disable-features=CalculateNativeWinOcclusion 直接关掉遮挡计算本身
+          # （Electron/Xvfb CI 的经典开关，与本通道既有缓解叠加）。
           ZCODE_E2E_EXTRA_APP_ARGS: >-
             --use-fake-device-for-media-stream
             --disable-backgrounding-occluded-windows
             --disable-renderer-backgrounding
             --disable-background-timer-throttling
+            --disable-features=CalculateNativeWinOcclusion
           E2E_SPEC: >-
             ./test/e2e/payswap-approval-card.test.ts,
             ./test/e2e/payswap-plugin-lifecycle.test.ts,
