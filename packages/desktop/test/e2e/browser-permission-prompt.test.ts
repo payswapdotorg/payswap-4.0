@@ -152,23 +152,36 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
     );
 
     // ── 场景三：确认条 → 访问此网站时允许（持久）
-    // 修复原因（runs 43509583729/43511500562/43513067991 场景三同因复燃，43415362076
-    // 已登记族的残余窗口）：上面等待的是 deny 决策的 promise 结算，但 guest 的 media
-    // 管线 teardown 在结算之后仍在进行 —— 场景三导航后的首个 getUserMedia 若落在
-    // teardown 中途，Chromium 层不再调用 request handler（promise 永久 pending、
-    // 零 permission 活动 —— 与历次失败诊断一致）。决策结算后有界静默窗，让管线
-    // teardown 完成；断言语义不变。
+    // 修复原因（runs 43509583729/43511500562/43513067991/43518825483 场景三同因
+    // 复燃，43415362076 已登记族）：deny 决策的 promise 结算后 guest 的 media 管线
+    // teardown 仍在进行 —— 场景三导航后的首个 getUserMedia 若落在 teardown 中途，
+    // Chromium 层不再调用 request handler（promise 永久 pending、零 permission
+    // 活动 —— 与历次失败诊断一致；requestMediaAndAwait 的同文档 re-fire 无法
+    // 恢复已被吞的请求）。真实用户的自然恢复是刷新页面 —— 文档重载复位 media
+    // 管线后再请求一次。结算后静默窗 + 重载重试一次；断言语义不变（确认条
+    // 必须出现、决策落盘、granted 兑现、二次请求不弹）。
     await browser.pause(600);
     await navigateTo(allowServer.origin);
     expect(await runInGuest("location.origin")).toBe(allowServer.origin);
     expect(await runInGuest("window.__permissionState('camera')")).toBe("denied");
-    await requestMediaAndAwait(
-      "window.__mediaResult",
-      countPermissionPrompts,
-      (count) => count > 0,
-      15_000,
-      "权限确认条没有出现",
-    );
+    const awaitScenarioThreePrompt = () =>
+      requestMediaAndAwait(
+        "window.__mediaResult",
+        countPermissionPrompts,
+        (count) => count > 0,
+        15_000,
+        "权限确认条没有出现",
+      );
+    try {
+      await awaitScenarioThreePrompt();
+    } catch {
+      console.info(
+        "[permission-e2e] 场景三确认条未现 —— media 管线 teardown 竞态（43415362076 族）；重载文档后重试一次",
+      );
+      await navigateTo(allowServer.origin);
+      expect(await runInGuest("location.origin")).toBe(allowServer.origin);
+      await awaitScenarioThreePrompt();
+    }
     await clickTestIdByDom(TID_BROWSER_PERMISSION_ALLOW_ALWAYS);
     // 允许后 permissions.query 变为 granted；无摄像头设备时 getUserMedia 是 NotFoundError（权限已过）
     await browser.waitUntil(
