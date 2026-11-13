@@ -146,26 +146,26 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
 
     // geolocation 逐项改为「允许」→ guest 内 permissions.query 立即变 granted
     // 修复历史（run 43456602866/43459195997/43464558855/43467865171 → 43474036538 →
-    // 43494794568）：三轮归因迭代后，在本地真实 Chromium（agent-browser）用最小
-    // 复现页（真实 React 19 + 真实 @radix-ui/react-select，与本 spec 同控制形态）
-    // 定位到确定性根因：Radix Select 经触发器 pointerdown 打开后，会武装一个一次性
-    // document 级 pointerup 捕获监听；无 pointermove 时 delta={0,0}≤10 → 对选项的
-    // pointerup 调 preventDefault → React onPointerUp 不触发 → 不提交（A/B 实验：无
-    // move → defaultPrevented=true、value 停留 ask；pointermove 使 delta>10 →
-    // defaultPrevented=false、value=allow）。合成事件纪律因此必须：触发器 pointerdown
-    // 带真实中心坐标；选项上先派发 pointermove（真实用户移动，同时是 item 的 hover
-    // 聚焦路径）再完整指针序列 —— 捕获层走 else 分支（目标在 content 内不关闭），
-    // React onPointerUp 正常触发 → handleSelect 提交（已验证：提交+关闭+焦点归位）。
-    // 键盘路径（ArrowDown+Enter）在本地真实浏览器验证可用 —— CI 容器的 Enter 送达
-    // 缺陷是环境特定的（43474036538：ArrowDown 生效而 Enter 始终不触发 handleSelect，
-    // main 零写入 IPC）；真实 WebDriver 坐标点击链依赖命中测试，在 Xvfb 无 WM 容器
-    // 有历史 flake 记录（43494794568 attempt1：下拉打开后选项点击坐标未命中 portal
-    // → DismissableLayer 关闭且不提交）。梯子序：dom-pointer（确定性，无坐标命中
-    // 测试）→ keyboard（真实浏览器可用；CI 环境缺陷的持续证伪）→ real-pointer（坐标
-    // 依赖，最后手段）。每步后用值证据归因（data-permission-setting 只在写入+重读后
-    // 翻转），失败路径倾倒诊断快照；断言语义不变（保存提示必须出现、granted 必须
-    // 兑现、重置回 denied 必须兑现）。
-    const activationDisciplines = ["dom-pointer", "keyboard", "real-pointer"] as const;
+    // 43494794568 → 43503209205）：四轮归因迭代后，在本地真实 Chromium（agent-browser）
+    // 用最小复现页（真实 React 19 + 真实 @radix-ui/react-select，与本 spec 同受控形态）
+    // 定位并验证了确定性激活纪律。Radix Select 的两条指针激活路径：
+    // - mouse 路径：触发器 pointerdown(mouse) 开下拉的同时武装一个一次性 document 级
+    //   pointerup 捕获监听；无 pointermove 时 delta={0,0}≤10 → 对选项 pointerup 调
+    //   preventDefault → React onPointerUp 不触发 → 不提交（A/B 复现）；带坐标 +
+    //   pointermove 可解，但在 CI 容器仍有两种间歇失败态（43494794568：preventDefault
+    //   路径，下拉保持打开；43503209205：目标不在 content 判定路径，下拉被关闭）。
+    // - touch 路径（本 spec 主纪律，3/3 确定性）：触发器 pointerdown(touch) 只置
+    //   pointerTypeRef（不开下拉、不武装捕获监听 —— 位置引用仅 mouse 记录）；触发器
+    //   click → onClick(pointerType≠mouse) → handleOpen 开下拉；选项 pointerdown(touch)
+    //   + click → onClick(pointerType≠mouse) → handleSelect 提交并关闭。无坐标、无
+    //   pointerup、无捕获监听、无命中测试 —— 触屏用户 taps 的字面路径。
+    // 键盘路径（ArrowDown+Enter）在真实浏览器验证可用；CI 容器的 Enter 送达缺陷为
+    // 环境特定（43474036538：ArrowDown 生效而 Enter 始终不触发 handleSelect，main
+    // 零写入 IPC）。梯子序：dom-touch（确定性）→ dom-pointer（mouse 坐标纪律，CI 间歇
+    // 两态的持续证伪）→ keyboard。每步后用值证据归因（data-permission-setting 只在
+    // 写入+重读后翻转），失败路径倾倒诊断快照；断言语义不变（保存提示必须出现、
+    // granted 必须兑现、重置回 denied 必须兑现）。
+    const activationDisciplines = ["dom-touch", "dom-pointer", "keyboard"] as const;
     let settingsSaved = false;
     let lastDiagnosis = "unknown";
     for (let attempt = 1; attempt <= activationDisciplines.length; attempt += 1) {
@@ -204,7 +204,55 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
             );
             return true;
           });
-        if (discipline === "dom-pointer") {
+        if (discipline === "dom-touch") {
+          // 触屏用户 taps 的字面路径：触发器 pointerdown(touch)（只置 pointerTypeRef，
+          // 不开下拉、不武装捕获监听）→ 触发器 click（pointerType≠mouse → handleOpen）
+          // → 等选项渲染 → 选项 pointerdown(touch) + click（≠mouse → handleSelect）。
+          await browser.execute(() => {
+            const trigger = document.querySelector<HTMLElement>(
+              '[data-testid="site-permission-setting-geolocation"]',
+            );
+            if (!(trigger instanceof HTMLElement)) return false;
+            trigger.dispatchEvent(
+              new PointerEvent("pointerdown", {
+                bubbles: true,
+                cancelable: true,
+                button: 0,
+                pointerType: "touch",
+                isPrimary: true,
+              }),
+            );
+            trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+            return true;
+          });
+          await browser.waitUntil(
+            async () =>
+              await browser.execute(
+                () => !!document.querySelector('[data-testid="site-permission-option-allow"]'),
+              ),
+            { timeout: 10_000, timeoutMsg: "下拉没有渲染「允许」项（dom-touch）" },
+          );
+          const dispatched = (await browser.execute(() => {
+            const element = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
+              (item) => item.dataset.testid === "site-permission-option-allow",
+            );
+            if (!(element instanceof HTMLElement)) return false;
+            element.dispatchEvent(
+              new PointerEvent("pointerdown", {
+                bubbles: true,
+                cancelable: true,
+                button: 0,
+                pointerType: "touch",
+                isPrimary: true,
+              }),
+            );
+            element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+            return true;
+          })) as boolean;
+          if (!dispatched) {
+            throw new Error("「允许」项不可交互（dom-touch）");
+          }
+        } else if (discipline === "dom-pointer") {
           await openSelectByDom();
           await browser.waitUntil(
             async () =>
@@ -272,22 +320,6 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
           }
           await browser.pause(150);
           await browser.keys("Enter");
-        } else {
-          // real-pointer：真实 WebDriver 点击链（general-coding-mode 全量套件证明的
-          // 纪律）；坐标命中测试依赖 —— 在 Xvfb 无 WM 容器有历史 flake（43494794568
-          // attempt1 坐标未命中 portal → DismissableLayer 关闭且不提交），故梯子末位。
-          const trigger = await $('[data-testid="site-permission-setting-geolocation"]');
-          await trigger.waitForClickable({
-            timeout: 10_000,
-            timeoutMsg: "geolocation 触发器不可点击（real-pointer）",
-          });
-          await trigger.click();
-          const allowOption = await $('[data-testid="site-permission-option-allow"]');
-          await allowOption.waitForDisplayed({
-            timeout: 10_000,
-            timeoutMsg: "下拉没有渲染「允许」项（real-pointer）",
-          });
-          await allowOption.click();
         }
       } catch (error) {
         lastDiagnosis = `${discipline}:interact-error:${(error as Error).message}`;
