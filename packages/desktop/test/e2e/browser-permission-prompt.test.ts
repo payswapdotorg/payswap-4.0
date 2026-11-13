@@ -7,7 +7,7 @@ import {
   TID_BROWSER_REFRESH_BUTTON,
   TID_BROWSER_WEBVIEW,
 } from "@zcode/shared/test-ids";
-import { clickTestIdByDom, clickTestIdByWebDriver } from "./helpers/desktop-app.js";
+import { clickTestIdByDom } from "./helpers/desktop-app.js";
 import { openFirstBrowserTab } from "./helpers/browser-side-pane.js";
 import { prepareConversationE2E } from "./helpers/conversation-session.js";
 
@@ -122,7 +122,11 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
       15_000,
       "权限确认条没有出现",
     );
-    await clickTestIdByWebDriver(TID_BROWSER_PERMISSION_DENY);
+    // 修复原因（CI run 43456602866/43459195997）：确认条按钮是普通 Button（onClick），
+    // WebDriver 坐标点击间歇性「命令成功但未送达」（allow-always 点击后零 decision
+    // 落盘）——改 DOM click（clickTestIdByDom 的既有纪律）；断言（决策落盘 +
+    // NotAllowedError 结算 + 不记忆再弹）不变。
+    await clickTestIdByDom(TID_BROWSER_PERMISSION_DENY);
     await browser.waitUntil(
       async () => (await runInGuest("window.__mediaResult")) === "NotAllowedError",
       { timeout: 15_000, timeoutMsg: "点「不允许」后 getUserMedia 应被拒绝" },
@@ -135,7 +139,7 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
       15_000,
       "权限确认条没有出现",
     );
-    await clickTestIdByWebDriver(TID_BROWSER_PERMISSION_DENY);
+    await clickTestIdByDom(TID_BROWSER_PERMISSION_DENY);
     // 修复原因（CI run 43415362076 场景三挂起，两轮同因）：第二次 deny 的拒绝结算
     // 未被等待就立即导航 —— 新文档上的 getUserMedia 在 media 管线 teardown 中途发出，
     // Chromium 层不再调用 request handler（证据：场景二两次 user-prompt dismiss 决策
@@ -158,7 +162,7 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
       15_000,
       "权限确认条没有出现",
     );
-    await clickTestIdByWebDriver(TID_BROWSER_PERMISSION_ALLOW_ALWAYS);
+    await clickTestIdByDom(TID_BROWSER_PERMISSION_ALLOW_ALWAYS);
     // 允许后 permissions.query 变为 granted；无摄像头设备时 getUserMedia 是 NotFoundError（权限已过）
     await browser.waitUntil(
       async () => (await runInGuest("window.__permissionState('camera')")) === "granted",

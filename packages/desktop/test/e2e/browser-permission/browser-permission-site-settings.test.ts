@@ -4,7 +4,7 @@ import {
   TID_BROWSER_REFRESH_BUTTON,
   TID_BROWSER_WEBVIEW,
 } from "@zcode/shared/test-ids";
-import { clickTestIdByWebDriver } from "#e2e/helpers/desktop-app";
+import { clickTestIdByDom, clickTestIdByDomPointer } from "#e2e/helpers/desktop-app";
 import { openFirstBrowserTab } from "#e2e/helpers/browser-side-pane";
 import { prepareV4ConversationE2E } from "#e2e/helpers/v4-conversation";
 
@@ -78,7 +78,12 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
     expect(await runInGuest("window.__permissionState('geolocation')")).toBe("denied");
 
     // 地址栏滑杆 → 站点信息气泡 → 权限设置
-    await clickTestIdByWebDriver("browser-permission-trigger");
+    // 修复原因（CI run 43456602866/43459195997）：滑杆（PopoverTrigger）与
+    // Select 触发器/选项都是 Radix 指针手势控件；Xvfb 无 WM 2 核容器里 WebDriver
+    // 坐标点击链间歇性「命令成功但未送达」（本轮触发器 45s 不可点击）。改
+    // clickTestIdByDomPointer（pointerdown+pointerup+click 的 DOM 派发，
+    // selectPluginSettingsScope 的既有 PointerEvent 纪律泛化）；断言不变。
+    await clickTestIdByDomPointer("browser-permission-trigger");
     await browser.waitUntil(
       async () =>
         await browser.execute(
@@ -86,7 +91,7 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
         ),
       { timeout: 10_000, timeoutMsg: "站点信息气泡没有出现" },
     );
-    await clickTestIdByWebDriver("browser-permission-open-settings");
+    await clickTestIdByDom("browser-permission-open-settings");
 
     // 独立设置标签页打开，展示站点 origin 与能力目录
     await browser.waitUntil(
@@ -110,10 +115,10 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
     let settingsSaved = false;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        await clickTestIdByWebDriver("site-permission-setting-geolocation", {
+        await clickTestIdByDomPointer("site-permission-setting-geolocation", {
           timeout: 15_000,
         });
-        await clickTestIdByWebDriver("site-permission-option-allow", { timeout: 10_000 });
+        await clickTestIdByDomPointer("site-permission-option-allow", { timeout: 10_000 });
       } catch (error) {
         if (attempt === 3) throw error;
         await browser.pause(750);
@@ -142,7 +147,7 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
     );
 
     // 整站重置 → 回到每次询问（query 为 denied）
-    await clickTestIdByWebDriver("browser-permission-reset");
+    await clickTestIdByDom("browser-permission-reset");
     await browser.waitUntil(
       async () =>
         await browser.execute(
