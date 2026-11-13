@@ -132,7 +132,6 @@ describe("resolvePayswapBrokerPeerHelperSupply", () => {
         { [PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]: "C:/operator/helper.exe", [PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]: "1".repeat(64) },
         { [PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]: "C:/operator/helper.exe" },
         { [PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]: "1".repeat(64) },
-        { [PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]: "   " },
       ]) {
         expect(
           resolvePayswapBrokerPeerHelperSupply({
@@ -144,6 +143,28 @@ describe("resolvePayswapBrokerPeerHelperSupply", () => {
           }),
         ).toEqual({});
       }
+    } finally {
+      await rm(directory, { force: true, recursive: true });
+    }
+  });
+
+  // runtime-tools 优先级规则逐字适用（D15.3/D15.4）：trim 后为空的值不构成
+  // operator 声明（resolveDefaultPeerRelayHelper 同样 trim）。
+  it("trim 后为空的 operator 值不构成声明（同款规则）", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "zcode-desktop-broker-peer-whitespace-"));
+    try {
+      const resourcesPath = join(directory, "resources");
+      await mkdir(resourcesPath, { recursive: true });
+      await stageHelperPair(resourcesPath);
+
+      const supply = resolvePayswapBrokerPeerHelperSupply({
+        arch: "x64",
+        env: { [PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]: "   " },
+        isPackaged: true,
+        platform: "win32",
+        resourcesPath,
+      });
+      expect(supply[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]).toBe(helperSha256);
     } finally {
       await rm(directory, { force: true, recursive: true });
     }

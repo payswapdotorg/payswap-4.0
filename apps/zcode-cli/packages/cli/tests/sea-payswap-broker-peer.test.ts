@@ -184,7 +184,7 @@ test("reuses the current cache on the second run without re-extraction", async (
   }
 });
 
-test("operator env wins: any of the two keys suppresses injection and extraction", async () => {
+test("operator env wins: a real value on any of the two keys suppresses injection and extraction", async () => {
   const storageRoot = await mkdtemp(join(tmpdir(), "zcode-sea-broker-peer-operator-"));
   const fixture = createSeaFixture({});
   try {
@@ -195,7 +195,6 @@ test("operator env wins: any of the two keys suppresses injection and extraction
       },
       { [PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]: "C:/operator/helper.exe" },
       { [PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]: "1".repeat(64) },
-      { [PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]: "  " },
     ]) {
       const result = await ensureSeaPayswapBrokerPeerHelper({
         ...win32Options(fixture, storageRoot),
@@ -206,6 +205,23 @@ test("operator env wins: any of the two keys suppresses injection and extraction
 
     const cacheRoot = join(storageRoot, "cache", "payswap_broker_peer");
     await assert.rejects(readdir(cacheRoot), /ENOENT/u);
+  } finally {
+    await rm(storageRoot, { force: true, recursive: true });
+  }
+});
+
+// runtime-tools 优先级规则逐字适用（D15.3）：trim 后为空的值不构成 operator 声明
+//（resolveDefaultPeerRelayHelper 同样 trim —— 空白值本来就无法形成供给）。
+test("treats whitespace-only operator values as absent (the runtime-tools rule verbatim)", async () => {
+  const storageRoot = await mkdtemp(join(tmpdir(), "zcode-sea-broker-peer-whitespace-"));
+  const fixture = createSeaFixture({});
+  try {
+    const result = await ensureSeaPayswapBrokerPeerHelper({
+      ...win32Options(fixture, storageRoot),
+      env: { [PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]: "   " },
+    });
+    assert.equal(typeof result[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY], "string");
+    assert.equal(result[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY], helperSha256);
   } finally {
     await rm(storageRoot, { force: true, recursive: true });
   }
@@ -344,8 +360,16 @@ test("size or hash mismatch of the extracted bytes leads to no injection and no 
       );
     }
 
-    const cacheRoot = join(storageRoot, "cache", "payswap_broker_peer");
-    await assert.rejects(readdir(cacheRoot), /ENOENT/u);
+    // 无缓存安装：hash 寻址的安装目录绝不出现（临时目录的父目录创建是
+    // runtime-tools 同款实现细节，不属于安装面）。
+    const installedDirectory = join(
+      storageRoot,
+      "cache",
+      "payswap_broker_peer",
+      "win-x64",
+      helperSha256,
+    );
+    await assert.rejects(readdir(installedDirectory), /ENOENT/u);
   } finally {
     await rm(storageRoot, { force: true, recursive: true });
   }

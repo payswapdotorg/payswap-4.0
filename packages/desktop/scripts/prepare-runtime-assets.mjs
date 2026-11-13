@@ -35,6 +35,11 @@ const localRuntimeScripts = [
   ...(nativeSearchReleasePlan.enabled ? ["prepare:native-search"] : []),
   ...(shouldPrepareWindowsBrowserImportHelper ? ["prepare:browser-import-helper"] : []),
   ...(shouldPrepareMacosWindowBounds ? ["prepare:macos-window-bounds"] : []),
+  // ADR-15 D15.1/D15.4：Windows peer-verification helper —— 同一 CLI 持有 prepare
+  // 脚本（SEA 构建与桌面 prepare 链一个实现）。无目标门：win 目标在 win32 宿主
+  // 编译（编译器缺席大声失败），darwin/linux 与外国宿主交叉构建 stage 显式
+  // helper:null（构建不失败，诚实 degraded_refusing）。
+  "prepare:payswap-broker-peer",
 ];
 
 function runTimedPnpmScript(scriptName) {
