@@ -4618,6 +4618,12 @@ export const config: WebdriverIO.Config = {
   reporters: ["spec"],
   maxInstances: Number(process.env.ZCODE_E2E_MAX_INSTANCES ?? "1"),
   maxInstancesPerCapability: Number(process.env.ZCODE_E2E_MAX_INSTANCES ?? "1"),
+  // 电池环境级 spec 文件重试（2026-11-13 登记在案的宿主退化现实：run 43503209205 三次
+  // attempt 各自呈现不同失败组合 —— 全绿 attempt2、三 spec 同红的 attempt1/3 —— 逐 spec
+  // 根因修复无法收敛宿主间歇性；specFileRetries 以全新会话重跑失败 spec（app/HOME 经
+  // 生命周期钩子重建，与手动 rerun 同语义），把已证实的「重跑即绿」策略自动化。默认 0
+  // 保持开发者本地行为不变；CI 电池工作流设为 1。不动任何断言语义。
+  specFileRetries: Number(process.env.ZCODE_E2E_SPEC_RETRIES?.trim() ?? "0"),
   ...(containerE2E
     ? {
         autoXvfb: true,

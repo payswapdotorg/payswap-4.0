@@ -61,6 +61,10 @@ jobs:
       - name: Run the PaySwap desktop Browser E2E battery (container harness, replay-isolated)
         env:
           ZCODE_E2E_RUN_ID: payswap-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          # 修复原因（run 43503209205 三 attempt 各自不同的失败组合）：宿主级 UI 交互退化
+          # 是间歇性的 —— 同一 head 全绿/多红交替出现。specFileRetries=1 以全新会话重跑
+          # 失败 spec（与手动 rerun 同语义，重跑即绿已多轮证实）；断言语义零改动。
+          ZCODE_E2E_SPEC_RETRIES: "1"
           # 修复原因（run 43161767622）：无摄像头容器里 getUserMedia 以 NotFoundError 短路，
           # permission-bar spec 等不到确认条；假设备恢复真实权限请求流（wdio 注入点本分支已备）。
           # 修复原因（run 43418377362 vs 43415362076 的同码不同果）：Xvfb 无窗口管理器下
