@@ -142,97 +142,155 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
     );
 
     // geolocation 逐项改为「允许」→ guest 内 permissions.query 立即变 granted
-    // 修复原因（CI run 43456602866/43459195997/43464558855/43467865171 多轮同点）：Xvfb
-    // 无 WM 2 核容器里 WebDriver 坐标点击链间歇性「命令成功但未送达」；而 Radix Select
-    // 项不经 click 激活（pointerdown 开触发器后，完整 pointer+click 序列还会把已开的
-    // 下拉当作 outside 点击关掉）。selectPluginSettingsScope 的既有纪律：pointerdown 开
-    // 触发器 + 键盘走列表。真实键盘事件（browser.keys）在本容器已被证明可靠
-    // （Enter/Tab/Escape）。有界重试 3 次；断言语义不变（保存提示必须出现、granted
-    // 必须兑现、重置回 denied 必须兑现）。run 43467865171 起在 Enter 后先分离验证
-    // Select 值提交（data-permission-setting 只在写入+重读后翻转），把「提交未送达」
-    // 与「写入被吞」两类故障精确定位；失败路径倾倒诊断快照。
+    // 修复历史（run 43456602866/43459195997/43464558855/43467865171 → 43474036538）：
+    // 前几轮把失败归因到事件送达方式，但 2c5df1a2 的前置条件（标签激活 + 首读完成）
+    // 闭合了 keep-alive 僵尸页吞写的真根因后，run 43474036538 在活页上给出了新的
+    // 干净证据：键盘路径中 ArrowDown 可靠移动高亮（keydown 送达且 event.key 在
+    // React 处理器里生效），但 170ms 后的 Enter 始终不触发 handleSelect（main 零
+    // 写入 IPC、data-permission-setting 停留 ask×151 次轮询）—— 环境特定的 Enter
+    // 送达缺陷。历史失败中 DOM 派发点击（43464558855）从未在活页上被证伪 —— 僵尸
+    // 页足以解释当时的全部观察。据此改为三纪律梯子，每纪律一次尝试，全部指向同
+    // 一 handleSelect，提交后用值证据（data-permission-setting 只在写入+重读后翻转）
+    // 归因，失败路径倾倒诊断快照；断言语义不变（保存提示必须出现、granted 必须
+    // 兑现、重置回 denied 必须兑现）：
+    // - real-pointer：真实 WebDriver 点击链 —— general-coding-mode 已在全量套件
+    //   证明的纪律（触发器 .click() 开下拉 —— 真实 pointerup 被 Radix 捕获层
+    //   preventDefault 抑制派生 click，下拉保持打开；选项 .click() 经
+    //   onPointerUp(mouse) 提交）。坐标点击族的历史遮挡 flake 自 35baf3b0 已有
+    //   环境级缓解，本 spec 在缓解后从未在活页上重试过真实点击。
+    // - dom-pointer：DOM 派发完整指针序列于选项（Radix SelectItem 的 mouse 路径
+    //   经 onPointerUp；触发器 pointerdown 开下拉；捕获层 preventDefault 不阻断
+    //   React 合成事件）。
+    // - keyboard：pointerdown 开下拉 + ArrowDown 走高亮 + Enter —— run
+    //   43474036538 证伪过的路径，保留在梯子末端作持续证伪与归因。
+    const activationDisciplines = ["real-pointer", "dom-pointer", "keyboard"] as const;
     let settingsSaved = false;
-    let lastCommitState = "unknown";
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+    let lastDiagnosis = "unknown";
+    for (let attempt = 1; attempt <= activationDisciplines.length; attempt += 1) {
+      const discipline = activationDisciplines[attempt - 1]!;
       try {
         if (attempt > 1) {
-          // 上一次尝试可能残留打开的下拉（Enter 未送达时）：先 Escape 归一化。
+          // 上一次尝试可能残留打开的下拉：先 Escape 归一化。
           await browser.keys("Escape");
-          await browser.pause(150);
+          await browser.pause(200);
         }
-        // pointerdown-only 开 Select（完整序列的 click 会当作 outside 关闭下拉）；
-        // 等待与派发分离 —— waitUntil 谓词必须纯检查，逐次派发会把下拉来回切换。
         await waitForTestIdByDom("site-permission-setting-geolocation", {
           timeout: 15_000,
           timeoutMsg: "geolocation 设置控件没有渲染",
         });
-        await browser.execute(() => {
-          const trigger = document.querySelector<HTMLElement>(
-            '[data-testid="site-permission-setting-geolocation"]',
+        if (discipline === "real-pointer") {
+          const trigger = await $('[data-testid="site-permission-setting-geolocation"]');
+          await trigger.waitForClickable({
+            timeout: 10_000,
+            timeoutMsg: "geolocation 触发器不可点击（real-pointer）",
+          });
+          await trigger.click();
+          const allowOption = await $('[data-testid="site-permission-option-allow"]');
+          await allowOption.waitForDisplayed({
+            timeout: 10_000,
+            timeoutMsg: "下拉没有渲染「允许」项（real-pointer）",
+          });
+          await allowOption.click();
+        } else if (discipline === "dom-pointer") {
+          // pointerdown-only 开 Select（真实/派发 click 都会把 pointerType 置为
+          // mouse，触发器 onClick 路径不动作，仅 pointerdown 的 handleOpen 生效）。
+          await browser.execute(() => {
+            const trigger = document.querySelector<HTMLElement>(
+              '[data-testid="site-permission-setting-geolocation"]',
+            );
+            if (!(trigger instanceof HTMLElement)) return false;
+            trigger.dispatchEvent(
+              new PointerEvent("pointerdown", {
+                bubbles: true,
+                button: 0,
+                ctrlKey: false,
+                pointerType: "mouse",
+              }),
+            );
+            return true;
+          });
+          await browser.waitUntil(
+            async () =>
+              await browser.execute(
+                () => !!document.querySelector('[data-testid="site-permission-option-allow"]'),
+              ),
+            { timeout: 10_000, timeoutMsg: "下拉没有渲染「允许」项（dom-pointer）" },
           );
-          if (!(trigger instanceof HTMLElement)) return false;
-          trigger.dispatchEvent(
-            new PointerEvent("pointerdown", {
-              bubbles: true,
-              button: 0,
-              ctrlKey: false,
-              pointerType: "mouse",
-            }),
+          await clickTestIdByDomPointer("site-permission-option-allow", {
+            timeout: 10_000,
+            timeoutMsg: "「允许」项不可点击（dom-pointer）",
+          });
+        } else {
+          // keyboard：pointerdown 开下拉后先等任一项获得高亮（Radix 定位后
+          // focusSelectedItem 落焦），再 ArrowDown —— 消除落焦竞态。
+          await browser.execute(() => {
+            const trigger = document.querySelector<HTMLElement>(
+              '[data-testid="site-permission-setting-geolocation"]',
+            );
+            if (!(trigger instanceof HTMLElement)) return false;
+            trigger.dispatchEvent(
+              new PointerEvent("pointerdown", {
+                bubbles: true,
+                button: 0,
+                ctrlKey: false,
+                pointerType: "mouse",
+              }),
+            );
+            return true;
+          });
+          await browser.waitUntil(
+            async () =>
+              await browser.execute(
+                () =>
+                  !!document.querySelector(
+                    '[data-testid^="site-permission-option-"][data-highlighted]',
+                  ),
+              ),
+            { timeout: 10_000, timeoutMsg: "下拉打开后没有高亮项（keyboard）" },
           );
-          return true;
-        });
-        // 先等任一项获得高亮（Radix 定位后 focusSelectedItem 落焦），再走键盘 ——
-        // 否则 ArrowDown 会与落焦竞态（run 43467865171：43–53ms 落焦窗口内 keydown
-        // 落到触发器上被 OPEN_KEYS 吞掉，高亮不动）。
-        await browser.waitUntil(
-          async () =>
-            await browser.execute(
+          for (let step = 0; step < 4; step += 1) {
+            const allowHighlighted = await browser.execute(
               () =>
                 !!document.querySelector(
-                  '[data-testid^="site-permission-option-"][data-highlighted]',
+                  '[data-testid="site-permission-option-allow"][data-highlighted]',
                 ),
-            ),
-          { timeout: 10_000, timeoutMsg: "下拉打开后没有高亮项" },
-        );
-        // 键盘走到「允许」项：按 data-highlighted 校验高亮位，最多 4 次 ArrowDown。
-        for (let step = 0; step < 4; step += 1) {
-          const allowHighlighted = await browser.execute(
-            () =>
-              !!document.querySelector(
-                '[data-testid="site-permission-option-allow"][data-highlighted]',
-              ),
-          );
-          if (allowHighlighted) break;
-          await browser.keys("ArrowDown");
+            );
+            if (allowHighlighted) break;
+            await browser.keys("ArrowDown");
+            await browser.pause(150);
+          }
           await browser.pause(150);
-        }
-        await browser.pause(150);
-        await browser.keys("Enter");
-        // 值提交证据：data-permission-setting 只随 states（写入+重读）翻转。提交与
-        // 保存提示分离等待，失败可精确归因。
-        const valueCommitted = await browser
-          .waitUntil(
-            async () =>
-              (await browser.execute(
-                () =>
-                  document
-                    .querySelector('[data-testid="site-permission-setting-geolocation"]')
-                    ?.getAttribute("data-permission-setting"),
-              )) === "allow",
-            { timeout: 5_000, timeoutMsg: "选择「允许」后 Select 值没有提交" },
-          )
-          .then(
-            () => true,
-            () => false,
-          );
-        lastCommitState = valueCommitted ? "committed" : "not-committed";
-        if (!valueCommitted) {
-          if (attempt === 3) break;
-          await browser.pause(750);
-          continue;
+          await browser.keys("Enter");
         }
       } catch (error) {
-        if (attempt === 3) throw error;
+        lastDiagnosis = `${discipline}:interact-error:${(error as Error).message}`;
+        if (attempt === activationDisciplines.length) {
+          await dumpSiteSettingsDiagnostics(`所有激活纪律失败（${lastDiagnosis}）`);
+          throw error;
+        }
+        await browser.pause(750);
+        continue;
+      }
+      // 值提交证据：data-permission-setting 只随 states（写入+重读）翻转。
+      const valueCommitted = await browser
+        .waitUntil(
+          async () =>
+            (await browser.execute(
+              () =>
+                document
+                  .querySelector('[data-testid="site-permission-setting-geolocation"]')
+                  ?.getAttribute("data-permission-setting"),
+            )) === "allow",
+          { timeout: 8_000, timeoutMsg: "选择「允许」后 Select 值没有提交" },
+        )
+        .then(
+          () => true,
+          () => false,
+        );
+      if (!valueCommitted) {
+        lastDiagnosis = `${discipline}:no-commit`;
+        await dumpSiteSettingsDiagnostics(`${discipline} 未提交值`);
+        if (attempt === activationDisciplines.length) break;
         await browser.pause(750);
         continue;
       }
@@ -249,12 +307,14 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
           () => false,
         );
       if (settingsSaved) break;
-      if (attempt === 3) {
-        await dumpSiteSettingsDiagnostics("三次尝试后仍未保存");
-        throw new Error(
-          `保存提示没有出现（三次选择「允许」后仍未保存；值提交状态：${lastCommitState}）`,
-        );
-      }
+      lastDiagnosis = `${discipline}:no-notice`;
+      if (attempt === activationDisciplines.length) break;
+    }
+    if (!settingsSaved) {
+      await dumpSiteSettingsDiagnostics(`三种激活纪律均未达成保存提示（最后诊断：${lastDiagnosis}）`);
+      throw new Error(
+        `保存提示没有出现（三种激活纪律逐一尝试后仍未保存；最后诊断：${lastDiagnosis}）`,
+      );
     }
     await browser.waitUntil(
       async () => (await runInGuest("window.__permissionState('geolocation')")) === "granted",
