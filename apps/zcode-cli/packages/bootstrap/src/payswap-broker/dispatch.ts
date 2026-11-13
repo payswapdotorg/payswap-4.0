@@ -42,6 +42,7 @@ import {
   PAYSWAP_OPERATION_PARAMS_SCHEMAS,
   payswapBusinessRefusal,
   type PayswapAccountOverviewData,
+  type PayswapAccountOverviewDetail,
   type PayswapBrokerOp,
   type PayswapBrokerResponseBody,
   type PayswapConnectionStatusProjection,
@@ -67,6 +68,17 @@ export type PayswapLiveStateReader = () => PayswapBrokerLiveState | Promise<Pays
 export type PayswapAccountOverviewReader =
   () => readonly PayswapConnectionStatusProjection[] | Promise<readonly PayswapConnectionStatusProjection[]>;
 
+/**
+ * account-detail reader（ADR-P2-1）：`get_account_overview` 的 `connectionId` 收窄
+ * 数据源 —— host 装配侧把它接到账户服务的 getOverviewData（每次 dispatch 现读：
+ * 验证读状态机 + 能力证据 + 四类别只读数据，法则住 shared account-data.ts）。
+ * 抛错 → internal_error（§6.3）；typed detail 联合（detail/expired/revoked/refused）
+ * 原样入 `PayswapAccountOverviewData.account`。仅当三码法则已判定 enabled +
+ * opted-in 且状态**实读**时被咨询（与 overview reader 同门 —— 数据永不绕过 opt-in）。
+ */
+export type PayswapAccountDetailReader =
+  (connectionId: string) => PayswapAccountOverviewDetail | Promise<PayswapAccountOverviewDetail>;
+
 /** §5.5 步 (4) 之后的实例绑定状态：live，或 disable 撤销（D5.6 流通到三码法则）。 */
 export type PayswapInstanceBinding = "live" | "disabled_revocation";
 
@@ -91,6 +103,12 @@ export interface PayswapBrokerDispatchOptions {
    * 法则优先于数据路径 —— 数据永不绕过 opt-in 门）。
    */
   accountOverviewReader?: PayswapAccountOverviewReader;
+  /**
+   * account-detail reader（ADR-P2-1；缺省 → connectionId 收窄仍只答投影行，
+   * detail 数据面诚实缺席）。仅当三码法则已判定 enabled + opted-in 且状态实读
+   * 时被咨询（与 overview reader 同门）。
+   */
+  accountDetailReader?: PayswapAccountDetailReader;
 }
 
 export interface PayswapBrokerDispatch {
@@ -113,6 +131,7 @@ export function createPayswapBrokerDispatch(
 ): PayswapBrokerDispatch {
   const liveStateReader = options.liveStateReader;
   const accountOverviewReader = options.accountOverviewReader;
+  const accountDetailReader = options.accountDetailReader;
   return {
     async resolveRequest(request, context) {
       const schema = PAYSWAP_OPERATION_PARAMS_SCHEMAS[request.op as PayswapBrokerOp];
@@ -174,6 +193,16 @@ export function createPayswapBrokerDispatch(
             : connections.filter((connection) => connection.connectionId === requestedConnectionId);
         if (narrowed.length > 0) {
           const data: PayswapAccountOverviewData = { kind: "overview", connections: narrowed };
+          // ADR-P2-1 detail 半：connectionId 收窄且 detail reader 在场 → 现读 detail
+          // （验证读状态机 + 能力证据 + 四类别只读数据）。抛错 → internal_error
+          //（§6.3，与 reader 同类）；typed detail 联合原样入 `account`。
+          if (requestedConnectionId !== undefined && accountDetailReader !== undefined) {
+            try {
+              data.account = await accountDetailReader(requestedConnectionId);
+            } catch {
+              return { kind: "refused", code: "internal_error", retryable: false };
+            }
+          }
           return {
             kind: "dispatched",
             body: { ok: true, seq: request.seq, data },

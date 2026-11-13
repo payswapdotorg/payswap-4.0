@@ -157,6 +157,7 @@
   "packages/server/test/payswap-approval.test.ts",
   "packages/server/test/payswap-operator-auth.test.ts",
   "packages/server/test/tsupConfig.test.ts",
+  "packages/services/test/payswap-account-data.test.ts",
   "packages/services/test/payswap-account-service.test.ts",
   "packages/services/test/payswap-credential-security.test.ts",
   "packages/services/test/payswap-stripe-read-back.test.ts",

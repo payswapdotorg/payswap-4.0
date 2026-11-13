@@ -37,3 +37,7 @@ export {
   createStripeAccountReadBackPort,
   type PayswapStripeReadBackDependencies,
 } from "./providers/stripe/readBackAccount.js";
+export {
+  createStripeAccountDataReadPort,
+  type PayswapStripeDataReadDependencies,
+} from "./providers/stripe/readAccountData.js";

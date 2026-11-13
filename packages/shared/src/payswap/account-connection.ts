@@ -224,22 +224,76 @@ export interface PayswapAccountReadBackInput {
   readonly secret: string;
 }
 
+
+// ---------------------------------------------------------------------------
+// 能力证据（doc 04 §1.2 —— capabilities + requirements 读回是能力注册表应消费的
+// 证据；ADR-P2-1：读回 verified 结局可选携带，概览 detail 面要求其在场）
+// ---------------------------------------------------------------------------
+
+/** 能力状态三值（doc 04 §1.2：per-capability status (active/inactive/pending)）。 */
+export const payswapCapabilityStatusSchema = z.enum(["active", "inactive", "pending"]);
+export type PayswapCapabilityStatus = z.infer<typeof payswapCapabilityStatusSchema>;
+
+/**
+ * 账户能力证据（provider 读回的非秘密摘要；doc 04 §1.2「capabilities come from
+ * the account's actual state, never from hardcoded claims」）。`requirements` 是
+ * 去标识摘要：due 数组只保留计数（currently_due/past_due 的元素是 provider 的
+ * requirement id —— 非秘密，但计数已足够 P2 的能力面；后续里程碑需要明细时再扩）。
+ */
+export const payswapAccountCapabilityEvidenceSchema = z
+  .object({
+    capabilities: z
+      .array(
+        z
+          .object({
+            name: z.string().min(1),
+            status: payswapCapabilityStatusSchema,
+          })
+          .strict(),
+      )
+      .min(1),
+    requirements: z
+      .object({
+        disabledReason: z.string().min(1).nullable(),
+        currentlyDueCount: z.number().int().nonnegative(),
+        pastDueCount: z.number().int().nonnegative(),
+      })
+      .strict(),
+  })
+  .strict();
+export type PayswapAccountCapabilityEvidence = z.infer<
+  typeof payswapAccountCapabilityEvidenceSchema
+>;
+
 /**
  * 读回结局（strict 闭集）：
  * - `verified` —— provider 认证了凭据并返回账户读回（`providerAccountId` 是
- *   非秘密证据摘要，如 Stripe 的 `acct_*`）；
+ *   非秘密证据摘要，如 Stripe 的 `acct_*`；`evidence` 是能力证据摘要 ——
+ *   doc 04 §1.2 capabilities/requirements 读回，ADR-P2-1 起可选携带，概览
+ *   detail 面要求其在场）；
  * - `auth-failed` —— provider 拒绝了凭据（**唯一的 expiry 证据**）；
  * - `unavailable` —— 网络/未知结局（**不是** expiry 证据 —— doc 05 §6.4 的
  *   unknown 纪律：读回失败永不假装成功，也永不假装 auth 失败）。
  */
 export type PayswapAccountReadBackOutcome =
-  | { readonly kind: "verified"; readonly providerAccountId: string }
+  | {
+      readonly kind: "verified";
+      readonly providerAccountId: string;
+      /** 能力证据（doc 04 §1.2；可选 —— 未携带时概览 detail 面 fail-closed 拒绝）。 */
+      readonly evidence?: PayswapAccountCapabilityEvidence;
+    }
   | { readonly kind: "auth-failed"; readonly detail: string }
   | { readonly kind: "unavailable"; readonly detail: string };
 
 /** 结局面 strict 闭集（畸形结局无证据 —— 服务侧 fail-closed 拒绝，永不翻状态）。 */
 export const payswapAccountReadBackOutcomeSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("verified"), providerAccountId: z.string().min(1) }).strict(),
+  z
+    .object({
+      kind: z.literal("verified"),
+      providerAccountId: z.string().min(1),
+      evidence: payswapAccountCapabilityEvidenceSchema.optional(),
+    })
+    .strict(),
   z.object({ kind: z.literal("auth-failed"), detail: z.string().min(1) }).strict(),
   z.object({ kind: z.literal("unavailable"), detail: z.string().min(1) }).strict(),
 ]);

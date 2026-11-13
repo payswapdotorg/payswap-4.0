@@ -38,11 +38,16 @@ import {
   payswapAccountReadBackOutcomeSchema,
   payswapConnectionRecordSchema,
   payswapPspSecretCredentialKey,
+  payswapReadonlyCategoryResultSchemas,
+  PAYSWAP_READONLY_CATEGORIES,
   PAYSWAP_STRIPE_AUTH_SPEC,
   projectPayswapConnectionStatus,
+  type PayswapAccountDataReadPort,
   type PayswapAccountReadBackOutcome,
   type PayswapAccountReadBackPort,
   type PayswapAccountRefusal,
+  type PayswapAccountOverviewDetail,
+  type PayswapReadonlyCategoryResult,
   type PayswapAuthSpec,
   type PayswapConnectResult,
   type PayswapConnectionRecord,
@@ -71,6 +76,12 @@ export interface PayswapAccountServiceDependencies {
    * 缺席 = refreshEvidence fail-closed typed 拒绝（无 adapter 即无读回，不猜）。
    */
   readBackAccount?: PayswapAccountReadBackPort;
+  /**
+   * 只读数据端口（ADR-P2-1；真实 Stripe 实现随 provider 运行时切片）。缺席 =
+   * getOverviewData 的四类别一律 unavailable（fail-closed，不猜 —— 概览仍回答
+   * 连接投影与能力证据，数据面诚实缺席）。
+   */
+  readAccountData?: PayswapAccountDataReadPort;
   /** ISO 时间源（缺省 = 真实时钟；测试注入确定性）。 */
   now?(): string;
   /** 连接 ID 铸造（缺省 = shared 法则 mintPayswapConnectionId）。 */
@@ -90,6 +101,11 @@ export interface PayswapAccountService {
   refreshEvidence(input: { connectionId: string }): Promise<PayswapRefreshResult>;
   /** 全部连接的状态投影（无秘密）。 */
   listConnections(): Promise<PayswapConnectionStatusProjection[]>;
+  /**
+   * ADR-P2-1 只读对话面：验证读（refreshEvidence 同一状态机）+ 能力证据 +
+   * 四类别只读数据（全部现读；法则与结局词汇见 account-data.ts）。
+   */
+  getOverviewData(input: { connectionId: string }): Promise<PayswapAccountOverviewDetail>;
 }
 
 function refused(code: PayswapAccountRefusal["code"], message: string): {
@@ -110,6 +126,7 @@ export function createPayswapAccountService(
   const connectionStore = dependencies.connectionStore;
   const authSpecs = dependencies.authSpecs ?? [PAYSWAP_STRIPE_AUTH_SPEC];
   const readBackAccount = dependencies.readBackAccount;
+  const readAccountData = dependencies.readAccountData;
   const now = dependencies.now ?? (() => new Date().toISOString());
   const mintConnectionId = dependencies.mintConnectionId ?? mintPayswapConnectionId;
 
@@ -344,6 +361,182 @@ export function createPayswapAccountService(
       });
       await connectionStore.upsert(expired);
       return { kind: "expired", connection: projectPayswapConnectionStatus(expired) };
+    },
+
+    async getOverviewData(input): Promise<PayswapAccountOverviewDetail> {
+      const record = await connectionStore.find(input.connectionId);
+      if (record === null) {
+        return refused(
+          "unknown_connection",
+          `No PaySwap connection exists with id '${input.connectionId}'.`,
+        );
+      }
+      // revoked 终态：零端口触达，直回投影（与 refreshEvidence 同一终态法）。
+      if (record.status === "revoked") {
+        return { kind: "revoked", connection: projectPayswapConnectionStatus(record) };
+      }
+      // 端口缺席 = 无 provider 读回 adapter：fail-closed typed 拒绝（不猜）。
+      if (readBackAccount === undefined) {
+        return {
+          kind: "refused",
+          refusal: {
+            code: "read_back_unavailable",
+            message: `No PaySwap provider read-back adapter is registered for '${record.providerId}'.`,
+          },
+        };
+      }
+      const secretKind = record.secretKinds[0];
+      if (secretKind === undefined) {
+        return {
+          kind: "refused",
+          refusal: {
+            code: "read_back_unavailable",
+            message: `The connection record for '${record.connectionId}' carries no secret kinds; nothing to read.`,
+          },
+        };
+      }
+      const storageKey = payswapPspSecretCredentialKey(
+        record.providerId,
+        record.connectionId,
+        secretKind,
+      );
+      let secret: string | null;
+      try {
+        secret = await credentialPort.load(storageKey);
+      } catch (error) {
+        if (isPayswapPspSecureStorageUnavailableError(error)) {
+          return {
+            kind: "refused",
+            refusal: { code: PAYSWAP_ACCOUNT_SECURE_STORAGE_REFUSAL_CODE, message: error.message },
+          };
+        }
+        throw error;
+      }
+      if (secret === null) {
+        // 本地不一致（记录 connected 而键不在）：无 provider 证据不翻状态。
+        return {
+          kind: "refused",
+          refusal: {
+            code: "read_back_unavailable",
+            message: `The stored secret for connection '${record.connectionId}' is missing; revoke and re-connect, then retry.`,
+          },
+        };
+      }
+      // 验证读（与 refreshEvidence 同一状态机）：401 → 翻 expired 并持久化后回答
+      // expired（无数据可读）；verified → 状态机落地后携证据继续四类别读。
+      let outcome: PayswapAccountReadBackOutcome;
+      try {
+        const rawOutcome = await readBackAccount({
+          providerId: record.providerId,
+          mode: record.mode,
+          secretKind,
+          secret,
+        });
+        const parsed = payswapAccountReadBackOutcomeSchema.safeParse(rawOutcome);
+        if (!parsed.success) {
+          return {
+            kind: "refused",
+            refusal: {
+              code: "read_back_unavailable",
+              message: `The provider read-back adapter for '${record.providerId}' returned a malformed outcome.`,
+            },
+          };
+        }
+        outcome = parsed.data;
+      } catch (error) {
+        return {
+          kind: "refused",
+          refusal: {
+            code: "read_back_unavailable",
+            message: `The provider read-back for '${record.providerId}' could not be completed: ${
+              (error as Error).message
+            }`,
+          },
+        };
+      }
+      if (outcome.kind === "unavailable") {
+        return {
+          kind: "refused",
+          refusal: { code: "read_back_unavailable", message: outcome.detail },
+        };
+      }
+      if (outcome.kind === "auth-failed") {
+        // 唯一 expiry 证据：connected → expired（先落记录）；已 expired → 无写。
+        if (record.status !== "expired") {
+          const expired = payswapConnectionRecordSchema.parse({
+            ...record,
+            status: "expired",
+            updatedAt: now(),
+          });
+          await connectionStore.upsert(expired);
+          return { kind: "expired", connection: projectPayswapConnectionStatus(expired) };
+        }
+        return { kind: "expired", connection: projectPayswapConnectionStatus(record) };
+      }
+      // verified：能力证据缺席 = 概览 detail 面 fail-closed（证据永不缺席时才答数据）。
+      if (outcome.evidence === undefined) {
+        return {
+          kind: "refused",
+          refusal: {
+            code: "read_back_unavailable",
+            message: `The provider read-back for '${record.providerId}' returned no capability evidence; refusing the overview detail.`,
+          },
+        };
+      }
+      // 恢复行：expired → connected（provider 证据翻回；状态变更才写）。
+      let currentRecord = record;
+      if (record.status === "expired") {
+        const restored = payswapConnectionRecordSchema.parse({
+          ...record,
+          status: "connected",
+          updatedAt: now(),
+        });
+        await connectionStore.upsert(restored);
+        currentRecord = restored;
+      }
+      // 四类别只读数据（全部现读；端口缺席 = 诚实 unavailable，不猜）。
+      const data: Record<string, PayswapReadonlyCategoryResult> = {};
+      for (const category of PAYSWAP_READONLY_CATEGORIES) {
+        if (readAccountData === undefined) {
+          data[category] = {
+            status: "unavailable",
+            detail: `No PaySwap provider data-read adapter is registered for '${record.providerId}'.`,
+          };
+          continue;
+        }
+        let result: PayswapReadonlyCategoryResult;
+        try {
+          const rawResult = await readAccountData({
+            providerId: record.providerId,
+            mode: record.mode,
+            secretKind,
+            secret,
+            category,
+          });
+          const parsed = payswapReadonlyCategoryResultSchemas[category].safeParse(rawResult);
+          result = parsed.success
+            ? (parsed.data as PayswapReadonlyCategoryResult)
+            : {
+                status: "unavailable",
+                detail: `The provider data-read adapter for '${record.providerId}' returned a malformed ${category} result.`,
+              };
+        } catch (error) {
+          // adapter 装配错配（抛出）→ typed 拒绝面：unavailable（不猜、不响亮崩溃）。
+          result = {
+            status: "unavailable",
+            detail: `The ${category} read for '${record.providerId}' could not be completed: ${
+              (error as Error).message
+            }`,
+          };
+        }
+        data[category] = result;
+      }
+      return {
+        kind: "detail",
+        connection: projectPayswapConnectionStatus(currentRecord),
+        evidence: outcome.evidence,
+        data: data as Readonly<Record<(typeof PAYSWAP_READONLY_CATEGORIES)[number], PayswapReadonlyCategoryResult>>,
+      };
     },
   };
 }

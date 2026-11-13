@@ -43,12 +43,21 @@ import {
   isPayswapPspCredentialKey,
   mintPayswapConnectionId,
   PAYSWAP_ACCOUNT_SECURE_STORAGE_REFUSAL_CODE,
+  PAYSWAP_BROKER_OPS,
+  PAYSWAP_READONLY_CATEGORIES,
   PAYSWAP_STRIPE_AUTH_SPEC,
+  PAYSWAP_WRITE_OPERATION_VERBS,
+  payswapAccountCapabilityEvidenceSchema,
   payswapAccountReadBackOutcomeSchema,
+  payswapBalanceDataSchema,
   payswapConnectionRecordSchema,
   payswapConnectionStatusProjectionSchema,
+  payswapCustomerSchema,
+  payswapDisputeSchema,
+  payswapPaymentObjectSchema,
   payswapPspSecretCredentialKey,
   PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE_CODE,
+  payswapReadonlyCategoryResultSchemas,
   projectPayswapConnectionStatus,
   type PayswapConnectionRecord,
 } from "@zcode/shared/payswap";
@@ -304,5 +313,178 @@ describe("payswap account connection — connection id minting and refusal singl
     expect(PAYSWAP_ACCOUNT_SECURE_STORAGE_REFUSAL_CODE).toBe(
       "PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE",
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// ADR-P2-1 只读数据面法则（account-data.ts：闭集类别、能力证据、redacted 投影、
+// 四值类别结局、no-write 断言的法则半）
+// ---------------------------------------------------------------------------
+
+describe("payswap account data — ADR-P2-1 readonly category law", () => {
+  it("闭集类别枚举恰为四类（balance/payment_objects/customers/disputes）；无 write 类别", () => {
+    expect([...PAYSWAP_READONLY_CATEGORIES]).toEqual([
+      "balance",
+      "payment_objects",
+      "customers",
+      "disputes",
+    ]);
+    // no-write 断言（结构面）：类别枚举与 op 枚举都不含 write 动词。
+    for (const verb of PAYSWAP_WRITE_OPERATION_VERBS) {
+      for (const category of PAYSWAP_READONLY_CATEGORIES) {
+        expect(category.includes(verb)).toBe(false);
+      }
+      for (const op of PAYSWAP_BROKER_OPS) {
+        expect(op.includes(verb)).toBe(false);
+      }
+    }
+  });
+
+  it("能力证据 schema strict：合法通过；未知字段/空 capabilities/未知状态拒绝", () => {
+    const evidence = {
+      capabilities: [
+        { name: "card_payments", status: "active" },
+        { name: "transfers", status: "pending" },
+      ],
+      requirements: { disabledReason: null, currentlyDueCount: 0, pastDueCount: 1 },
+    };
+    expect(payswapAccountCapabilityEvidenceSchema.safeParse(evidence).success).toBe(true);
+    expect(
+      payswapAccountCapabilityEvidenceSchema.safeParse({ ...evidence, extra: 1 }).success,
+    ).toBe(false);
+    expect(
+      payswapAccountCapabilityEvidenceSchema.safeParse({ ...evidence, capabilities: [] }).success,
+    ).toBe(false);
+    expect(
+      payswapAccountCapabilityEvidenceSchema.safeParse({
+        ...evidence,
+        capabilities: [{ name: "x", status: "unknown-status" }],
+      }).success,
+    ).toBe(false);
+  });
+
+  it("redacted 数据 schema strict：余额/支付对象/客户/争议的合法形状通过，未知字段拒绝", () => {
+    expect(
+      payswapBalanceDataSchema.safeParse({
+        available: [{ amount: "1200", currency: "usd" }],
+        pending: [{ amount: "-50", currency: "eur" }],
+      }).success,
+    ).toBe(true);
+    expect(
+      payswapBalanceDataSchema.safeParse({ available: [{ amount: "12.5", currency: "usd" }], pending: [] })
+        .success,
+    ).toBe(false); // minor-unit 整数纪律
+    expect(
+      payswapPaymentObjectSchema.safeParse({
+        id: "ch_1",
+        amount: "1000",
+        currency: "usd",
+        status: "succeeded",
+        created: 1731230000,
+        description: null,
+      }).success,
+    ).toBe(true);
+    expect(payswapPaymentObjectSchema.safeParse({ id: "ch_1", amount: "1", currency: "usd", status: "s", created: 1, description: null, email: "x@y.z" }).success).toBe(false);
+    // PII 纪律（redaction-by-construction 的法则面）：客户 schema 根本没有
+    // email/name 字段 —— 携带即拒（strict）。
+    expect(
+      payswapCustomerSchema.safeParse({ id: "cus_1", created: 1731230000, description: null })
+        .success,
+    ).toBe(true);
+    expect(
+      payswapCustomerSchema.safeParse({
+        id: "cus_1",
+        created: 1731230000,
+        description: null,
+        email: "someone@example.com",
+      }).success,
+    ).toBe(false);
+    expect(
+      payswapDisputeSchema.safeParse({
+        id: "dp_1",
+        amount: "500",
+        currency: "usd",
+        status: "needs_response",
+        reason: "fraudulent",
+        created: 1731230000,
+      }).success,
+    ).toBe(true);
+    expect(
+      payswapDisputeSchema.safeParse({
+        id: "dp_1",
+        amount: "500",
+        currency: "usd",
+        status: "needs_response",
+        reason: "fraudulent",
+        created: 1731230000,
+        evidence: "https://example.com/x",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("四值类别结局 strict：ok/auth-failed/refused/unavailable 按 per-category schema 通过；未知 status 拒绝", () => {
+    const okBalance = {
+      status: "ok",
+      data: { available: [], pending: [{ amount: "1", currency: "usd" }] },
+    };
+    expect(payswapReadonlyCategoryResultSchemas.balance.safeParse(okBalance).success).toBe(true);
+    expect(
+      payswapReadonlyCategoryResultSchemas.balance.safeParse({ status: "ok", data: { available: "x" } })
+        .success,
+    ).toBe(false);
+    for (const category of PAYSWAP_READONLY_CATEGORIES) {
+      expect(
+        payswapReadonlyCategoryResultSchemas[category].safeParse({
+          status: "auth-failed",
+          detail: "provider rejected the credential",
+        }).success,
+      ).toBe(true);
+      expect(
+        payswapReadonlyCategoryResultSchemas[category].safeParse({
+          status: "refused",
+          refusal: { code: "insufficient_permission", message: "HTTP 403" },
+        }).success,
+      ).toBe(true);
+      expect(
+        payswapReadonlyCategoryResultSchemas[category].safeParse({
+          status: "refused",
+          refusal: { code: "not_a_code", message: "x" },
+        }).success,
+      ).toBe(false);
+      expect(
+        payswapReadonlyCategoryResultSchemas[category].safeParse({
+          status: "unavailable",
+          detail: "HTTP 429",
+        }).success,
+      ).toBe(true);
+      expect(
+        payswapReadonlyCategoryResultSchemas[category].safeParse({ status: "pending" }).success,
+      ).toBe(false);
+    }
+  });
+
+  it("读回 verified 结局可选携带能力证据（additive）：无证据通过；携带合法证据通过；携带畸形证据拒绝", () => {
+    const evidence = {
+      capabilities: [{ name: "transfers", status: "active" }],
+      requirements: { disabledReason: null, currentlyDueCount: 0, pastDueCount: 0 },
+    };
+    expect(
+      payswapAccountReadBackOutcomeSchema.safeParse({ kind: "verified", providerAccountId: "acct_1" })
+        .success,
+    ).toBe(true);
+    expect(
+      payswapAccountReadBackOutcomeSchema.safeParse({
+        kind: "verified",
+        providerAccountId: "acct_1",
+        evidence,
+      }).success,
+    ).toBe(true);
+    expect(
+      payswapAccountReadBackOutcomeSchema.safeParse({
+        kind: "verified",
+        providerAccountId: "acct_1",
+        evidence: { capabilities: [], requirements: evidence.requirements },
+      }).success,
+    ).toBe(false);
   });
 });

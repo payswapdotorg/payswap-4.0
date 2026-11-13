@@ -170,6 +170,13 @@ export {
   createStripeAccountReadBackPort,
   type PayswapStripeReadBackDependencies,
 } from "#src/payswap/index.js";
+// PaySwap P2.2（ADR-P2-1）：真实 Stripe 只读数据 adapter ——
+// `PayswapAccountDataReadPort` 的 provider 运行时实现（getOverviewData 的四类别
+// 数据源；闭集类别、redaction-by-construction、no-write 的 wire 证明）。
+export {
+  createStripeAccountDataReadPort,
+  type PayswapStripeDataReadDependencies,
+} from "#src/payswap/index.js";
 export { createBroadcastService } from "./broadcast/broadcastService.js";
 export { createZCodeAgentService } from "./zcode-agent/zcodeAgentService.js";
 export { createZCodeTaskServiceAdapter } from "./zcode-agent/zcodeTaskServiceAdapter.js";

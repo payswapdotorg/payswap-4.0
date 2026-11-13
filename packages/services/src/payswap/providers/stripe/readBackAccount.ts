@@ -32,7 +32,9 @@
 import type { ApiClient, ApiRequestInit } from "@zcode/shared";
 import {
   derivePayswapSecretKeyMode,
+  payswapAccountCapabilityEvidenceSchema,
   PAYSWAP_STRIPE_AUTH_SPEC,
+  type PayswapAccountCapabilityEvidence,
   type PayswapAccountReadBackInput,
   type PayswapAccountReadBackOutcome,
   type PayswapAccountReadBackPort,
@@ -156,6 +158,51 @@ export function createStripeAccountReadBackPort(
         detail: "The Stripe account read-back returned no account id; no account evidence.",
       };
     }
-    return { kind: "verified", providerAccountId };
+    // ADR-P2-1：能力证据捕获（doc 04 §1.2 —— capabilities + requirements 读回是
+    // 能力注册表应消费的证据）。strict 全有或全无：任一半畸形 → 省略 evidence
+    // （verified 的认证语义不受影响；概览 detail 面对缺席证据 fail-closed 拒绝）。
+    const evidence = captureCapabilityEvidence(body);
+    return evidence === null
+      ? { kind: "verified", providerAccountId }
+      : { kind: "verified", providerAccountId, evidence };
   };
+}
+
+/**
+ * 从 /v1/account 载荷捕获能力证据（doc 04 §1.2）：`capabilities`（name →
+ * active/inactive/pending）+ `requirements`（currently_due/past_due 计数摘要 +
+ * disabled_reason）。全有或全无：任一半畸形/缺席 → null（调用方省略 evidence）。
+ */
+function captureCapabilityEvidence(body: unknown): PayswapAccountCapabilityEvidence | null {
+  const raw = body as {
+    capabilities?: unknown;
+    requirements?: { currently_due?: unknown; past_due?: unknown; disabled_reason?: unknown } | null;
+  } | null;
+  if (typeof raw !== "object" || raw === null) return null;
+  if (typeof raw.capabilities !== "object" || raw.capabilities === null) return null;
+  const capabilityEntries = Object.entries(raw.capabilities as Record<string, unknown>);
+  if (capabilityEntries.length === 0) return null;
+  const capabilities: { name: string; status: "active" | "inactive" | "pending" }[] = [];
+  for (const [name, status] of capabilityEntries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
+    if (typeof name !== "string" || name.trim().length === 0) return null;
+    if (status !== "active" && status !== "inactive" && status !== "pending") return null;
+    capabilities.push({ name, status });
+  }
+  const requirements = raw.requirements;
+  if (typeof requirements !== "object" || requirements === null) return null;
+  const dueCount = (value: unknown): number | null =>
+    Array.isArray(value) ? value.length : null;
+  const currentlyDueCount = dueCount(requirements.currently_due);
+  const pastDueCount = dueCount(requirements.past_due);
+  if (currentlyDueCount === null || pastDueCount === null) return null;
+  const disabledReason =
+    typeof requirements.disabled_reason === "string" && requirements.disabled_reason.trim().length > 0
+      ? requirements.disabled_reason
+      : null;
+  const evidence = {
+    capabilities,
+    requirements: { disabledReason, currentlyDueCount, pastDueCount },
+  };
+  const parsed = payswapAccountCapabilityEvidenceSchema.safeParse(evidence);
+  return parsed.success ? parsed.data : null;
 }

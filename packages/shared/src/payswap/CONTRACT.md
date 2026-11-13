@@ -197,3 +197,20 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
   真数据半（§7.3「Read-only account data arrives with P2's Gate E2」的 P2.2
   兑现）与插件侧共用同一 wire 形状；空清单 / reader 缺席仍答三码法则的
   `not_connected`。
+
+**ADR-P2-1 只读数据面（slice 4）**：`account-data.ts` 承载 P2 对话内只读面的全部
+法则 —— 闭集类别枚举 `PAYSWAP_READONLY_CATEGORIES`（恰 `balance |
+payment_objects | customers | disputes`，无 write 类别：类别与操作枚举都不含
+doc 05 §6.1 的 write 动词集 `PAYSWAP_WRITE_OPERATION_VERBS` —— no-write 断言的
+battery 单一事实源）；能力证据 `payswapAccountCapabilityEvidenceSchema`（doc 04
+§1.2 capabilities + requirements 读回摘要，住 account-connection.ts 与读回结局
+同源）；per-category redacted 数据 schema（strict 白名单：余额 minor-unit 整数
+`{amount, currency}`；支付对象 `{id, amount, currency, status, created,
+description}`；客户 `{id, created, description}` —— **PII（email/name/phone）永不
+进数据面**；争议 `{id, amount, currency, status, reason, created}`）；四值类别
+结局 `ok | auth-failed | refused | unavailable`（401 唯一拒绝证据；403 →
+`refused{insufficient_permission}`；unknown ≠ failed）+ per-category strict
+校验器；数据读端口 `PayswapAccountDataReadPort`；概览 detail 联合
+`PayswapAccountOverviewDetail`（`detail | expired | revoked | refused` —— 与
+refreshEvidence 结果词汇同构）。读回 `verified` 结局 additive 可选携带 `evidence`
+（缺席时概览 detail 面 fail-closed 拒绝）。

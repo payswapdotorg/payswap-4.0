@@ -6,6 +6,8 @@ import {
   mintBrokerBootState,
   PAYSWAP_BROKER_OPS,
   verifyResponseEnvelope,
+  type PayswapAccountOverviewData,
+  type PayswapAccountOverviewDetail,
   type PayswapBrokerAttemptContext,
   type PayswapBrokerBootState,
   type PayswapConnectionStatusProjection,
@@ -942,4 +944,168 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker dispatch i
     },
     20000,
   );
+});
+
+// ---------------------------------------------------------------------------
+// ADR-P2-1 detail 半：get_account_overview 的 connectionId 收窄数据路径
+// ---------------------------------------------------------------------------
+
+describe("payswap broker dispatch (ADR-P2-1) — the account-detail reader path", () => {
+  const ENABLED_OPTED_IN: PayswapBrokerLiveState = { pluginEnabled: true, financialWorkspace: true };
+  const CONNECTION_ID = "conn-overview-1";
+
+  function detailFixture(): PayswapAccountOverviewDetail {
+    return {
+      kind: "detail",
+      connection: overviewProjection(),
+      evidence: {
+        capabilities: [{ name: "card_payments", status: "active" }],
+        requirements: { disabledReason: null, currentlyDueCount: 0, pastDueCount: 0 },
+      },
+      data: {
+        balance: { status: "ok", data: { available: [], pending: [] } },
+        payment_objects: { status: "ok", data: [] },
+        customers: { status: "unavailable", detail: "no adapter" },
+        disputes: { status: "ok", data: [] },
+      },
+    };
+  }
+
+  it("connectionId + detail reader → the overview answer carries account with the typed detail union verbatim", async () => {
+    const connections = [overviewProjection()];
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => connections,
+      accountDetailReader: (connectionId) => {
+        expect(connectionId).toBe(CONNECTION_ID);
+        return detailFixture();
+      },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: { connectionId: CONNECTION_ID },
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    const data = result.body.data as PayswapAccountOverviewData;
+    expect(data.kind).toBe("overview");
+    expect(data.connections).toEqual([overviewProjection()]);
+    expect(data.account).toEqual(detailFixture());
+  });
+
+  it("no detail reader → the slice-3 shape holds exactly (connections only, no account field)", async () => {
+    const connections = [overviewProjection()];
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => connections,
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: { connectionId: CONNECTION_ID },
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    const data = result.body.data as PayswapAccountOverviewData;
+    expect(data.account).toBeUndefined();
+  });
+
+  it("an unknown connectionId never consults the detail reader (S2's truth for the requested id; not_connected)", async () => {
+    let detailCalls = 0;
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => [overviewProjection()],
+      accountDetailReader: () => {
+        detailCalls += 1;
+        return detailFixture();
+      },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: { connectionId: "conn-not-in-this-workspace" },
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    const data = result.body.data as { kind: string; refusal?: { code: string } };
+    expect(data.refusal?.code).toBe("not_connected");
+    expect(detailCalls).toBe(0);
+  });
+
+  it("a throwing detail reader is an internal_error bridge failure (§6.3, the reader class)", async () => {
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => [overviewProjection()],
+      accountDetailReader: () => {
+        throw new Error("account service exploded");
+      },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: { connectionId: CONNECTION_ID },
+    });
+    expect(result).toEqual({ kind: "refused", code: "internal_error", retryable: false });
+  });
+
+  it("the three-code law outranks the detail path: not-opted-in never reaches either reader", async () => {
+    let overviewCalls = 0;
+    let detailCalls = 0;
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ({ pluginEnabled: true, financialWorkspace: false }),
+      accountOverviewReader: () => {
+        overviewCalls += 1;
+        return [overviewProjection()];
+      },
+      accountDetailReader: () => {
+        detailCalls += 1;
+        return detailFixture();
+      },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: { connectionId: CONNECTION_ID },
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    const data = result.body.data as { kind: string; refusal?: { code: string } };
+    expect(data.refusal?.code).toBe("not_opted_in");
+    expect(overviewCalls).toBe(0);
+    expect(detailCalls).toBe(0);
+  });
+
+  it("the typed detail union passes through verbatim: expired, revoked, and refused details land in account without reinterpretation", async () => {
+    const variants: PayswapAccountOverviewDetail[] = [
+      { kind: "expired", connection: overviewProjection({ status: "expired" }) },
+      { kind: "revoked", connection: overviewProjection({ status: "revoked" }) },
+      {
+        kind: "refused",
+        refusal: { code: "read_back_unavailable", message: "no adapter registered" },
+      },
+    ];
+    for (const variant of variants) {
+      const dispatch = createPayswapBrokerDispatch({
+        liveStateReader: () => ENABLED_OPTED_IN,
+        accountOverviewReader: () => [variant.connection ?? overviewProjection()],
+        accountDetailReader: () => variant,
+      });
+      const result = await dispatch.resolveRequest({
+        instanceId: randomUUID(),
+        seq: 1,
+        op: "get_account_overview",
+        params: { connectionId: CONNECTION_ID },
+      });
+      expect(result.kind).toBe("dispatched");
+      if (result.kind !== "dispatched") continue;
+      const data = result.body.data as PayswapAccountOverviewData;
+      expect(data.account).toEqual(variant);
+    }
+  });
 });

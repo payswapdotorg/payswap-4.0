@@ -73,3 +73,28 @@ corrupt-refuse-overwrite（typed `PAYSWAP_CONNECTIONS_STORE_CORRUPT`，绝不自
   hostProcessLocalEnv 注入 —— desktop-payswap/CONTRACT.md 的 P2 交付段；
   生产装配把本切片的 Stripe adapter 与 accountOverviewReader 接进 broker）；
 - 连接流的 desktop Browser E2E 臂 —— 随活的窗口证明切片。
+
+**ADR-P2-1 只读数据面（slice 4）**：
+
+- **Stripe 数据 adapter**（`providers/stripe/readAccountData.ts`，
+  `PayswapAccountDataReadPort` 实现）：四闭集类别 → `GET /v1/balance`、
+  `GET /v1/charges?limit=10`、`GET /v1/customers?limit=10`、
+  `GET /v1/disputes?limit=10`（全部 GET —— no-write 的 wire 证明；Bearer；
+  固定近因窗口；事实清单 `docs/payswap/provider-facts/stripe-readonly-endpoints.md`）。
+  结局映射：200 → strict redacted 解析（白名单拷贝 —— PII 永不进数据面）；401 →
+  `auth-failed`；403 → `refused{insufficient_permission}`；其余 → `unavailable`。
+  装配防线（providerId/secretKind/类别路由错配 → 抛出；前缀模式与记录 mode 不一致
+  → 不触网 unavailable）与读回半同款。
+- **能力证据捕获**（`readBackAccount.ts` 扩展）：/v1/account 200 时从
+  `capabilities` + `requirements` 捕获 `PayswapAccountCapabilityEvidence`（排序、
+  计数摘要、disabledReason）；全有或全无 —— 任一半畸形 → verified 不携带证据
+  （认证语义不变；概览 detail 面对缺席证据 fail-closed 拒绝）。
+- **`getOverviewData` 编排半**（`accountService.ts`）：验证读先于数据读（复用
+  refreshEvidence 同一状态机：401 翻 expired 持久化后答 `expired`、verified 翻回
+  connected；状态变更才写）；证据在场才读四类别（全部现读、固定顺序）；类别
+  403 → 该类别 typed 拒绝、其余照读；数据端口缺席 → 四类别诚实 `unavailable`；
+  revoked/unknown 终态零端口触达。
+- **broker detail 面**（`bootstrap payswap-broker/dispatch.ts`）：新注入面
+  `accountDetailReader`（与 `accountOverviewReader` 同门）—— `connectionId`
+  收窄且三码法则已过时被咨询；typed detail 联合原样入
+  `PayswapAccountOverviewData.account`；抛错 → `internal_error`（§6.3）。
