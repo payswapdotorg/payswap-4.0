@@ -197,6 +197,14 @@ if [ -n "${ZCODE_E2E_EXTRA_APP_ARGS:-}" ]; then
   docker_run_args+=(-e "ZCODE_E2E_EXTRA_APP_ARGS=${ZCODE_E2E_EXTRA_APP_ARGS}")
 fi
 
+# 修复原因（run 43503209205 三 attempt 各自不同的失败组合）：宿主级 UI 交互退化间歇性
+# 需要电池以全新会话有界重跑失败 spec（与手动 rerun 同语义，重跑即绿多轮证实）。
+# wdio.conf.ts 的 ZCODE_E2E_SPEC_RETRIES 注入点需要容器透传；未设置时零影响
+# （specFileRetries 默认 0，开发者本地行为不变）。
+if [ -n "${ZCODE_E2E_SPEC_RETRIES:-}" ]; then
+  docker_run_args+=(-e "ZCODE_E2E_SPEC_RETRIES=${ZCODE_E2E_SPEC_RETRIES}")
+fi
+
 if [ -n "${E2E_PROVIDER_API_KEY:-}" ]; then
   docker_run_args+=(-e "E2E_PROVIDER_API_KEY=${E2E_PROVIDER_API_KEY}")
 fi
