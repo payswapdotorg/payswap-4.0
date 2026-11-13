@@ -141,10 +141,29 @@ export function UnifiedBrowserView({
     number | undefined
   >(undefined);
   useEffect(() => {
-    if (!webview || typeof webview.getWebContentsId !== "function") return;
-    const id = safeWebviewCall(() => webview.getWebContentsId(), 0);
-    setPermissionGuestWebContentsId(id > 0 ? id : undefined);
-  }, [webview, browserState.isReady]);
+    if (!webview) return;
+    const syncPermissionGuestWebContentsId = () => {
+      if (typeof webview.getWebContentsId !== "function") return;
+      const id = safeWebviewCall(() => webview.getWebContentsId(), 0);
+      const next = id > 0 ? id : undefined;
+      setPermissionGuestWebContentsId((prev) => (prev === next ? prev : next));
+    };
+    syncPermissionGuestWebContentsId();
+    // 修复原因（CI run 43418377362，permission 确认条 flaky 缺失）：旧实现只在
+    // [webview, browserState.isReady] 变化时读一次 id——guest attach 落在最后一次
+    // effect 运行之后（isReady 已为 true、webview 引用不变）时，归属 id 永远停留
+    // undefined；弹层的 guest 归属过滤（请求携带 guest id 而本 tab 归属 id 为
+    // undefined）把确认条全部滤掉，main 侧 20s 超时按 dismiss 结算（证据：
+    // decision=denied source=user-prompt action=dismiss ×2 而 DOM 内 prompts 计数
+    // 恒 0、guest 未换代未崩溃）。did-attach 是 guest id 可读的最早时机，dom-ready
+    // 兑底重挂/换代；与下方 guestId 上报同事件源，不再依赖 isReady 的间接时序。
+    webview.addEventListener("did-attach", syncPermissionGuestWebContentsId);
+    webview.addEventListener("dom-ready", syncPermissionGuestWebContentsId);
+    return () => {
+      webview.removeEventListener("did-attach", syncPermissionGuestWebContentsId);
+      webview.removeEventListener("dom-ready", syncPermissionGuestWebContentsId);
+    };
+  }, [webview]);
   const [guestAttachRetryNonce, setGuestAttachRetryNonce] = useState(0);
   useBrowserScreenshotSurfaceReady({
     request: screenshotSurfaceRequest ?? null,

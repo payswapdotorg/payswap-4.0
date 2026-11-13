@@ -280,6 +280,25 @@ describe("P1.8：官方 PaySwap 插件既有生命周期 browser-verified 臂", 
     await openPluginCard(PAYSWAP_PLUGIN_ID);
     await waitForPluginControl("plugin-store-open-ui", { pluginId: PAYSWAP_PLUGIN_ID }, 30_000);
     await clickPluginControl("plugin-store-open-ui", { pluginId: PAYSWAP_PLUGIN_ID });
+    // 修复原因（CI run 43418377362/43420565937，S1 两次同点超时）：payswap 官方插件
+    // 声明 3 个 ui.surfaces（workspace/route-plan/evidence，plugin.json），open() 在
+    // 多 surface 时打开「选择表面」对话框等待用户选择——旧 spec 点完 open-ui 直接等
+    // 沙箱 guest，对话框无人应答，面板永不 spawn（desktop 日志证据：listSurfaces OK
+    // 后零 pluginSandbox 活动、零 requestPluginUiOpen 会话活动）。先等对话框（或面板
+    // 已开——单 surface 未来变体），选 workspace 表面后走 onOpenDraftUi（根草稿）
+    // → spawn server → uiCallTool → 沙箱 guest，同 PLM-UI-001 被验证路径。
+    await browser.waitUntil(
+      async () =>
+        (await findPayswapPanelGuestHeading()) === WORKSPACE_PANEL_HEADING ||
+        (await hasPluginControl("plugin-store-surface-option", { surfaceId: "workspace" })),
+      {
+        timeout: 60_000,
+        timeoutMsg: "open-ui 后既未出现表面选择对话框，也未直接打开 PaySwap 面板",
+      },
+    );
+    if (await hasPluginControl("plugin-store-surface-option", { surfaceId: "workspace" })) {
+      await clickPluginControl("plugin-store-surface-option", { surfaceId: "workspace" });
+    }
     await browser.waitUntil(
       async () => (await findPayswapPanelGuestHeading()) === WORKSPACE_PANEL_HEADING,
       {

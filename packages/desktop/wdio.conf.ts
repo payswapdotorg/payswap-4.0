@@ -4655,8 +4655,11 @@ export const config: WebdriverIO.Config = {
           // getUserMedia 会以 NotFoundError 短路，永远走不到权限请求，权限确认条
           // 用例无法执行；环境可用 ZCODE_E2E_EXTRA_APP_ARGS 注入 Chromium 开关
           // （如 --use-fake-device-for-media-stream 提供假设备）。未设置时零影响。
+          // 修复原因（CI run 43420565937，fake-device 失效回退 NotFoundError）：旧实现
+          // 按逗号切分，而 workflow YAML 的 >- 折叠标量以空格连接四个开关——整串成
+          // 单个畸形 argv 元素，全部开关失效。同时接受空格与逗号分隔。
           ...(process.env.ZCODE_E2E_EXTRA_APP_ARGS?.trim()
-            ? process.env.ZCODE_E2E_EXTRA_APP_ARGS.split(",")
+            ? process.env.ZCODE_E2E_EXTRA_APP_ARGS.split(/[\s,]+/)
                 .map((arg) => arg.trim())
                 .filter(Boolean)
             : []),
