@@ -36,9 +36,11 @@ import {
  *    installedPlugins 也不在 restorableBuiltins；config 无任何 payswap 条目。
  * 2. T1 enable（S0b→S1）：商店卡真实开关；enabled 持久化进真实 config.json；
  *    mcp 组件目录可见。
- * 3. S1 表面：side-pane 市场详情的 open-ui 打开 Class A workspace 面板 ——
- *    真实 plugin-ui 沙箱 guest 渲染信息性内容（spawn server → uiCallTool → 沙箱；
- *    主导航详情无 onOpenUi —— 只有会话侧市场提供，PLM-UI-001 同因）。
+ * 3. S1 表面：主导航设置详情的 open-ui（draft 入口，PLM-UI-001 同款）打开
+ *    Class A workspace 面板 —— 真实 plugin-ui 沙箱 guest 渲染信息性内容
+ *    （spawn server → uiCallTool → 沙箱）。修复原因（CI run 43415362076）：
+ *    side-pane 市场的 onOpenUi 在无绑定会话时被 useMarketPluginUi 的 needsSession
+ *    守卫以 toast 拒开（本 spec 不发首轮消息），沙箱永不 spawn。
  * 4. T6：设置详情高级区按声明渲染 financialWorkspace 布尔开关（既有
  *    PluginConfigControls Switch，零设置页改动）。
  * 5. T2 opt-in（S1→S2）：翻转开关；userConfig 经真实 config.json 持久化。
@@ -267,7 +269,14 @@ describe("P1.8：官方 PaySwap 插件既有生命周期 browser-verified 臂", 
       "T1 enable 后 enabledPlugins[payswap] 未在 30s 内落盘",
     );
 
-    // --- S1：Class A 表面经真实 plugin-ui 沙箱打开（side-pane 市场详情入口） ---
+    // --- S1：Class A 表面经真实 plugin-ui 沙箱打开（主导航设置详情的 open-ui，draft 入口） ---
+    // 修复原因（CI run 43415362076，S1 之后为该 spec 首次真实执行）：side-pane 市场详情
+    // 的 open-ui 依赖目标会话（useMarketPluginUi 的 needsSession 守卫），本 spec 不发
+    // 首轮消息、无绑定会话 → toast 拒开，沙箱永不 spawn（agent/desktop 日志零
+    // pluginSandbox/payswap MCP 活动即为证据）。改走 PLM-UI-001 的被验证路径：
+    // 主导航设置详情的 open-ui（onOpenDraftUi —— 根草稿上下文），同为真实 plugin-ui
+    // 沙箱（spawn server → uiCallTool → 沙箱 guest）。
+    await openPluginSettings();
     await openPluginCard(PAYSWAP_PLUGIN_ID);
     await waitForPluginControl("plugin-store-open-ui", { pluginId: PAYSWAP_PLUGIN_ID }, 30_000);
     await clickPluginControl("plugin-store-open-ui", { pluginId: PAYSWAP_PLUGIN_ID });

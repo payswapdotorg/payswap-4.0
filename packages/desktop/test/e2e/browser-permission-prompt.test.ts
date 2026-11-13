@@ -136,6 +136,16 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
       "权限确认条没有出现",
     );
     await clickTestIdByWebDriver(TID_BROWSER_PERMISSION_DENY);
+    // 修复原因（CI run 43415362076 场景三挂起，两轮同因）：第二次 deny 的拒绝结算
+    // 未被等待就立即导航 —— 新文档上的 getUserMedia 在 media 管线 teardown 中途发出，
+    // Chromium 层不再调用 request handler（证据：场景二两次 user-prompt dismiss 决策
+    // 正常落盘，场景三零 permission 活动、promise 永久 pending、guest 未换代未崩溃）。
+    // 与第一次 deny 后的断言一致地等待结算 —— 同时补上第二个 deny 的语义断言（不记
+    // 忆拒绝同样必须兑现 NotAllowedError），管线结算完成后再导航。
+    await browser.waitUntil(
+      async () => (await runInGuest("window.__mediaResult2")) === "NotAllowedError",
+      { timeout: 15_000, timeoutMsg: "点第二次「不允许」后 getUserMedia 应被拒绝" },
+    );
 
     // ── 场景三：确认条 → 访问此网站时允许（持久）
     await navigateTo(allowServer.origin);
