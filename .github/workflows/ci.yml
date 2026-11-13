@@ -180,13 +180,21 @@ jobs:
 
       # ADR-15 D15.1/D15.7：ADR-15 交付后 prepare 脚本是唯一编译纪律（csc flag
       # 集与本 job 旧 ad-hoc 编译步逐字节同源 —— 打包产物就是被证明的产物）。
-      # §5.3 平台套件改为对 prepare 脚本的 staging 产物重跑：staged binary 路径 +
-      # manifest digest 经 PAYSWAP_BROKER_HELPER_{PATH,SHA256} 供给（D13.9 env 键
-      # 纪律不变，gates-macos 同款 GITHUB_ENV 供给；peer-verification 套件对默认
-      # 无 helper 态的行自带 save/delete/restore）。csc.exe 仍为 OS 内置 .NET
-      # Framework 编译器（windows-latest 必备路径；/warnaserror+ 对应 gates-macos
-      # 的 -Werror）；脚本同时把编译产物留在 native/…/out/（平台套件 fallback）。
+      # 本步断言 staged pair 的自洽（version/target/helper 形状 + digest 重验），
+      # 并把 staged binary 路径 + manifest digest 落 **step outputs** —— 绝不写
+      # GITHUB_ENV（round-1 CI 教训，恢复本 job 旧纪律：供给键 job 级泄漏会让
+      # peer-verification 套件的 startBroker() 经 resolveDefaultPeerRelayHelper
+      # 解析到 helper 而 boot peer_verified，§5.3 管道口门（D14.8 spawn 表）对
+      # 未注册/无映像 pid 是**零字节弃连**（§5.3(1)/(4)，无拒绝行），该套件
+      # audit-ingress 行的拒绝行断言只在 Linux 直读 / darwin relay / win32
+      # degraded（broker 自持管道应答）三态可达 —— 泄漏即确定性超时）。供给声明
+      # 只作用于下方 §5.3 平台套件步（D15.7：平台行对 prepare 脚本产物重跑 ——
+      # path + manifest digest，D13.9 env 键纪律不变）。csc.exe 仍为 OS 内置
+      # .NET Framework 编译器（windows-latest 必备路径；/warnaserror+ 对应
+      # gates-macos 的 -Werror）；脚本同时把编译产物留在 native/…/out/（平台
+      # 套件 fallback）。
       - name: Prepare the Windows peer-verification helper (packaging discipline)
+        id: payswap-helper
         shell: pwsh
         run: |
           node apps/zcode-cli/packages/cli/scripts/prepare-payswap-broker-peer-helper.mjs --target win-x64
@@ -200,12 +208,26 @@ jobs:
           if ($actual -ne $manifest.helper.sha256) {
             throw "staged helper digest mismatch: manifest $($manifest.helper.sha256), actual $actual"
           }
-          Add-Content -Path $env:GITHUB_ENV -Value "PAYSWAP_BROKER_HELPER_PATH=$helperPath"
-          Add-Content -Path $env:GITHUB_ENV -Value "PAYSWAP_BROKER_HELPER_SHA256=$($manifest.helper.sha256)"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "helperPath=$helperPath"
+          Add-Content -Path $env:GITHUB_OUTPUT -Value "helperSha256=$($manifest.helper.sha256)"
           Write-Host "staged helper: $helperPath sha256=$($manifest.helper.sha256)"
 
-      - name: Bootstrap payswap windows suites (default-state fail-closed rows + platform rows)
+      # win32 **默认无 helper 态**的 fail-closed 行（degraded 自持管道照常应答拒绝
+      # 行；"platform default" 行自带 save/delete/restore，对供给键在场均成立）。
+      # 本步不设供给键 —— 默认态是本套件的被钉对象（供给激活态在下一步证明）。
+      - name: Bootstrap payswap peer-verification suite (win32 default-state fail-closed rows)
         run: >
           pnpm --filter @zcode/bootstrap exec vitest run
           tests/payswap-broker-peer-verification.test.ts
+
+      # §5.3 平台行（ADR-14 D14.10 / ADR-15 D15.7）：对 prepare 脚本的 staging 产物
+      # 重跑 —— path + manifest digest 经 D13.9 供给键，**步级 env**（恰好一个套件
+      # 消费；beforeAll 再验 env digest = 实际字节）。断言与旧 job 完全一致（打包
+      # 产物就是被证明的产物）。
+      - name: Bootstrap payswap windows platform suite (prepare-script output)
+        run: >
+          pnpm --filter @zcode/bootstrap exec vitest run
           tests/payswap-broker-peer-windows.test.ts
+        env:
+          PAYSWAP_BROKER_HELPER_PATH: ${{ steps.payswap-helper.outputs.helperPath }}
+          PAYSWAP_BROKER_HELPER_SHA256: ${{ steps.payswap-helper.outputs.helperSha256 }}
