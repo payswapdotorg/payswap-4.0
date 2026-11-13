@@ -1,5 +1,7 @@
 import { statSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import type { PluginHookDetail, PluginLoadOutcome } from "@zcode/contracts";
+import type { PluginComponents } from "./types.js";
 
 const PLUGIN_SOURCE_CLEANUP_RETRY_DELAYS_MS = [0, 25, 100] as const;
 
@@ -102,4 +104,27 @@ export function appendPluginSourceCleanupError(
 
 export function throwIfAborted(options: { signal?: AbortSignal } | undefined): void {
   if (options?.signal?.aborted) throw new Error("Plugin operation cancelled");
+}
+
+// 从 index.ts 迁出的空态构造（N25 门装配的行数预算让位；零行为变化）。
+export function emptyOutcome(): PluginLoadOutcome {
+  return {
+    commandRoots: [],
+    diagnostics: [],
+    hooks: {},
+    mcpServers: {},
+    plugins: [],
+    skillRoots: [],
+  };
+}
+
+export function emptyComponents(hookDetails: PluginHookDetail[] = []): PluginComponents {
+  return {
+    commandRoots: [],
+    hooks: {},
+    hookDetails,
+    mcpServers: {},
+    skillCount: 0,
+    skillRoots: [],
+  };
 }

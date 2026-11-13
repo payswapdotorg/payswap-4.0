@@ -7,7 +7,7 @@ import {
   TID_BROWSER_REFRESH_BUTTON,
   TID_BROWSER_WEBVIEW,
 } from "@zcode/shared/test-ids";
-import { clickTestIdByWebDriver } from "./helpers/desktop-app.js";
+import { clickTestIdByDom, clickTestIdByWebDriver } from "./helpers/desktop-app.js";
 import { openFirstBrowserTab } from "./helpers/browser-side-pane.js";
 import { prepareConversationE2E } from "./helpers/conversation-session.js";
 
@@ -174,7 +174,13 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
     );
     expect(await countPermissionPrompts()).toBe(0);
     // Electron 查询参数可能带尾部斜杠；授权后刷新仍应命中同一 origin 的持久记录。
-    await clickTestIdByWebDriver(TID_BROWSER_REFRESH_BUTTON);
+    // 修复原因（CI run 43447139431）：刷新按钮的 WebDriver 坐标点击间歇性不落位
+    // （同族坐标交互问题，见上方 navigateTo 修复记录）——刷新是普通 Button，
+    // DOM click 同样触发 React onClick；断言（granted 保持）不变。
+    await clickTestIdByDom(TID_BROWSER_REFRESH_BUTTON, {
+      timeout: 15_000,
+      timeoutMsg: "刷新按钮不可用",
+    });
     await browser.waitUntil(
       async () => (await runInGuest("window.__permissionState('camera')")) === "granted",
       { timeout: 15_000, timeoutMsg: "刷新后没有保留 camera 允许记录" },

@@ -11,7 +11,6 @@ import {
   clickPluginControl,
   getPluginList,
   hasPluginControl,
-  installPluginThroughUi,
   openManageView,
   openPluginCard,
   openPluginSettings,
@@ -384,8 +383,14 @@ describe("P1.8：官方 PaySwap 插件既有生命周期 browser-verified 臂", 
     );
 
     // --- 恢复（marketplace install 管线）：restorable 卡 install 点击 → S0b ---
+    // 修复原因（CI run 43447139431）：installPluginThroughUi 的落位断言是 marketplace
+    // 安装记录语义（installedPlugins.some）——被抑制内置插件的恢复走去抑制 + 重 seed，
+    // 恢复后的 S0b 基线是「available」而非安装记录（与本 spec 开头的 S0b 基线同一事实：
+    // installed 与 restorable 两列表都不含 payswap）。旧等待永远为 false，120s 轮询
+    // 后超时。改为直接断言恢复语义：不再 restorable（去抑制生效）→ 宇宙 enabled=false
+    // → userConfig 清白（后续既有断言）。
     await waitForPluginCard(PAYSWAP_PLUGIN_ID, 60_000);
-    await installPluginThroughUi(PAYSWAP_PLUGIN_ID);
+    await clickPluginControl("plugin-store-install", { pluginId: PAYSWAP_PLUGIN_ID });
     await waitUntilPluginOverview(
       (overview) => !overview.restorableBuiltins.some((plugin) => plugin.id === PAYSWAP_PLUGIN_ID),
       "PaySwap did not restore cleanly through the marketplace pipeline",

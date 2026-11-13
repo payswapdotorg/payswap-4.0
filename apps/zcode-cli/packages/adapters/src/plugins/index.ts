@@ -27,6 +27,7 @@ import {
 import {
   isPayswapFinancialModeActive,
   isPayswapPluginHookAdmitted,
+  payswapAuthorizationSurfaceRejectionMessage,
 } from "@zcode/shared/payswap";
 import {
   directoryExists,
@@ -38,6 +39,8 @@ import {
   resolveInside,
   sanitizePluginId,
   throwIfAborted,
+  emptyComponents,
+  emptyOutcome,
 } from "./helpers.js";
 import { scanSkillFilesUnderRootSync } from "../skills/scan.js";
 import { loadPluginMcpServerDefinitions, resolvePluginMcpServers } from "./mcp.js";
@@ -187,6 +190,23 @@ export class NodePluginAdapter implements PluginPort {
       // 未启用插件的内置 MCP 就会在管理页完全不可见。这里先读取声明名给 UI 只读展示，
       // 实际 runtime 注入仍只使用 enabled 分支解析出的 component.mcpServers。
       const mcpServerDefinitions = loadPluginMcpServerDefinitions({ diagnostics, loaded });
+      const declaredMcpServerNames = Object.keys(mcpServerDefinitions);
+      // N25（addendum §1.6.0）：Class B 授权卡不可声明为插件表面 —— 授权样式的
+      // ui.surfaces[] 声明整体拒绝（插件不加载，fail-closed），而非只丢弃该表面项
+      // （与逐项 warning 丢弃的普通非法项不同：那是不安全声明）。法则单一实现住
+      // @zcode/shared/payswap（authorization-surfaces，hook-admission 同款纪律）。
+      const uiSurfaces = parsePluginUiSurfaces({ loaded, declaredMcpServerNames, diagnostics });
+      const authorizationSurfaceRejection = payswapAuthorizationSurfaceRejectionMessage(uiSurfaces);
+      if (authorizationSurfaceRejection) {
+        diagnostics.push({
+          code: "plugin_manifest_invalid",
+          message: authorizationSurfaceRejection,
+          path: loaded.manifestPath,
+          pluginId: loaded.id,
+          severity: "error",
+        });
+        continue;
+      }
       const hooksRunnable = canRunPluginHooks(loaded, request.config);
       const hookInspection = inspectPluginHooks({
         dataPath,
@@ -214,7 +234,6 @@ export class NodePluginAdapter implements PluginPort {
       mergeHookEvents(hooks, component.hooks);
       skillRoots.push(...component.skillRoots);
       commandRoots.push(...component.commandRoots);
-      const declaredMcpServerNames = Object.keys(mcpServerDefinitions);
       plugins.push(
         createPluginMetadata(
           loaded,
@@ -224,7 +243,7 @@ export class NodePluginAdapter implements PluginPort {
           declaredMcpServerNames,
           request.config.options[loaded.id] ?? {},
           // 插件 UI 面板入口（A5）：与启用态无关地解析，禁用插件的入口由 listUiSurfaces 过滤。
-          parsePluginUiSurfaces({ loaded, declaredMcpServerNames, diagnostics }),
+          uiSurfaces,
         ),
       );
     }
@@ -979,28 +998,6 @@ function readManifest(path: string, diagnostics: PluginDiagnostic[]): PluginMani
     });
     return null;
   }
-}
-
-function emptyOutcome(): PluginLoadOutcome {
-  return {
-    commandRoots: [],
-    diagnostics: [],
-    hooks: {},
-    mcpServers: {},
-    plugins: [],
-    skillRoots: [],
-  };
-}
-
-function emptyComponents(hookDetails: PluginHookDetail[] = []): PluginComponents {
-  return {
-    commandRoots: [],
-    hooks: {},
-    hookDetails,
-    mcpServers: {},
-    skillCount: 0,
-    skillRoots: [],
-  };
 }
 
 function resolveEnabled(config: PluginConfig, id: string, defaultEnabled: boolean): boolean {

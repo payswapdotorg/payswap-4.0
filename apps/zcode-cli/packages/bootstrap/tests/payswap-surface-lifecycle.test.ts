@@ -985,3 +985,127 @@ describe("payswap S-series projections — discovery boundary (§2 / §2.2 T1/T4
     ]);
   });
 });
+
+// ---------------------------------------------------------------------------
+// N25：Class B 授权卡不可声明为插件表面 —— 清单验证整体拒绝（插件不加载）
+// （addendum §1.6.0「A … manifest that declares an authorization-styled surface
+// in `ui.surfaces[]` … is rejected at manifest validation — N25」；「工具
+// `_meta.ui` 命名一面」的臂由本门 + N26（插件回调不是批准通道）共同覆盖 —— 现行
+// `_meta.ui` 只承载 visibility，不承载表面引用，见 authorization-surfaces.ts。）
+// ---------------------------------------------------------------------------
+
+describe("payswap N25 manifest gate — authorization-styled surface declarations (§1.6.0)", () => {
+  let storageRoot: string;
+  let workspace: string;
+
+  beforeAll(async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), "payswap-n25-storage-"));
+    workspace = await mkdtemp(join(tmpdir(), "payswap-n25-workspace-"));
+  });
+
+  afterAll(async () => {
+    await rm(storageRoot, { force: true, recursive: true });
+    await rm(workspace, { force: true, recursive: true });
+  });
+
+  async function writePanelPlugin(rootName: string, surfaces: unknown[]): Promise<string> {
+    const root = join(storageRoot, rootName);
+    await mkdir(join(root, ".zcode-plugin"), { recursive: true });
+    await writeFile(
+      join(root, ".zcode-plugin", "plugin.json"),
+      JSON.stringify({
+        name: rootName,
+        version: "0.0.0",
+        mcpServers: {
+          "panel-server": {
+            type: "stdio",
+            command: "node",
+            args: ["${ZCODE_PLUGIN_ROOT}/dist/server.mjs"],
+          },
+        },
+        ui: { surfaces },
+      }),
+    );
+    return root;
+  }
+
+  function discoverWith(root: string): PluginLoadOutcome {
+    return discoverNodePluginsSync({
+      config: {
+        dirs: [root],
+        enabled: true,
+        enabledPlugins: {},
+        extraKnownMarketplaces: {},
+        options: {},
+        suppressedBuiltins: [],
+      },
+      env: {},
+      storageRoot,
+      workingDirectory: workspace,
+    });
+  }
+
+  it("N25 id 臂：授权样式表面（id 命中 approve）→ 清单验证整体拒绝：插件不加载、error 诊断、零组件贡献", async () => {
+    const root = await writePanelPlugin("e2e-n25-approve", [
+      {
+        id: "approve-payment",
+        title: "Payment Panel",
+        server: "panel-server",
+        resourceUri: "ui://n25/approve.html",
+        availability: "session",
+      },
+    ]);
+    const outcome = discoverWith(root);
+    expect(outcome.plugins.map((plugin) => plugin.id)).not.toContain("e2e-n25-approve@inline");
+    // 整体拒绝 = 零组件贡献（不是只丢弃表面）：无 MCP server、无 command/skill。
+    expect(Object.keys(outcome.mcpServers)).toEqual([]);
+    expect(outcome.commandRoots).toEqual([]);
+    expect(outcome.skillRoots).toEqual([]);
+    const rejection = outcome.diagnostics.find(
+      (diagnostic) =>
+        diagnostic.code === "plugin_manifest_invalid" && diagnostic.severity === "error",
+    );
+    expect(rejection?.message).toContain("N25");
+    expect(rejection?.message).toContain("approve-payment");
+  });
+
+  it("N25 标题臂（locale 映射命中 authorization）→ 同样整体拒绝", async () => {
+    const root = await writePanelPlugin("e2e-n25-authorization", [
+      {
+        id: "finance-panel",
+        title: { "zh-CN": "金融面板", "en-US": "Payment Authorization" },
+        server: "panel-server",
+        resourceUri: "ui://n25/auth.html",
+        availability: "session",
+      },
+    ]);
+    const outcome = discoverWith(root);
+    expect(outcome.plugins.map((plugin) => plugin.id)).not.toContain(
+      "e2e-n25-authorization@inline",
+    );
+    expect(
+      outcome.diagnostics.some(
+        (diagnostic) =>
+          diagnostic.code === "plugin_manifest_invalid" && diagnostic.severity === "error",
+      ),
+    ).toBe(true);
+  });
+
+  it("N25 反例：信息性表面（无授权语义）照常加载 —— 门只拒授权样式，不误伤 Class A", async () => {
+    const root = await writePanelPlugin("e2e-n25-clean", [
+      {
+        id: "payment-report",
+        title: "Payment Report",
+        server: "panel-server",
+        resourceUri: "ui://n25/report.html",
+        availability: "session",
+      },
+    ]);
+    const outcome = discoverWith(root);
+    expect(outcome.plugins.map((plugin) => plugin.id)).toContain("e2e-n25-clean@inline");
+    expect(outcome.plugins[0]?.uiSurfaces?.map((surface) => surface.id)).toEqual([
+      "payment-report",
+    ]);
+    expect(outcome.diagnostics.some((diagnostic) => diagnostic.severity === "error")).toBe(false);
+  });
+});
