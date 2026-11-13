@@ -10,7 +10,7 @@ import {
 import {
   PAYSWAP_BROKER_PEER_HELPER_RESOURCE_DIR,
   resolvePayswapBrokerPeerHelperSupply,
-} from "#src/main/payswapBrokerPeerHelperSupply.js";
+} from "#src/main/payswap/brokerPeerHelperSupply.js";
 
 /**
  * PaySwap P1 —— ADR-15 D15.4 的桌面注入解析行（POSIX 可跑，fake resourcesPath）：

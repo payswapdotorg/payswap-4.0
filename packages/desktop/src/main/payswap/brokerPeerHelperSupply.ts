@@ -1,7 +1,8 @@
 /**
  * PaySwap P1 —— ADR-15 D15.4：桌面 agent-env 组装的 payswap broker peer helper
  * 供给解析器（desktopRuntimeEnv.ts `buildHostProcessEnv` 的 CUA-helper-app 供给
- * 先例同族；P1 仅 win32）。
+ * 先例同族；P1 仅 win32）。desktop-payswap managed 模块的供给面 —— 法则/协议常量
+ * 住 shared-payswap，本文件只做桌面资源解析与注入时验证（模块层 app）。
  *
  * 解析（browser-import-helper / windowsChromeAppBoundKey 的 resourcesPath 解析族
  * + bundled-tools 相对路径 dev 回退族）：

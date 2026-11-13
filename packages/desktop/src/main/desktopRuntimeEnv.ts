@@ -38,7 +38,7 @@ import {
   type ResolveRemoteCdnOptions,
 } from "./remoteCdn.js";
 import { getElectronAppPath, isElectronAppPackaged } from "./desktopElectronApp.js";
-import { resolvePayswapBrokerPeerHelperSupply } from "./payswapBrokerPeerHelperSupply.js";
+import { resolvePayswapBrokerPeerHelperSupply } from "./payswap/index.js";
 
 declare const __ZCODE_PACKAGED_AGENT_TELEMETRY_ENV__: Readonly<Record<string, string>> | undefined;
 
