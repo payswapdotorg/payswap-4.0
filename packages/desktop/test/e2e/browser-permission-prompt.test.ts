@@ -230,7 +230,17 @@ async function navigateTo(origin: string): Promise<void> {
       )) === true,
     { timeout: 15_000, timeoutMsg: "内置浏览器地址输入不可用" },
   );
-  await browser.keys("Enter");
+  // 修复原因（run 43514818284 场景三导航断言失败：Expected allowServer / Received
+  // denyServer —— 宿主池退化窗口内 browser.keys("Enter") 间歇不送达，地址栏
+  // 停留旧 origin）：提交改走 form.requestSubmit() —— 与 Enter 隐式提交同一表单
+  // 管线，不经真实键盘事件投递；断言（加载完成/origin/脚本就绪）不变。
+  await browser.execute((testIdValue: string) => {
+    const input = document.querySelector<HTMLInputElement>(`[data-testid="${testIdValue}"]`);
+    const form = input?.form;
+    if (!(form instanceof HTMLFormElement)) return false;
+    form.requestSubmit();
+    return true;
+  }, TID_BROWSER_ADDRESS_INPUT);
   await browser.waitUntil(
     () =>
       browser.execute((refreshTestId: string) => {
