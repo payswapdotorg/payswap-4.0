@@ -63,7 +63,15 @@ jobs:
           ZCODE_E2E_RUN_ID: payswap-e2e-${{ github.run_id }}-${{ github.run_attempt }}
           # 修复原因（run 43161767622）：无摄像头容器里 getUserMedia 以 NotFoundError 短路，
           # permission-bar spec 等不到确认条；假设备恢复真实权限请求流（wdio 注入点本分支已备）。
-          ZCODE_E2E_EXTRA_APP_ARGS: --use-fake-device-for-media-stream
+          # 修复原因（run 43418377362 vs 43415362076 的同码不同果）：Xvfb 无窗口管理器下
+          # Chromium 的窗口遮挡判定不稳定（occlusion 误报），元素 checkVisibility 间歇性
+          # false → "did not become interactable"（round2 绿 / round3 同码红，地址输入与
+          # 滑杆两处）。补 occlusion/后台化缓解开关——纯环境稳定化，不动断言。
+          ZCODE_E2E_EXTRA_APP_ARGS: >-
+            --use-fake-device-for-media-stream
+            --disable-backgrounding-occluded-windows
+            --disable-renderer-backgrounding
+            --disable-background-timer-throttling
           E2E_SPEC: >-
             ./test/e2e/payswap-approval-card.test.ts,
             ./test/e2e/payswap-plugin-lifecycle.test.ts,
