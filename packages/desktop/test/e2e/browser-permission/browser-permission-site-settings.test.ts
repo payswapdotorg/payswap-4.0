@@ -120,25 +120,28 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
     // 修改。两项激活证据：(1) 标签 trigger data-state="active"（与 side-pane-scope 同一
     // 契约）；(2) 重置按钮已解锁 —— 它只在 states 首读完成后解锁（refresh 仅在
     // enabled=true 时运行），是写路径已打开的直接证据。
-    await browser.waitUntil(
-      async () =>
-        await browser.execute(() => {
-          const activeSettingsTab = Array.from(
-            document.querySelectorAll<HTMLElement>(
-              '[data-side-pane-tab-id^="browser-permissions:"]',
-            ),
-          ).some((tab) => tab.getAttribute("data-state") === "active");
-          if (!activeSettingsTab) return false;
-          const reset = document.querySelector<HTMLButtonElement>(
-            '[data-testid="browser-permission-reset"]',
-          );
-          return !!reset && !reset.disabled;
-        }),
-      {
-        timeout: 15_000,
-        timeoutMsg:
-          "站点权限设置标签页没有成为激活标签且完成首次读取（keep-alive 下非激活页会吞掉全部写入）",
-      },
+    const waitForSettingsTabLive = (timeoutMsg: string, timeout = 15_000) =>
+      browser.waitUntil(
+        async () =>
+          await browser.execute(() => {
+            const activeSettingsTab = Array.from(
+              document.querySelectorAll<HTMLElement>(
+                '[data-side-pane-tab-id^="browser-permissions:"]',
+              ),
+            ).some((tab) => tab.getAttribute("data-state") === "active");
+            if (!activeSettingsTab) return false;
+            const reset = document.querySelector<HTMLButtonElement>(
+              '[data-testid="browser-permission-reset"]',
+            );
+            return !!reset && !reset.disabled;
+          }),
+        {
+          timeout,
+          timeoutMsg,
+        },
+      );
+    await waitForSettingsTabLive(
+      "站点权限设置标签页没有成为激活标签且完成首次读取（keep-alive 下非激活页会吞掉全部写入）",
     );
 
     // geolocation 逐项改为「允许」→ guest 内 permissions.query 立即变 granted
@@ -346,14 +349,26 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
     );
 
     // 整站重置 → 回到每次询问（query 为 denied）
-    await clickTestIdByDom("browser-permission-reset");
-    await browser.waitUntil(
-      async () =>
-        await browser.execute(
-          () => !!document.querySelector('[data-testid="browser-permission-reset-done"]'),
-        ),
-      { timeout: 10_000, timeoutMsg: "重置完成提示没有出现" },
-    );
+    // 修复原因（run 43500382244）：granted 等待与重置点击之间设置页可能失去激活态
+    //（keep-alive 僵尸化：clickTestIdByDom 在隐藏页上照常返回 clicked:true，但
+    // enabled 守卫静默吞掉重置写入 —— main 零 IPC、零错误日志、提示永不出现，
+    // 与选择阶段同一家族）。重置前重验激活态；任何失败路径都倾倒诊断快照。
+    try {
+      await waitForSettingsTabLive(
+        "重置前设置标签页已不是激活可写状态（面板/标签在 granted 等待期间翻转）",
+      );
+      await clickTestIdByDom("browser-permission-reset");
+      await browser.waitUntil(
+        async () =>
+          await browser.execute(
+            () => !!document.querySelector('[data-testid="browser-permission-reset-done"]'),
+          ),
+        { timeout: 10_000, timeoutMsg: "重置完成提示没有出现" },
+      );
+    } catch (error) {
+      await dumpSiteSettingsDiagnostics("重置阶段失败");
+      throw error;
+    }
     await browser.waitUntil(
       async () => (await runInGuest("window.__permissionState('geolocation')")) === "denied",
       { timeout: 15_000, timeoutMsg: "重置后 permissions.query 应回到 denied" },
