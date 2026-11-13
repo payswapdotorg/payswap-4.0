@@ -152,6 +152,13 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
     );
 
     // ── 场景三：确认条 → 访问此网站时允许（持久）
+    // 修复原因（runs 43509583729/43511500562/43513067991 场景三同因复燃，43415362076
+    // 已登记族的残余窗口）：上面等待的是 deny 决策的 promise 结算，但 guest 的 media
+    // 管线 teardown 在结算之后仍在进行 —— 场景三导航后的首个 getUserMedia 若落在
+    // teardown 中途，Chromium 层不再调用 request handler（promise 永久 pending、
+    // 零 permission 活动 —— 与历次失败诊断一致）。决策结算后有界静默窗，让管线
+    // teardown 完成；断言语义不变。
+    await browser.pause(600);
     await navigateTo(allowServer.origin);
     expect(await runInGuest("location.origin")).toBe(allowServer.origin);
     expect(await runInGuest("window.__permissionState('camera')")).toBe("denied");
