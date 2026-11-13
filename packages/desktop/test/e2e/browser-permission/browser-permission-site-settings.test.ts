@@ -110,15 +110,49 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
     );
     expect(originText).toBe(testServer.origin);
 
+    // 真实用户前置条件（run 43467865171 根因修复）：本 spec 到此为止的检查全部是 DOM
+    // 存在性检查 + DOM 派发事件，而 TabsContent forceMount 的 keep-alive 会把「非激活」
+    // 的设置页连全部控件一起留在 DOM（display:none）；Radix 下拉又以 body 门户渲染，
+    // 不受页面 display:none 影响 —— 所以隐藏页上 focus/高亮/键盘全部照常工作。但
+    // useBrowserSitePermissions 的 enabled（isVisible）守卫会静默吞掉全部写入：main
+    // 无写入 IPC 日志、renderer 无错误日志、保存提示永不出现 —— 正是 43467865171 三次
+    // 尝试「保存提示没有出现」的完整证据链。真实用户必须先「看到」设置标签页才能逐项
+    // 修改。两项激活证据：(1) 标签 trigger data-state="active"（与 side-pane-scope 同一
+    // 契约）；(2) 重置按钮已解锁 —— 它只在 states 首读完成后解锁（refresh 仅在
+    // enabled=true 时运行），是写路径已打开的直接证据。
+    await browser.waitUntil(
+      async () =>
+        await browser.execute(() => {
+          const activeSettingsTab = Array.from(
+            document.querySelectorAll<HTMLElement>(
+              '[data-side-pane-tab-id^="browser-permissions:"]',
+            ),
+          ).some((tab) => tab.getAttribute("data-state") === "active");
+          if (!activeSettingsTab) return false;
+          const reset = document.querySelector<HTMLButtonElement>(
+            '[data-testid="browser-permission-reset"]',
+          );
+          return !!reset && !reset.disabled;
+        }),
+      {
+        timeout: 15_000,
+        timeoutMsg:
+          "站点权限设置标签页没有成为激活标签且完成首次读取（keep-alive 下非激活页会吞掉全部写入）",
+      },
+    );
+
     // geolocation 逐项改为「允许」→ guest 内 permissions.query 立即变 granted
-    // 修复原因（CI run 43456602866/43459195997/43464558855 三轮同点）：Xvfb 无 WM 2 核
-    // 容器里 WebDriver 坐标点击链间歇性「命令成功但未送达」；而 Radix Select 项不经
-    // click 激活（pointerdown 开触发器后，完整 pointer+click 序列还会把已开的下拉
-    // 当作 outside 点击关掉）。selectPluginSettingsScope 的既有纪律：pointerdown 开
+    // 修复原因（CI run 43456602866/43459195997/43464558855/43467865171 多轮同点）：Xvfb
+    // 无 WM 2 核容器里 WebDriver 坐标点击链间歇性「命令成功但未送达」；而 Radix Select
+    // 项不经 click 激活（pointerdown 开触发器后，完整 pointer+click 序列还会把已开的
+    // 下拉当作 outside 点击关掉）。selectPluginSettingsScope 的既有纪律：pointerdown 开
     // 触发器 + 键盘走列表。真实键盘事件（browser.keys）在本容器已被证明可靠
     // （Enter/Tab/Escape）。有界重试 3 次；断言语义不变（保存提示必须出现、granted
-    // 必须兑现、重置回 denied 必须兑现）。
+    // 必须兑现、重置回 denied 必须兑现）。run 43467865171 起在 Enter 后先分离验证
+    // Select 值提交（data-permission-setting 只在写入+重读后翻转），把「提交未送达」
+    // 与「写入被吞」两类故障精确定位；失败路径倾倒诊断快照。
     let settingsSaved = false;
+    let lastCommitState = "unknown";
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
         if (attempt > 1) {
@@ -147,6 +181,19 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
           );
           return true;
         });
+        // 先等任一项获得高亮（Radix 定位后 focusSelectedItem 落焦），再走键盘 ——
+        // 否则 ArrowDown 会与落焦竞态（run 43467865171：43–53ms 落焦窗口内 keydown
+        // 落到触发器上被 OPEN_KEYS 吞掉，高亮不动）。
+        await browser.waitUntil(
+          async () =>
+            await browser.execute(
+              () =>
+                !!document.querySelector(
+                  '[data-testid^="site-permission-option-"][data-highlighted]',
+                ),
+            ),
+          { timeout: 10_000, timeoutMsg: "下拉打开后没有高亮项" },
+        );
         // 键盘走到「允许」项：按 data-highlighted 校验高亮位，最多 4 次 ArrowDown。
         for (let step = 0; step < 4; step += 1) {
           const allowHighlighted = await browser.execute(
@@ -161,6 +208,29 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
         }
         await browser.pause(150);
         await browser.keys("Enter");
+        // 值提交证据：data-permission-setting 只随 states（写入+重读）翻转。提交与
+        // 保存提示分离等待，失败可精确归因。
+        const valueCommitted = await browser
+          .waitUntil(
+            async () =>
+              (await browser.execute(
+                () =>
+                  document
+                    .querySelector('[data-testid="site-permission-setting-geolocation"]')
+                    ?.getAttribute("data-permission-setting"),
+              )) === "allow",
+            { timeout: 5_000, timeoutMsg: "选择「允许」后 Select 值没有提交" },
+          )
+          .then(
+            () => true,
+            () => false,
+          );
+        lastCommitState = valueCommitted ? "committed" : "not-committed";
+        if (!valueCommitted) {
+          if (attempt === 3) break;
+          await browser.pause(750);
+          continue;
+        }
       } catch (error) {
         if (attempt === 3) throw error;
         await browser.pause(750);
@@ -180,7 +250,10 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
         );
       if (settingsSaved) break;
       if (attempt === 3) {
-        throw new Error("保存提示没有出现（三次选择「允许」后仍未保存）");
+        await dumpSiteSettingsDiagnostics("三次尝试后仍未保存");
+        throw new Error(
+          `保存提示没有出现（三次选择「允许」后仍未保存；值提交状态：${lastCommitState}）`,
+        );
       }
     }
     await browser.waitUntil(
@@ -250,6 +323,58 @@ async function navigateTo(origin: string): Promise<void> {
       timeoutMsg: "测试页脚本未就绪",
     },
   );
+}
+
+/**
+ * run 43467865171 起的失败路径诊断快照：一次性回答「标签是否激活 / 值是否提交 /
+ * 下拉是否残留 / 写路径是否 busy」四类问题，避免下一轮 CI 只拿到同一个不可归因的
+ * 「保存提示没有出现」。倾倒进 wdio 控制台（side-pane-scope 的 afterEach 同款通道）。
+ */
+async function dumpSiteSettingsDiagnostics(label: string): Promise<void> {
+  const dump = await browser.execute(() => {
+    const describe = (element: Element | null) => {
+      if (!element) return null;
+      const html = element as HTMLElement;
+      return {
+        tag: html.tagName.toLowerCase(),
+        testid: html.getAttribute("data-testid"),
+        dataState: html.getAttribute("data-state"),
+        dataHighlighted: html.hasAttribute("data-highlighted"),
+        permissionSetting: html.getAttribute("data-permission-setting"),
+        ariaExpanded: html.getAttribute("aria-expanded"),
+        disabled: html instanceof HTMLButtonElement ? html.disabled : null,
+        visible: html.checkVisibility(),
+        text: html.textContent?.trim().slice(0, 40) ?? "",
+      };
+    };
+    const page = document.querySelector('[data-testid="browser-site-permissions"]');
+    return {
+      tabTriggers: Array.from(
+        document.querySelectorAll<HTMLElement>("[data-side-pane-tab-id]"),
+      ).map((tab) => ({
+        tabId: tab.getAttribute("data-side-pane-tab-id"),
+        state: tab.getAttribute("data-state"),
+      })),
+      // TabsContent 宿主的激活态 —— keep-alive 僵尸页的直接证据。
+      pageContentHostState: page?.closest("[data-state]")?.getAttribute("data-state") ?? null,
+      pageVisible: page instanceof HTMLElement ? page.checkVisibility() : null,
+      geolocationTrigger: describe(
+        document.querySelector('[data-testid="site-permission-setting-geolocation"]'),
+      ),
+      listbox: describe(document.querySelector('[role="listbox"]')),
+      activeElement: describe(document.activeElement),
+      resetButton: describe(
+        document.querySelector('[data-testid="browser-permission-reset"]'),
+      ),
+      savedNotice: !!document.querySelector('[data-testid="browser-permission-saved"]'),
+      resetDoneNotice: !!document.querySelector(
+        '[data-testid="browser-permission-reset-done"]',
+      ),
+      alertText: document.querySelector('[role="alert"]')?.textContent?.trim() ?? null,
+      windowFocused: document.hasFocus(),
+    };
+  });
+  console.error(`[site-settings 诊断] ${label}`, JSON.stringify(dump, null, 2));
 }
 
 async function readBrowserGuestWebContentsId(): Promise<number> {
