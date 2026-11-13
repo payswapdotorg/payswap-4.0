@@ -735,7 +735,8 @@ export async function hasPluginControl(
           (!expected.marketplaceId || candidate.dataset.marketplaceId === expected.marketplaceId) &&
           (!expected.groupKey || candidate.dataset.groupKey === expected.groupKey) &&
           (!expected.componentKind || candidate.dataset.componentKind === expected.componentKind) &&
-          (!expected.configKey || candidate.dataset.configKey === expected.configKey),
+          (!expected.configKey || candidate.dataset.configKey === expected.configKey) &&
+          (!expected.surfaceId || candidate.dataset.surfaceId === expected.surfaceId),
       ),
     testIdValue,
     attributes,

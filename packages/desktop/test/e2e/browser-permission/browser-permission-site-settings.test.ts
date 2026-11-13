@@ -133,8 +133,33 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
 });
 
 async function navigateTo(origin: string): Promise<void> {
-  const addressInput = await $(`[data-testid="${TID_BROWSER_ADDRESS_INPUT}"]`);
-  await addressInput.setValue(origin);
+  // 修复原因（CI run 43442176637 同族预防，见 browser-permission-prompt 的修复记录）：
+  // Xvfb 无 WM 容器里地址输入的 WebDriver 坐标交互链间歇性 "element not
+  // interactable"（本 spec 在 run 43418377362 已命中过同族滑杆问题）。地址输入是
+  // 普通 <input>，提交走真实键盘 Enter——用原生 value setter + input 事件 +
+  // 显式 focus() 写入，再以 browser.keys 提交；断言不变。
+  await browser.waitUntil(
+    async () =>
+      (await browser.execute(
+        (testIdValue: string, nextOrigin: string) => {
+          const input = document.querySelector<HTMLInputElement>(
+            `[data-testid="${testIdValue}"]`,
+          );
+          if (!input) return false;
+          input.focus();
+          const setter = Object.getOwnPropertyDescriptor(
+            HTMLInputElement.prototype,
+            "value",
+          )?.set;
+          setter?.call(input, nextOrigin);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          return true;
+        },
+        TID_BROWSER_ADDRESS_INPUT,
+        origin,
+      )) === true,
+    { timeout: 15_000, timeoutMsg: "内置浏览器地址输入不可用" },
+  );
   await browser.keys("Enter");
   await browser.waitUntil(
     () =>

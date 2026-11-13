@@ -183,8 +183,36 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
 });
 
 async function navigateTo(origin: string): Promise<void> {
-  const addressInput = await $(`[data-testid="${TID_BROWSER_ADDRESS_INPUT}"]`);
-  await addressInput.setValue(origin);
+  // 修复原因（CI run 43442176637 场景三导航）：Xvfb 无 WM 容器里地址输入的
+  // WebDriver 坐标交互链（setValue 的 clear/focus）间歇性 "element not
+  // interactable"——场景一/二全部通过后，场景三的地址输入 5 秒内不可交互导致
+  // spec 失败（同族问题曾命中 site-settings 滑杆，run 43418377362；本仓库对同类
+  // 坐标异常的既有解法即 DOM 写入，见 setInputValueByTestIdDom 的修复原因）。
+  // 地址输入是普通 <input>，提交走真实键盘 Enter——用原生 value setter + input
+  // 事件 + 显式 focus() 写入，再以 browser.keys 提交；加载完成/origin/脚本就绪
+  // 断言保持不变。
+  await browser.waitUntil(
+    async () =>
+      (await browser.execute(
+        (testIdValue: string, nextOrigin: string) => {
+          const input = document.querySelector<HTMLInputElement>(
+            `[data-testid="${testIdValue}"]`,
+          );
+          if (!input) return false;
+          input.focus();
+          const setter = Object.getOwnPropertyDescriptor(
+            HTMLInputElement.prototype,
+            "value",
+          )?.set;
+          setter?.call(input, nextOrigin);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          return true;
+        },
+        TID_BROWSER_ADDRESS_INPUT,
+        origin,
+      )) === true,
+    { timeout: 15_000, timeoutMsg: "内置浏览器地址输入不可用" },
+  );
   await browser.keys("Enter");
   await browser.waitUntil(
     () =>

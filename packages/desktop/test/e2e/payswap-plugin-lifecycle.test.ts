@@ -12,6 +12,7 @@ import {
   getPluginList,
   hasPluginControl,
   installPluginThroughUi,
+  openManageView,
   openPluginCard,
   openPluginSettings,
   uninstallPluginThroughUi,
@@ -307,9 +308,33 @@ describe("P1.8：官方 PaySwap 插件既有生命周期 browser-verified 臂", 
       },
     );
 
-    // --- T6 + T2：主导航设置详情高级区的声明式布尔开关（既有 PluginConfigControls） ---
+    // --- T6 + T2：设置管理页详情高级区的声明式布尔开关（既有 PluginConfigControls） ---
+    // 修复原因（CI run 43442176637，T6 首次真实执行即断在 config-input）：旧步骤走
+    // 主导航商店详情——PluginStorePage 的 advanced 注入只有 warnings/rootPath/hooks，
+    // 不含 PluginConfigControls（config-input 只在设置管理页详情渲染，PluginsSection
+    // 的 advanced 注入）。改走 PLM-UI-001 的被验证管理页路径（openPluginSettings →
+    // openManageView → 行内卡片进详情）。保持默认 user 作用域——保存落在用户层
+    // config，正是 T5 既有卸载流清理的层（uninstall 的 removePluginFromFileConfig
+    // 只清 configResult.sources.user.path）。另：Switch 只写草稿，持久化必须经真实
+    // 保存按钮（onSetDraft → onSave），旧步骤缺这一步。
     await openPluginSettings();
-    await openPluginCard(PAYSWAP_PLUGIN_ID);
+    await openManageView();
+    await waitForPluginControl(
+      "plugin-settings-plugin-row",
+      { pluginId: PAYSWAP_PLUGIN_ID },
+      30_000,
+    );
+    await browser.execute(
+      (pluginId) => {
+        const row = document.querySelector(
+          `[data-testid="plugin-settings-plugin-row"][data-plugin-id="${pluginId}"] [data-testid="plugin-store-card"]`,
+        );
+        if (!(row instanceof HTMLElement)) throw new Error("管理页缺少 PaySwap 插件行");
+        row.click();
+      },
+      PAYSWAP_PLUGIN_ID,
+    );
+    await waitForPluginControl("plugin-store-detail", { pluginId: PAYSWAP_PLUGIN_ID }, 30_000);
     await clickPluginControl("plugin-store-advanced");
     await waitForPluginControl(
       "plugin-store-config-input",
@@ -317,6 +342,7 @@ describe("P1.8：官方 PaySwap 插件既有生命周期 browser-verified 臂", 
       30_000,
     );
     await clickPluginControl("plugin-store-config-input", { configKey: "financialWorkspace" });
+    await clickPluginControl("plugin-store-config-save", { pluginId: PAYSWAP_PLUGIN_ID });
     await browser.waitUntil(
       async () => (await readPayswapConfigEntry()).financialWorkspace === true,
       {
@@ -326,12 +352,18 @@ describe("P1.8：官方 PaySwap 插件既有生命周期 browser-verified 臂", 
     );
 
     // --- T4 disable（→S0b）：enabled=false，仍在插件宇宙 ---
-    await backToStoreList();
+    // 管理页详情经 manage-back 回商店列表；商店卡真实开关（与 T1 同源，写 workspace 层）。
+    await clickPluginControl("plugin-store-manage-back");
     await setPayswapEnabledThroughSwitch(false);
 
     // --- T5 uninstall（→S0a 抑制态）：确认卸载 → suppressed（restorable 投影）；
     //     既有卸载流移除 enabledPlugins 与 options 条目 ---
-    await openPluginCard(PAYSWAP_PLUGIN_ID);
+    // 修复原因（T5 首次真实执行前预防）：item-menu/uninstall 在卡片上（列表视图），
+    // 旧步骤先 openPluginCard 进详情后点不到卡片菜单；卸载从商店列表卡直接走。
+    // 文件断言语义修正：既有卸载流清理的是用户层（uninstall 只清
+    // configResult.sources.user.path），T2 的 userConfig 写在用户层 → 断言
+    // financialWorkspace 被清；T4 的显式 disable 写在 workspace 层且可持续
+    // （scope 配置事实，非卸载泄漏）→ 断言任何层都不再持有 enabled=true。
     await uninstallPluginThroughUi(PAYSWAP_PLUGIN_ID, true);
     await waitUntilPluginOverview(
       (overview) =>
@@ -343,17 +375,16 @@ describe("P1.8：官方 PaySwap 插件既有生命周期 browser-verified 臂", 
     await browser.waitUntil(
       async () => {
         const entry = await readPayswapConfigEntry();
-        return entry.enabled === undefined && entry.financialWorkspace === undefined;
+        return entry.financialWorkspace === undefined && entry.enabled !== true;
       },
       {
         timeout: 30_000,
-        timeoutMsg: "卸载后 enabledPlugins/options 未被既有卸载流清理（T5）",
+        timeoutMsg: "卸载后 userConfig/启用态未被既有卸载流清理（T5）",
       },
     );
 
     // --- 恢复（marketplace install 管线）：restorable 卡 install 点击 → S0b ---
     await waitForPluginCard(PAYSWAP_PLUGIN_ID, 60_000);
-    await openPluginCard(PAYSWAP_PLUGIN_ID);
     await installPluginThroughUi(PAYSWAP_PLUGIN_ID);
     await waitUntilPluginOverview(
       (overview) => !overview.restorableBuiltins.some((plugin) => plugin.id === PAYSWAP_PLUGIN_ID),
