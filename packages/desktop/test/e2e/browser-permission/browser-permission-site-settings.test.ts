@@ -4,7 +4,11 @@ import {
   TID_BROWSER_REFRESH_BUTTON,
   TID_BROWSER_WEBVIEW,
 } from "@zcode/shared/test-ids";
-import { clickTestIdByDom, clickTestIdByDomPointer } from "#e2e/helpers/desktop-app";
+import {
+  clickTestIdByDom,
+  clickTestIdByDomPointer,
+  waitForTestIdByDom,
+} from "#e2e/helpers/desktop-app";
 import { openFirstBrowserTab } from "#e2e/helpers/browser-side-pane";
 import { prepareV4ConversationE2E } from "#e2e/helpers/v4-conversation";
 
@@ -107,18 +111,56 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
     expect(originText).toBe(testServer.origin);
 
     // geolocation 逐项改为「允许」→ guest 内 permissions.query 立即变 granted
-    // 修复原因（CI run 43447139431/43454124420）：设置标签页里 Radix 控件的 WebDriver
-    // 坐标点击偶发不落位——两种表现：触发器 10s 不可点击（run 43454124420），或点击
-    // 无报错但 onSelect 未触发 → 保存提示不出现（run 43447139431）。同族坐标交互
-    // 问题。真实用户的自然反应是重开重选 —— 有界重试 3 次（两次点击 + 保存提示为
-    // 一个完整尝试），断言语义不变（保存提示必须出现、granted 必须兑现）。
+    // 修复原因（CI run 43456602866/43459195997/43464558855 三轮同点）：Xvfb 无 WM 2 核
+    // 容器里 WebDriver 坐标点击链间歇性「命令成功但未送达」；而 Radix Select 项不经
+    // click 激活（pointerdown 开触发器后，完整 pointer+click 序列还会把已开的下拉
+    // 当作 outside 点击关掉）。selectPluginSettingsScope 的既有纪律：pointerdown 开
+    // 触发器 + 键盘走列表。真实键盘事件（browser.keys）在本容器已被证明可靠
+    // （Enter/Tab/Escape）。有界重试 3 次；断言语义不变（保存提示必须出现、granted
+    // 必须兑现、重置回 denied 必须兑现）。
     let settingsSaved = false;
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
-        await clickTestIdByDomPointer("site-permission-setting-geolocation", {
+        if (attempt > 1) {
+          // 上一次尝试可能残留打开的下拉（Enter 未送达时）：先 Escape 归一化。
+          await browser.keys("Escape");
+          await browser.pause(150);
+        }
+        // pointerdown-only 开 Select（完整序列的 click 会当作 outside 关闭下拉）；
+        // 等待与派发分离 —— waitUntil 谓词必须纯检查，逐次派发会把下拉来回切换。
+        await waitForTestIdByDom("site-permission-setting-geolocation", {
           timeout: 15_000,
+          timeoutMsg: "geolocation 设置控件没有渲染",
         });
-        await clickTestIdByDomPointer("site-permission-option-allow", { timeout: 10_000 });
+        await browser.execute(() => {
+          const trigger = document.querySelector<HTMLElement>(
+            '[data-testid="site-permission-setting-geolocation"]',
+          );
+          if (!(trigger instanceof HTMLElement)) return false;
+          trigger.dispatchEvent(
+            new PointerEvent("pointerdown", {
+              bubbles: true,
+              button: 0,
+              ctrlKey: false,
+              pointerType: "mouse",
+            }),
+          );
+          return true;
+        });
+        // 键盘走到「允许」项：按 data-highlighted 校验高亮位，最多 4 次 ArrowDown。
+        for (let step = 0; step < 4; step += 1) {
+          const allowHighlighted = await browser.execute(
+            () =>
+              !!document.querySelector(
+                '[data-testid="site-permission-option-allow"][data-highlighted]',
+              ),
+          );
+          if (allowHighlighted) break;
+          await browser.keys("ArrowDown");
+          await browser.pause(150);
+        }
+        await browser.pause(150);
+        await browser.keys("Enter");
       } catch (error) {
         if (attempt === 3) throw error;
         await browser.pause(750);
