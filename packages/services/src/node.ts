@@ -177,6 +177,14 @@ export {
   createStripeAccountDataReadPort,
   type PayswapStripeDataReadDependencies,
 } from "#src/payswap/index.js";
+// PaySwap P2.2（生产装配半）：账户运行时 —— 单一账户服务实例 + broker 的两个
+// 绑定 reader 面（listConnections / getOverviewData）；凭据通道经 env 交付
+//（ZCODE_PAYSWAP_PSP_KEY —— Gate E2 的 desktop-writer → services-reader 契约）。
+export {
+  createPayswapAccountRuntime,
+  type PayswapAccountRuntime,
+  type PayswapAccountRuntimeDependencies,
+} from "#src/payswap/index.js";
 export { createBroadcastService } from "./broadcast/broadcastService.js";
 export { createZCodeAgentService } from "./zcode-agent/zcodeAgentService.js";
 export { createZCodeTaskServiceAdapter } from "./zcode-agent/zcodeTaskServiceAdapter.js";

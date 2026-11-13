@@ -41,3 +41,8 @@ export {
   createStripeAccountDataReadPort,
   type PayswapStripeDataReadDependencies,
 } from "./providers/stripe/readAccountData.js";
+export {
+  createPayswapAccountRuntime,
+  type PayswapAccountRuntime,
+  type PayswapAccountRuntimeDependencies,
+} from "./runtime.js";

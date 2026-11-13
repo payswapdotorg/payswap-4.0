@@ -98,3 +98,22 @@ corrupt-refuse-overwrite（typed `PAYSWAP_CONNECTIONS_STORE_CORRUPT`，绝不自
   `accountDetailReader`（与 `accountOverviewReader` 同门）—— `connectionId`
   收窄且三码法则已过时被咨询；typed detail 联合原样入
   `PayswapAccountOverviewData.account`；抛错 → `internal_error`（§6.3）。
+
+**P2.2 slice 5 —— 生产装配半（模块级）**：
+
+- **账户运行时**（`runtime.ts`，`createPayswapAccountRuntime`）：单一
+  `PayswapAccountService` 实例 + broker 的两个绑定 reader 面
+  （`accountOverviewReader` = listConnections、`accountDetailReader` =
+  getOverviewData —— 同一实例，无第二个写者）；凭据通道经 env 交付
+  （`ZCODE_PAYSWAP_PSP_KEY` 的 services-reader 契约；env 缺席 → 装配照常、
+  拒绝在操作面）；真实 Stripe 双 adapter（读回 + 数据）接进服务；IO 全注入。
+- **desktop 键预热**（desktop-payswap `accountWarmup.ts`，
+  `warmupPayswapPspHostEnv`）：app-ready 现读键 store → `buildPayswapPspHostEnv`
+  组装恰 `ZCODE_PAYSWAP_PSP_KEY`；fail-safe（不可用/解包失败 → 空集 + 上报，
+  永不阻断启动）；每次现读（safeStorage 恢复后免重启）。
+- **协调器透传**（bootstrap `spawn-wiring.ts`）：`accountOverviewReader`/
+  `accountDetailReader` 经协调器选项透传到 broker boot 选项（生产装配的接缝）。
+- **开放决策（下一切片的 ADR）**：broker 住在 host 进程（CLI bundle —— 不依赖
+  `@zcode/services`），账户运行时与 broker 的同进程共置需要放置决策 ——
+  desktop-main 运行时 + 类型化跨进程 reader 桥，或 CLI 侧 services 准入。
+  additive RPC channel（连接 UI 的 renderer 面）同切片。

@@ -43,3 +43,8 @@ export {
   buildPayswapPspHostEnv,
   PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY,
 } from "@zcode/shared/payswap";
+export {
+  warmupPayswapPspHostEnv,
+  type PayswapPspWarmupOptions,
+  type PayswapPspWarmupResult,
+} from "./accountWarmup.js";
