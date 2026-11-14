@@ -5,6 +5,7 @@ import { installStderrConsoleBoundary } from "./protocol-console.js";
 import { setCliProcessTitle } from "./process-name.js";
 import { applyCliRuntimeEnvSanitization } from "./env.js";
 import { ensureSeaRuntimeTools } from "./sea-runtime-tools.js";
+import { ensureSeaPayswapBrokerPeerHelper } from "./sea-payswap-broker-peer.js";
 import { isPluginHostInvocation, runPluginHostCommand } from "./plugin-host-command.js";
 import { scheduleCliExitWatchdog } from "./shutdown.js";
 import { installCliProcessErrorBoundary } from "./process-errors.js";
@@ -50,7 +51,12 @@ async function main(): Promise<void> {
 
   try {
     if (argv[0] !== STORAGE_MIGRATION_COMMAND && !argv.includes("--prepare-storage"))
-      Object.assign(process.env, await ensureSeaRuntimeTools());
+      // ADR-15 D15.3：同一注入位（runtime-tools 之后 —— 本进程 process.env 的
+      // host-only 键面；两键经 D13.9 双表剔除不进任何子进程 env）。
+      Object.assign(process.env, {
+        ...(await ensureSeaRuntimeTools()),
+        ...(await ensureSeaPayswapBrokerPeerHelper()),
+      });
     lifecycle?.signal.throwIfAborted();
     const context = {
       argv,

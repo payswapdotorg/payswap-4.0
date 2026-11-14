@@ -25,6 +25,8 @@ import { collectSeaOfficialPluginAssets } from "./sea-official-plugin-assets.mjs
 import { collectSeaBundledSkillAssets } from "./sea-bundled-skill-assets.mjs";
 import { collectSeaRuntimeToolAssets } from "./sea-runtime-tool-assets.mjs";
 import { prepareSeaRuntimeToolAssets } from "./sea-runtime-tool-prepare.mjs";
+import { collectSeaPayswapBrokerPeerAssets } from "./sea-payswap-broker-peer-assets.mjs";
+import { preparePayswapBrokerPeerHelper } from "./prepare-payswap-broker-peer-helper.mjs";
 import { collectSeaPlaywrightAssets } from "./sea-playwright-assets.mjs";
 import { collectSeaProviderConfigAssets } from "./sea-provider-config-assets.mjs";
 
@@ -144,6 +146,13 @@ const prepareSeaBlob = async (target) => {
     root: repositoryRoot,
     target,
   });
+  // ADR-15 D15.1/D15.4：同一 CLI 持有 prepare 纪律 —— SEA 构建与桌面 prepare 链
+  // 共用（win 目标在 win32 宿主编译；darwin/linux 与外国宿主交叉构建 stage
+  // 显式 helper:null，绝不因缺席而断构建）。
+  await preparePayswapBrokerPeerHelper({
+    root: repositoryRoot,
+    target,
+  });
   const { assets: tuiAssets, manifest: tuiManifest } = await collectSeaTuiAssets({
     root,
     stagingDirectory: seaAssetStagingForTarget(target),
@@ -165,6 +174,10 @@ const prepareSeaBlob = async (target) => {
       stagingDirectory: seaAssetStagingForTarget(`${target}-runtime-tools`),
       target,
     });
+  const { assets: payswapBrokerPeerAssets } = await collectSeaPayswapBrokerPeerAssets({
+    root: repositoryRoot,
+    target,
+  });
   const { assets: playwrightAssets, manifest: playwrightManifest } =
     await collectSeaPlaywrightAssets({
       root,
@@ -182,6 +195,7 @@ const prepareSeaBlob = async (target) => {
           ...pluginAssets,
           ...bundledSkillAssets,
           ...runtimeToolAssets,
+          ...payswapBrokerPeerAssets,
           ...playwrightAssets,
           ...providerConfigAssets,
         },

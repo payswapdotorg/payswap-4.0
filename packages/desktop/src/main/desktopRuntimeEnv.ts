@@ -38,6 +38,7 @@ import {
   type ResolveRemoteCdnOptions,
 } from "./remoteCdn.js";
 import { getElectronAppPath, isElectronAppPackaged } from "./desktopElectronApp.js";
+import { resolvePayswapBrokerPeerHelperSupply } from "./payswap/index.js";
 
 declare const __ZCODE_PACKAGED_AGENT_TELEMETRY_ENV__: Readonly<Record<string, string>> | undefined;
 
@@ -561,6 +562,13 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
   // 三层里有两层不写这个键，空对象无法覆盖 inheritedEnv，所以先无条件删掉继承值再按决策 spread 回去。
   // 少了这一行，production 包和 dev 的非法取值都会原样穿透到 Host。
   delete inheritedEnv[ZCODE_DYNAMIC_WORKFLOW_MODE_ENV];
+  // ADR-15 D15.4：Windows peer-verification helper 供给（CUA-helper-app 供给先例；
+  // P1 仅 win32）。operator 已设任一供给键时解析器整体让位；digest 失配诚实不注入
+  //（agent 落 degraded_refusing）；注在 inheritedEnv 之后 —— 打包供给不 inherit 而是显式下发。
+  const payswapBrokerPeerHelperEnv = resolvePayswapBrokerPeerHelperSupply({
+    env: rawInheritedEnv,
+    isPackaged: packagedDesktop,
+  });
 
   return {
     ...inheritedEnv,
@@ -591,5 +599,6 @@ export function buildHostProcessEnv(hostProcessLocalEnv: Record<string, string>)
       : {}),
     ...(resolvedGlmBinaryPath ? { GLM_BINARY_PATH: resolvedGlmBinaryPath } : {}),
     ...(resolvedLarkCliBinaryPath ? { ZCODE_LARK_CLI_BINARY: resolvedLarkCliBinaryPath } : {}),
+    ...payswapBrokerPeerHelperEnv,
   };
 }
