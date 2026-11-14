@@ -17,3 +17,21 @@ export function exampleDesktopPayswapApprovalIpc(input: {
   // 窗口卸载/应用退出时：registration.unregister()。
   return registration;
 }
+
+import { installDesktopPayswapConnections } from "./index.js";
+
+/**
+ * 演示（P2.2 slice 7）：连接通道的 main 装配期一次完整注册（真实依赖注入 ——
+ * safeStorage/fs 缺省即生产值；此处显式示意注入面）。
+ */
+export function exampleDesktopPayswapConnections(input: {
+  getMainWindowFrameUrl: () => string;
+}): ReturnType<typeof installDesktopPayswapConnections> {
+  const installation = installDesktopPayswapConnections({
+    getMainWindowFrameUrl: input.getMainWindowFrameUrl,
+  });
+  // app-ready 预热（fail-safe：结果不缓存，失败不阻断启动）：
+  //   void installation.runtime.warmup();
+  // 窗口卸载/应用退出时：installation.registration.unregister()。
+  return installation;
+}

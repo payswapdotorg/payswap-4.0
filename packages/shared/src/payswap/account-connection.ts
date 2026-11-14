@@ -383,3 +383,69 @@ export type PayswapRefreshResult =
   | { readonly kind: "expired"; readonly connection: PayswapConnectionStatusProjection }
   | { readonly kind: "revoked"; readonly connection: PayswapConnectionStatusProjection }
   | { readonly kind: "refused"; readonly refusal: PayswapAccountRefusal };
+
+// ---------------------------------------------------------------------------
+// 结果联合的 strict 校验器（P2.2 slice 7 起是跨进程值 —— 连接 RPC 通道的响应
+// per-op 法则；接口与 schema 共 declare，漂移即违约 —— refusal schema 同款纪律）
+// ---------------------------------------------------------------------------
+
+export const payswapConnectResultSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("connected"),
+        connection: payswapConnectionStatusProjectionSchema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("refused"),
+        refusal: payswapAccountRefusalSchema,
+      })
+      .strict(),
+  ] as const);
+
+export const payswapRevokeResultSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("revoked"),
+        connection: payswapConnectionStatusProjectionSchema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("refused"),
+        refusal: payswapAccountRefusalSchema,
+      })
+      .strict(),
+  ] as const);
+
+export const payswapRefreshResultSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("verified"),
+        connection: payswapConnectionStatusProjectionSchema,
+        providerAccountId: z.string().min(1),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("expired"),
+        connection: payswapConnectionStatusProjectionSchema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("revoked"),
+        connection: payswapConnectionStatusProjectionSchema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("refused"),
+        refusal: payswapAccountRefusalSchema,
+      })
+      .strict(),
+  ] as const);

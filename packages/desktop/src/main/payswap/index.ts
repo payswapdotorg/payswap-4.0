@@ -28,6 +28,11 @@ export {
   type PayswapDesktopApprovalE2EBridge,
 } from "./desktopPayswapBootstrap.js";
 export {
+  installDesktopPayswapConnections,
+  type InstallDesktopPayswapConnectionsOptions,
+  type PayswapDesktopConnectionsInstallation,
+} from "./desktopPayswapBootstrap.js";
+export {
   PAYSWAP_BROKER_PEER_HELPER_RESOURCE_DIR,
   resolvePayswapBrokerPeerHelperSupply,
 } from "./brokerPeerHelperSupply.js";
@@ -48,6 +53,12 @@ export {
   type PayswapPspWarmupOptions,
   type PayswapPspWarmupResult,
 } from "./accountWarmup.js";
+export {
+  installPayswapDesktopConnectionIpc,
+  PAYSWAP_DESKTOP_CONNECTION_IPC_CHANNEL,
+  type PayswapDesktopConnectionIpcOptions,
+  type PayswapDesktopConnectionIpcRegistration,
+} from "./accountConnectionIpc.js";
 export {
   createPayswapDesktopAccountRuntime,
   type PayswapDesktopAccountRuntime,

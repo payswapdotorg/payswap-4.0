@@ -78,3 +78,28 @@ hostProcessLocalEnv 通道交付 host」的交付条款（桌面拓扑下收窄�
 - **IO 全注入**（keyStore/runtime 依赖/port）；入口接线（main 入口装配 +
   spawn 时的 MessagePort 转移 + host 侧 stub 进协调器）随连接流切片与其
   desktop Browser E2E 臂落地（D12.7 纪律不变）。
+
+P2.2 slice 7 增补（ADR-P2-2 Decision 4 + Addendum —— 连接 RPC 通道）：法则住
+`shared-payswap/account-connection-rpc.ts`（单一实现纪律）；本模块增
+`accountConnectionIpc.ts`（Electron main 装配 owner）与
+`desktopPayswapBootstrap.installDesktopPayswapConnections`（键 store + 受监督
+运行时 + 连接 IPC 的单一装配调用）。不变量：
+
+- **受理面在 main**：connect/revoke/refresh/list 四操作进程内直达账户服务
+  （doc 06 §2.2 的 additive RPC channel）；operator 供应的 connect 秘密只在
+  renderer → main 的 connect 请求里出现（唯一必经边界 —— ADR-P2-2 Decision 4），
+  一切响应形状结构上无秘密位（per-op 结果 = 既有账户法则 schema）。
+- **三检先于载荷解析**：主框架 + 受信 application origin（approval-origin 法则
+  复用，无 expectedWebContentsId 位）；受信 origin 每请求现读主窗口 URL（空 =
+  fail-closed 全拒）；不可信发送者的载荷不解析、服务不触达。
+- **typed refusal 作数据**：服务的 refused 结果（Gate E2 存储 refusal 等）原样
+  跨 IPC —— 连接 UI 呈现 typed 拒绝（Gate E2 E2E 条款）的通道半。
+- **通道失败闭集**：unauthorized_origin / malformed_request / internal_error；
+  防御纵深 —— 服务产出经 per-op 法则校验后才上 IPC（畸形值本体永不渡 IPC）。
+- **键文件路径 pin**（ADR-P2-2 Addendum C）：`getAppConfigDir()`（setDataBaseDir
+  钉过的 CLI 数据根）+ `payswap-psp-safe-storage-key` —— 与连接记录 store、凭据
+  store 同一解析基准；桌面装配不另设路径。
+- **入口接线（main/index.ts 的真实调用 + app-ready 预热 + preload/renderer 面）**
+  随连接 UI 与其 desktop Browser E2E 臂落地（D12.7 纪律；本切片交付装配调用与
+  法则级/装配级证明）。桥入口接线（spawn 端口转移 + 窗口 host 透明中继 + agent
+  侧 stub）按 ADR-P2-2 Addendum B 的传输细化实施（下一切片）。

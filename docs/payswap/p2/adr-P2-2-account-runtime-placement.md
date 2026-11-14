@@ -96,3 +96,72 @@ CLI 侧 services 准入（B）。
   面若需要，独立 ADR（P3+ 范围）。
 - 本 ADR 取代 roadmap P2 行尾的 HONEST OPEN DECISION 子句；slice 5 记录的 host-env
   交付半边在桌面拓扑下由 Decision 第 2 条取代（law 层零改动）。
+
+## Addendum —— slice 7：进程拓扑的核实修正、桥传输的细化、store 路径 pin
+
+**Status:** Accepted（TL 授权内的实现前核实修正 —— 本附录不改变五条 Decision 的任何
+信任/法则语义，只修正 Context 的一处事实表述、把 Decision 3 的传输形态按真实拓扑
+细化，并兑现 Consequences 的 store 路径 pin 条款。）
+
+### A. 拓扑核实修正（Context 第 2 条的精确化）
+
+本 ADR Context 写「host 进程（`apps/zcode-cli`，含 bootstrap 的 broker 与协调器）」
+并把它与「经 `desktopHostProcess.ts` spawn 的 utilityProcess」并列叙述 ——
+**这个并列在实现前核实中证实为不精确**，correct facts（slice 7 实现前逐点核实）：
+
+- **broker 与协调器的真实宿主 = agent 进程**：`apps/zcode-cli` 以 `app-server
+  --stdio` 模式由**窗口 host 进程**（`packages/desktop/src/host/index.ts`）经
+  `node:child_process.spawn` 派生（`packages/services/src/zcode-agent/
+  zcodeAgentProcessManager.ts`，`stdio: ["pipe","pipe","pipe"]` —— 无 IPC 通道）；
+  协调器在 agent 进程内由 `zcode-protocol-entrypoint`（`ln`）构造，broker 随首个
+  受信 server lazy boot（per-boot UDS 端点在 agent 进程）。窗口 host 自身
+  **零** payswap 引用（rg 实证）；`injectBrokerCredentials` 的两处调用
+  （`create-app.ts`/`zcode-protocol/mcp.ts`）全在 apps/zcode-cli 侧。
+- **desktop main 的 utilityProcess 子进程恰两个**：窗口 host
+  （`desktopHostProcess.ts:264`）与 cron scheduler（`desktopCronScheduler.ts:62`）。
+  `MessagePortMain` 的 spawn 时转移**只能到达 utilityProcess 子进程** —— 按字面
+  读原 Decision 3（桥直达协调器）在真实拓扑下不可实现。
+
+对五条 Decision 的影响：**零**。账户运行时住 main（Decision 1）、键进程内交付
+（Decision 2）、host 进程永不接触 PSP 秘密（Decision 5）原样成立且已被 slice 6
+落地；本附录只细化 Decision 3 的传输形态。
+
+### B. Decision 3 的传输细化（law 两端不变，中继透明）
+
+`account-reader-bridge` 的法则本体（消息闭集、zod 双端、typed refusal 作数据、
+失败闭集、串行、时限）与两端不变：**stub 住在 agent 进程的协调器 options，
+server 住在 desktop main 的运行时绑定面**。跨进程通道按真实拓扑分两跳：
+
+1. **main ↔ 窗口 host**：spawn 时 `MessageChannelMain` 转移（桥法则头注的通道
+   形态 —— main↔utilityProcess，原样兑现）；窗口 host 侧端口适配为
+   `PayswapReaderBridgePort`。
+2. **窗口 host ↔ agent**：既有 stdio 协议（ZCodeStdioTransport 的 NDJSON 帧）上
+   的透明中继 —— 桥消息作为**不透明载荷**双向转发；窗口 host **不解析、不校验、
+   不改写**桥消息（法则的 zod 校验只发生在真正的两端 —— 「两端共享单一实现」
+   纪律不因中继而稀释；中继不是端）。agent 侧以 stdio 帧适配器构造
+   `PayswapReaderBridgePort`，stub 进协调器 options。
+
+缺席语义不变：中继未建/端口未转移/stdio 帧未接线 = reader 缺席 = 既有
+fail-closed 缺省（与桥故障的 §7.3 internal_error 在法则层有别，不模糊）。
+入口接线切片（main 入口装配 + spawn 转移 + 中继 + agent 侧适配）按本附录实施。
+
+### C. store 路径 pin（Consequences 第 3 条的兑现）
+
+- **解析基准 = CLI 数据根**（非 Electron userData）：desktop main 启动期
+  `setDataBaseDir`（`desktopDataBaseDirBootstrap`，main/index.ts:2183 调用）已把
+  services 侧路径解析钉到与 CLI/agent 一致的 `~/.zcode` 根；账户运行时的两个
+  store 因此落在 `~/.zcode/v2/payswap-connections.json`（连接记录）与
+  `~/.zcode` 凭据目录的 `credentials.json`（PSP 密文，Gate E2 键级政策）——
+  单一事实源：services `paths.ts` 的解析链，桌面装配不另设路径。
+- **单写者（桌面拓扑）= desktop main**：agent/host 侧不打开这两个 store
+  （reader 数据经桥；ADR-P2-2 的信任模型本就如此）。跨进程文件锁
+  （连接记录 store 的锁 + 凭据 store 的锁）保持为残余多进程拓扑的并发底线
+  （headless CLI 的账户面是 P3+ 独立 ADR 的事），不是桌面写路径的常态依赖。
+
+### D. 切片次序（依赖驱动，记录在案）
+
+连接 RPC 通道（Decision 4，renderer → main 进程内）**先于**桥入口接线落地：它是
+连接 UI 与 Gate E2 两条 E2E 条款（fallback-only 连接的 typed 拒绝在连接 UI 呈现；
+safeStorage active 的桌面电池）的直接前置，且零依赖桥；桥的 agent 侧半边无 UI
+依赖。roadmap 原列的「入口接线在前」次序是本附录 A 的不精确表述下的产物，按本
+附录修正。
