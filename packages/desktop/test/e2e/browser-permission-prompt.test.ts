@@ -80,6 +80,11 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
       ),
       currentOrigin: await runInGuest("location.origin").catch(() => "<guest unavailable>"),
       promptCount: await countPermissionPrompts().catch(() => -1),
+      // 修复原因（run 43563053728 诊断缺口）：DOM 级 guest id 实况 —— 与 desktop
+      // 日志的 eventGuest / 弹层 tabGuest 观测点三方对齐，归属过滤的丢条当场可证。
+      liveWebviewId: await readBrowserGuestWebContentsId().catch(
+        () => "<webview not mounted>",
+      ),
       webContentsInventory,
     });
   });

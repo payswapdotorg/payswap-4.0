@@ -142,26 +142,49 @@ export function UnifiedBrowserView({
   >(undefined);
   useEffect(() => {
     if (!webview) return;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
     const syncPermissionGuestWebContentsId = () => {
       if (typeof webview.getWebContentsId !== "function") return;
       const id = safeWebviewCall(() => webview.getWebContentsId(), 0);
-      const next = id > 0 ? id : undefined;
-      setPermissionGuestWebContentsId((prev) => (prev === next ? prev : next));
+      if (id > 0) {
+        // 修复原因（CI run 43563053728 场景三，43418377362 家族复发变体）：瞬时
+        // 不可读（0/抛）不再把已知好值抹成 undefined —— 该家族的证据形态是
+        // 「main 侧事件送达 renderer、DOM prompts 计数恒 0」，与归属 prop 被
+        // 瞬时失败读取抹掉后过滤全丢完全同构；只正向更新，死 guest 的残留 prompt
+        // 由 main 侧 20s 超时与 store 的 20s 出队兜底收割。
+        setPermissionGuestWebContentsId((prev) => (prev === id ? prev : id));
+        return;
+      }
+      // 修复原因（同族盲区）：attach/事件窗口之后 id 仍不可读时，事件驱动的同步
+      // 可能永远不再触发 —— 有界重试（250ms × 至 10s）直到可读。
+      if (retryTimer !== undefined) return;
+      const deadline = Date.now() + 10_000;
+      const tick = () => {
+        retryTimer = undefined;
+        const retryId = safeWebviewCall(() => webview.getWebContentsId(), 0);
+        if (retryId > 0) {
+          setPermissionGuestWebContentsId((prev) => (prev === retryId ? prev : retryId));
+          return;
+        }
+        if (Date.now() < deadline) retryTimer = setTimeout(tick, 250);
+      };
+      retryTimer = setTimeout(tick, 250);
     };
     syncPermissionGuestWebContentsId();
-    // 修复原因（CI run 43418377362，permission 确认条 flaky 缺失）：旧实现只在
-    // [webview, browserState.isReady] 变化时读一次 id——guest attach 落在最后一次
-    // effect 运行之后（isReady 已为 true、webview 引用不变）时，归属 id 永远停留
-    // undefined；弹层的 guest 归属过滤（请求携带 guest id 而本 tab 归属 id 为
-    // undefined）把确认条全部滤掉，main 侧 20s 超时按 dismiss 结算（证据：
-    // decision=denied source=user-prompt action=dismiss ×2 而 DOM 内 prompts 计数
-    // 恒 0、guest 未换代未崩溃）。did-attach 是 guest id 可读的最早时机，dom-ready
-    // 兑底重挂/换代；与下方 guestId 上报同事件源，不再依赖 isReady 的间接时序。
+    // did-attach 是 guest id 可读的最早时机，dom-ready 兜底重挂/换代；与下方
+    // guestId 上报同事件源，不再依赖 isReady 的间接时序。
     webview.addEventListener("did-attach", syncPermissionGuestWebContentsId);
     webview.addEventListener("dom-ready", syncPermissionGuestWebContentsId);
+    // 修复原因（CI run 43563053728 场景三）：deny 决策结算后紧接导航的换档窗口
+    // 里，did-attach/dom-ready 之外的导航事件也驱动重同步。
+    webview.addEventListener("did-navigate", syncPermissionGuestWebContentsId);
+    webview.addEventListener("did-stop-loading", syncPermissionGuestWebContentsId);
     return () => {
+      if (retryTimer !== undefined) clearTimeout(retryTimer);
       webview.removeEventListener("did-attach", syncPermissionGuestWebContentsId);
       webview.removeEventListener("dom-ready", syncPermissionGuestWebContentsId);
+      webview.removeEventListener("did-navigate", syncPermissionGuestWebContentsId);
+      webview.removeEventListener("did-stop-loading", syncPermissionGuestWebContentsId);
     };
   }, [webview]);
   const [guestAttachRetryNonce, setGuestAttachRetryNonce] = useState(0);
