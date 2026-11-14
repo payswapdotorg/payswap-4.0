@@ -832,6 +832,8 @@ export function PluginStorePage({
             <Button
               key={surface.id}
               variant="outline"
+              data-testid="plugin-store-surface-option"
+              data-surface-id={surface.id}
               onClick={() => pluginUi.selectSurface(surface)}
             >
               {resolvePluginUiSurfaceTitle(surface.title, locale)}

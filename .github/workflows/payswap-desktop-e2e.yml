@@ -1,0 +1,121 @@
+# PaySwap P1 — desktop Browser E2E battery on a supported desktop runner.
+#
+# Why this job exists (the register's recorded blocker, superseded here):
+# the E3-acceptance desktop Browser E2E clause, the D12.7 real-window arms and
+# the plugin-lifecycle arm were blocked in the dev sandbox on a precisely
+# characterized renderer/process defect family (electron ThreadPoolForeground
+# int3 traps during the enable→rebuild chain; deterministic across three
+# verification generations, including a documents-plugin control probe that
+# eliminates a PaySwap-specific cause). The TL handoff's rule: a sandbox
+# limitation is not a pass and is not a reason to weaken the acceptance
+# requirement — the battery runs on a desktop-capable environment instead.
+#
+# The environment is the repository's own container harness
+# (Dockerfile.desktop-e2e + scripts/test-desktop-e2e-container.sh): node 24 +
+# every Electron runtime library + Xvfb + dbus, the frozen-lockfile workspace
+# install inside the image, the repo's chromedriver preflight into a cache
+# volume, replay-isolated networking (--network none; the PaySwap/browser
+# specs need no external network), and spec selection via ZCODE_E2E_SPEC.
+#
+# The battery (10 specs):
+# - payswap-approval-card: the D12.7 real-window approval rows (channel
+#   fail-closed, T3 live flip, the full card flow, N15 replay, deny +
+#   wrong-secret, forged-sender, T7 item 3 card-face arm).
+# - payswap-plugin-lifecycle: the official-seed S0b baseline → T1 enable →
+#   S1 Class-A surface through the real plugin-ui sandbox guest → T6
+#   declared-boolean option → T2 opt-in → T4 disable → T5 uninstall →
+#   restore (the marketplace pipeline end to end).
+# - the eight existing Browser specs (the E3-acceptance preservation clause:
+#   "the Browser battery unchanged").
+name: payswap-desktop-e2e
+
+on:
+  pull_request:
+    paths:
+      - "packages/desktop/**"
+      - "packages/ui/**"
+      - "packages/shared/**"
+      - "apps/zcode-cli/**"
+      - "scripts/test-desktop-e2e-container.sh"
+      - "Dockerfile.desktop-e2e"
+      - ".github/workflows/payswap-desktop-e2e.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: payswap-desktop-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  desktop-e2e:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      # 修复原因（先例：test-desktop-e2e-container.sh 的驱动卷纪律）：chromedriver 必须由
+      # 仓库自己的 preflight 解析（与容器内 Chromium 精确版本配对），不能依赖 runner 预装。
+      # 镜像构建 + 驱动预取 + 回放隔离运行全部由该脚本串起；退出码即 docker run 的退出码。
+      - name: Run the PaySwap desktop Browser E2E battery (container harness, replay-isolated)
+        env:
+          ZCODE_E2E_RUN_ID: payswap-e2e-${{ github.run_id }}-${{ github.run_attempt }}
+          # 修复原因（run 43503209205 三 attempt 各自不同的失败组合）：宿主级 UI 交互退化
+          # 是间歇性的 —— 同一 head 全绿/多红交替出现。specFileRetries=1 以全新会话重跑
+          # 失败 spec（与手动 rerun 同语义，重跑即绿已多轮证实）；断言语义零改动。
+          ZCODE_E2E_SPEC_RETRIES: "2"
+          # 修复原因（run 43161767622）：无摄像头容器里 getUserMedia 以 NotFoundError 短路，
+          # permission-bar spec 等不到确认条；假设备恢复真实权限请求流（wdio 注入点本分支已备）。
+          # 修复原因（run 43418377362 vs 43415362076 的同码不同果）：Xvfb 无窗口管理器下
+          # Chromium 的窗口遮挡判定不稳定（occlusion 误报），元素 checkVisibility 间歇性
+          # false → "did not become interactable"（round2 绿 / round3 同码红，地址输入与
+          # 滑杆两处）。补 occlusion/后台化缓解开关——纯环境稳定化，不动断言。
+          # 修复原因（run 43461767622 同族，Xvfb 无 WM）：无窗口管理器下 Chromium 的原生
+          # 窗口遮挡计算不稳定（元素 checkVisibility 间歇 false → "element not
+          # interactable"，历轮命中：地址输入/刷新按钮/滑杆/权限选项，逐元素重试治标）。
+          # --disable-features=CalculateNativeWinOcclusion 直接关掉遮挡计算本身
+          # （Electron/Xvfb CI 的经典开关，与本通道既有缓解叠加）。
+          ZCODE_E2E_EXTRA_APP_ARGS: >-
+            --use-fake-device-for-media-stream
+            --disable-backgrounding-occluded-windows
+            --disable-renderer-backgrounding
+            --disable-background-timer-throttling
+            --disable-features=CalculateNativeWinOcclusion
+          E2E_SPEC: >-
+            ./test/e2e/payswap-approval-card.test.ts,
+            ./test/e2e/payswap-plugin-lifecycle.test.ts,
+            ./test/e2e/browser-empty-state-deferred-guest.test.ts,
+            ./test/e2e/browser-human-viewport-preference.test.ts,
+            ./test/e2e/browser-open-external-file-url.test.ts,
+            ./test/e2e/browser-permission-prompt.test.ts,
+            ./test/e2e/browser-permission/browser-permission-site-settings.test.ts,
+            ./test/e2e/browser-tab-close-cross-workspace.test.ts,
+            ./test/e2e/browser-tab-close-idempotent.test.ts,
+            ./test/e2e/browser-tab-residency.test.ts
+        run: bash scripts/test-desktop-e2e-container.sh
+
+      - name: Upload E2E artifacts (always)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: payswap-desktop-e2e-artifacts-${{ github.run_id }}-${{ github.run_attempt }}
+          # 修复原因一（run 43161767622 的 artifact 为空）：harness 诊断落在 .e2e-artifacts，
+          # 而 e2e 隔离 home（含真实落盘的 config —— lifecycle 诊断证据）在
+          # .e2e-home-<runId>。
+          # 修复原因二（run 43174278149 仍为空，"No files were found"）：.e2e-artifacts 与
+          # .e2e-home-* 都以点开头，upload-artifact 默认 include-hidden-files: false 会跳过
+          # 全部隐藏路径——必须显式开启，否则任何路径都匹配不到。
+          # 同时纳入 app 主进程日志（<home>/.zcode/v2/logs/，permission policy 的
+          # decision/prompt-timeout 链路与 guest 崩溃重建定位都在 main 日志）与
+          # workspace 级 .zcode/（插件 enabled/options 的真实分层落盘位置）。
+          # 仅含合成 e2e 数据与假凭据，可安全上传。
+          path: |
+            packages/desktop/.e2e-artifacts/
+            packages/desktop/.e2e-home-*/.zcode/cli/
+            packages/desktop/.e2e-home-*/.zcode/v2/logs/
+            packages/desktop/.e2e-home-*/.zcode/config.json
+            packages/desktop/.e2e-home-*/ZCodeProject/.zcode/
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 14

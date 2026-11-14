@@ -6,6 +6,8 @@
  * “一个 spec 绿另一个红”的假信号。
  */
 
+import { browserPaneToggleModifiersForPlatform } from "./browserPaneToggleModifiers.js";
+
 export async function openFirstBrowserTab(): Promise<void> {
   if (await clickOpenTabBrowserItem()) {
     await waitForTabCount(1);
@@ -44,19 +46,25 @@ export async function ensureSidePaneEntryVisible(): Promise<void> {
         ),
       );
       if (visible) return true;
-      // 与产品 ⌥⌘B 共用真实 workspace shortcut，初始收起态与已展开态都兼容。
-      await browser.execute(() => {
-        window.dispatchEvent(
-          new KeyboardEvent("keydown", {
-            key: "b",
-            code: "KeyB",
-            altKey: true,
-            metaKey: true,
-            bubbles: true,
-            cancelable: true,
-          }),
-        );
-      });
+      // 与产品 ⌥⌘B 共用真实 workspace shortcut；初始收起态与已展开态都兼容。
+      // 简报 §7：按运行平台选择正确的修饰键形态（macOS → Meta+Alt；Linux/Windows
+      // → Ctrl+Alt）——E2E 运行器与应用同机，process.platform 即应用平台；
+      // 402366c2 的双形态兜底由平台正确选择取代，映射由
+      // e2eBrowserPaneToggleModifiers.test.ts 的 6 行锁死。
+      await browser.execute(
+        (modifiers: { metaKey: boolean; ctrlKey: boolean; altKey: boolean }) => {
+          window.dispatchEvent(
+            new KeyboardEvent("keydown", {
+              key: "b",
+              code: "KeyB",
+              bubbles: true,
+              cancelable: true,
+              ...modifiers,
+            }),
+          );
+        },
+        browserPaneToggleModifiersForPlatform(process.platform),
+      );
       return false;
     },
     {

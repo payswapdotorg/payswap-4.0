@@ -21,9 +21,14 @@ ADR-15 D15.4 的桌面半 —— Windows 发布包携带 helper（binary + manif
   agent 落 degraded_refusing）；operator 已设任一供给键即整体让位；注入时验证与
   spawn 时 `verifyHelperBinary` 是同一 digest 的两次验证，不是旁路（D15.5）。
 
-与其它模块的交集 hook 点：desktop main 入口在 desktop Browser E2E 臂接线时调用
-`installPayswapDesktopApprovalIpc` 并供给真实的 `getMainWindowFrameUrl`（主窗口
-webContents）与 `financialMode` reader（插件 userConfig 投影）；发卡调用方是 P2+ 的
+与其它模块的交集 hook 点：desktop main 入口（desktopPayswapBootstrap.installDesktopPayswapApproval
+—— D12.7 desktop Browser E2E 臂的注册半）调用 `installPayswapDesktopApprovalIpc` 并供给真实的
+`getMainWindowFrameUrl`（主窗口 webContents）与 `financialMode` reader（financialModeReader：
+`~/.zcode/cli/config.json` fresh 读 —— T3 live 门）；cardPush 把发卡/消除事件经
+`PAYSWAP_DESKTOP_CARD_CHANNEL` 推给目标卡实例（Class-B 投影模式的投递半，preload 暴露
+`payswapResolveApproval` / `onPayswapCard`）；E2E 观察桥（shouldEnableE2ETestBridge 门）
+在测试模式挂 `globalThis.__zcodePayswapDesktopApprovalE2E`（P2+ request_authorization
+接线前的发卡调用方入口 —— D12.6 in-process 纪律）。发卡调用方是 P2+ 的
 request_authorization 接线。`resolvePayswapBrokerPeerHelperSupply` 由
 desktopRuntimeEnv.ts 的 `buildHostProcessEnv`（CUA-helper-app 供给先例）调用 ——
 打包态 `process.resourcesPath/payswap-broker-peer/`，dev 态 bundled-tools 相对路径

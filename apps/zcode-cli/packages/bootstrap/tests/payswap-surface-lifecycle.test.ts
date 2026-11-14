@@ -648,7 +648,7 @@ describe("payswap surface revocation executor — bounded teardown, fresh replac
     expect(harness.clearedFeeds).toEqual([key]);
   });
 
-  it("替换新鲜性：createReplacementInstance 返回旧 sandboxId → fail-closed 抛错（新页面必须新凭证/新 sandboxId）", async () => {
+  it("替换新鲜性：createReplacementInstance 返回旧 sandboxId → 拒绝入册、记入 replacementFailed（不中断 —— 保留清除必须完成）", async () => {
     const registry = createPayswapSurfaceContentRegistry();
     const key = surfaceKeyOf({ surfaceId: "workspace" });
     registry.registerInstance({ surfaceKey: key, lease: leaseOf(1), anchor: "replace" });
@@ -658,7 +658,35 @@ describe("payswap surface revocation executor — bounded teardown, fresh replac
       // 复用旧租约（同 sandboxId）—— 违反 disposeSandbox 契约的新鲜性要求。
       replacementLease: (_key, previous) => ({ ...previous, initId: previous.initId + 1 }),
     });
-    await expect(runPayswapSurfaceOptOutRevocation(registry, harness.deps)).rejects.toThrow();
+    const report = await runPayswapSurfaceOptOutRevocation(registry, harness.deps);
+
+    // 拆除与保留清除必须照常完成 —— 替换失败是可用性事件，不是中断事件。
+    expect(report.disposed).toEqual([key]);
+    expect(report.replaced).toEqual([]);
+    expect(report.replacementFailed).toEqual([key]);
+    expect(harness.clearedFeeds).toEqual([key]);
+    expect(harness.clearedWidgetStates).toEqual([key]);
+    // 非新鲜租约不入册：后续计划的租约仍是旧租约（未被伪替换覆盖）。
+    const nextPlan = registry.planOptOutRevocation();
+    expect(nextPlan.actions[0]!.lease.sandboxId).toBe(leaseOf(1).sandboxId);
+  });
+
+  it("替换创建拒绝（host 侧异常）→ 记入 replacementFailed、不重占；安全次序保证保留清除仍完成（§2.3 执行器安全次序）", async () => {
+    const registry = createPayswapSurfaceContentRegistry();
+    const key = surfaceKeyOf({ surfaceId: "workspace" });
+    registry.registerInstance({ surfaceKey: key, lease: leaseOf(1), anchor: "replace" });
+    registry.markProtectedDataDelivered(key);
+
+    const harness = createRevocationDeps();
+    harness.deps.createReplacementInstance = () =>
+      Promise.reject(new Error("anchor page create failed"));
+    const report = await runPayswapSurfaceOptOutRevocation(registry, harness.deps);
+
+    expect(report.disposed).toEqual([key]);
+    expect(report.replaced).toEqual([]);
+    expect(report.replacementFailed).toEqual([key]);
+    expect(harness.clearedFeeds).toEqual([key]);
+    expect(harness.clearedWidgetStates).toEqual([key]);
   });
 
   it("先 dispose 后替换（顺序）；替换实例入册（后续 opt-out 周期的计划对它有效）", async () => {
@@ -955,5 +983,129 @@ describe("payswap S-series projections — discovery boundary (§2 / §2.2 T1/T4
       "route-plan",
       "workspace",
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// N25：Class B 授权卡不可声明为插件表面 —— 清单验证整体拒绝（插件不加载）
+// （addendum §1.6.0「A … manifest that declares an authorization-styled surface
+// in `ui.surfaces[]` … is rejected at manifest validation — N25」；「工具
+// `_meta.ui` 命名一面」的臂由本门 + N26（插件回调不是批准通道）共同覆盖 —— 现行
+// `_meta.ui` 只承载 visibility，不承载表面引用，见 authorization-surfaces.ts。）
+// ---------------------------------------------------------------------------
+
+describe("payswap N25 manifest gate — authorization-styled surface declarations (§1.6.0)", () => {
+  let storageRoot: string;
+  let workspace: string;
+
+  beforeAll(async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), "payswap-n25-storage-"));
+    workspace = await mkdtemp(join(tmpdir(), "payswap-n25-workspace-"));
+  });
+
+  afterAll(async () => {
+    await rm(storageRoot, { force: true, recursive: true });
+    await rm(workspace, { force: true, recursive: true });
+  });
+
+  async function writePanelPlugin(rootName: string, surfaces: unknown[]): Promise<string> {
+    const root = join(storageRoot, rootName);
+    await mkdir(join(root, ".zcode-plugin"), { recursive: true });
+    await writeFile(
+      join(root, ".zcode-plugin", "plugin.json"),
+      JSON.stringify({
+        name: rootName,
+        version: "0.0.0",
+        mcpServers: {
+          "panel-server": {
+            type: "stdio",
+            command: "node",
+            args: ["${ZCODE_PLUGIN_ROOT}/dist/server.mjs"],
+          },
+        },
+        ui: { surfaces },
+      }),
+    );
+    return root;
+  }
+
+  function discoverWith(root: string): PluginLoadOutcome {
+    return discoverNodePluginsSync({
+      config: {
+        dirs: [root],
+        enabled: true,
+        enabledPlugins: {},
+        extraKnownMarketplaces: {},
+        options: {},
+        suppressedBuiltins: [],
+      },
+      env: {},
+      storageRoot,
+      workingDirectory: workspace,
+    });
+  }
+
+  it("N25 id 臂：授权样式表面（id 命中 approve）→ 清单验证整体拒绝：插件不加载、error 诊断、零组件贡献", async () => {
+    const root = await writePanelPlugin("e2e-n25-approve", [
+      {
+        id: "approve-payment",
+        title: "Payment Panel",
+        server: "panel-server",
+        resourceUri: "ui://n25/approve.html",
+        availability: "session",
+      },
+    ]);
+    const outcome = discoverWith(root);
+    expect(outcome.plugins.map((plugin) => plugin.id)).not.toContain("e2e-n25-approve@inline");
+    // 整体拒绝 = 零组件贡献（不是只丢弃表面）：无 MCP server、无 command/skill。
+    expect(Object.keys(outcome.mcpServers)).toEqual([]);
+    expect(outcome.commandRoots).toEqual([]);
+    expect(outcome.skillRoots).toEqual([]);
+    const rejection = outcome.diagnostics.find(
+      (diagnostic) =>
+        diagnostic.code === "plugin_manifest_invalid" && diagnostic.severity === "error",
+    );
+    expect(rejection?.message).toContain("N25");
+    expect(rejection?.message).toContain("approve-payment");
+  });
+
+  it("N25 标题臂（locale 映射命中 authorization）→ 同样整体拒绝", async () => {
+    const root = await writePanelPlugin("e2e-n25-authorization", [
+      {
+        id: "finance-panel",
+        title: { "zh-CN": "金融面板", "en-US": "Payment Authorization" },
+        server: "panel-server",
+        resourceUri: "ui://n25/auth.html",
+        availability: "session",
+      },
+    ]);
+    const outcome = discoverWith(root);
+    expect(outcome.plugins.map((plugin) => plugin.id)).not.toContain(
+      "e2e-n25-authorization@inline",
+    );
+    expect(
+      outcome.diagnostics.some(
+        (diagnostic) =>
+          diagnostic.code === "plugin_manifest_invalid" && diagnostic.severity === "error",
+      ),
+    ).toBe(true);
+  });
+
+  it("N25 反例：信息性表面（无授权语义）照常加载 —— 门只拒授权样式，不误伤 Class A", async () => {
+    const root = await writePanelPlugin("e2e-n25-clean", [
+      {
+        id: "payment-report",
+        title: "Payment Report",
+        server: "panel-server",
+        resourceUri: "ui://n25/report.html",
+        availability: "session",
+      },
+    ]);
+    const outcome = discoverWith(root);
+    expect(outcome.plugins.map((plugin) => plugin.id)).toContain("e2e-n25-clean@inline");
+    expect(outcome.plugins[0]?.uiSurfaces?.map((surface) => surface.id)).toEqual([
+      "payment-report",
+    ]);
+    expect(outcome.diagnostics.some((diagnostic) => diagnostic.severity === "error")).toBe(false);
   });
 });

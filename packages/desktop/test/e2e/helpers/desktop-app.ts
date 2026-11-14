@@ -288,6 +288,51 @@ export async function clickTestIdByWebDriver(
   await element.click();
 }
 
+/**
+ * Radix 依赖指针手势控件的 DOM 派发点击：pointerdown + pointerup + click 三事件
+ * 均带元素中心坐标同步派发（selectPluginSettingsScope 的既有 PointerEvent 纪律的
+ * 泛化形态）。
+ * 修复原因（CI run 43456602866/43459195997 同族）：Xvfb 无 WM 的 2 核容器里
+ * WebDriver 坐标点击链间歇性「命令成功但未送达」—— 历轮证据：allow-always 点击
+ * 后零 decision 落盘、geolocation 触发器 45s 不可点击、地址输入/刷新按钮
+ * did-not-become-interactable；--disable-features=CalculateNativeWinOcclusion 与
+ * backgrounding 开关叠加后仍复现（run 43459195997 attempt 2）。坐标链在受 CPU
+ * 节流的合成器上不可靠；DOM 派发不经坐标命中测试，pointer 事件序列保留 Radix
+ * 所需的手势语义。断言目标（决策落盘/状态翻转）不变。
+ */
+export async function clickTestIdByDomPointer(
+  testId: string,
+  { timeout = 15000, timeoutMsg = `页面没有可点击的 test id: ${testId}` }: DomTestIdOptions = {},
+): Promise<void> {
+  await waitForTestIdByDom(testId, { timeout, timeoutMsg });
+  const clicked = (await browser.execute((currentTestId: string) => {
+    const element = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
+      (item) => item.dataset.testid === currentTestId,
+    );
+    if (!(element instanceof HTMLElement)) return false;
+    const rect = element.getBoundingClientRect();
+    const init: PointerEventInit & MouseEventInit = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      button: 0,
+      buttons: 1,
+      pointerId: 1,
+      pointerType: "mouse",
+      isPrimary: true,
+      clientX: rect.left + rect.width / 2,
+      clientY: rect.top + rect.height / 2,
+    };
+    element.dispatchEvent(new PointerEvent("pointerdown", init));
+    element.dispatchEvent(new PointerEvent("pointerup", { ...init, buttons: 0 }));
+    element.dispatchEvent(new MouseEvent("click", init));
+    return true;
+  }, testId)) as boolean;
+  if (!clicked) {
+    throw new Error(timeoutMsg);
+  }
+}
+
 export async function hoverTestIdByWebDriver(
   testId: string,
   { timeout = 10000, timeoutMsg = `页面没有可悬停的 test id: ${testId}` }: DomTestIdOptions = {},

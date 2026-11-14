@@ -4618,6 +4618,12 @@ export const config: WebdriverIO.Config = {
   reporters: ["spec"],
   maxInstances: Number(process.env.ZCODE_E2E_MAX_INSTANCES ?? "1"),
   maxInstancesPerCapability: Number(process.env.ZCODE_E2E_MAX_INSTANCES ?? "1"),
+  // 电池环境级 spec 文件重试（2026-11-13 登记在案的宿主退化现实：run 43503209205 三次
+  // attempt 各自呈现不同失败组合 —— 全绿 attempt2、三 spec 同红的 attempt1/3 —— 逐 spec
+  // 根因修复无法收敛宿主间歇性；specFileRetries 以全新会话重跑失败 spec（app/HOME 经
+  // 生命周期钩子重建，与手动 rerun 同语义），把已证实的「重跑即绿」策略自动化。默认 0
+  // 保持开发者本地行为不变；CI 电池工作流设为 1。不动任何断言语义。
+  specFileRetries: Number(process.env.ZCODE_E2E_SPEC_RETRIES?.trim() ?? "0"),
   ...(containerE2E
     ? {
         autoXvfb: true,
@@ -4651,6 +4657,18 @@ export const config: WebdriverIO.Config = {
           // 让跨平台清理优先命中当前 run，并为 Windows shard 保留路径级兜底。
           buildE2ERunIdArg(E2E_RUN_ID),
           createWindowsE2EHomeMarkerArg(E2E_HOME_DIR),
+          // 环境适配入口：无摄像头沙箱（如 Linux CI 容器，/dev/video* 全缺）上
+          // getUserMedia 会以 NotFoundError 短路，永远走不到权限请求，权限确认条
+          // 用例无法执行；环境可用 ZCODE_E2E_EXTRA_APP_ARGS 注入 Chromium 开关
+          // （如 --use-fake-device-for-media-stream 提供假设备）。未设置时零影响。
+          // 修复原因（CI run 43420565937，fake-device 失效回退 NotFoundError）：旧实现
+          // 按逗号切分，而 workflow YAML 的 >- 折叠标量以空格连接四个开关——整串成
+          // 单个畸形 argv 元素，全部开关失效。同时接受空格与逗号分隔。
+          ...(process.env.ZCODE_E2E_EXTRA_APP_ARGS?.trim()
+            ? process.env.ZCODE_E2E_EXTRA_APP_ARGS.split(/[\s,]+/)
+                .map((arg) => arg.trim())
+                .filter(Boolean)
+            : []),
         ],
         appBinaryPath: ELECTRON_APP_BINARY_PATH,
       },

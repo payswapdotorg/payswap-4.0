@@ -29,6 +29,12 @@ export const AGENT_BUNDLE_SOURCE_RELATIVE = "apps/zcode-cli/packages/cli/dist/zc
  */
 const STAGED_NODE_REPL_HOST_ENTRIES = ["dist", ".zcode-plugin", "package.json", "README.md", "scripts"];
 
+// PaySwap 官方插件（P1-C 插件生命周期 E2E 前置）：S0b 基线（已安装未启用 →
+// 启动即种子 INSTALLED+DISABLED）与 marketplace 安装管线依赖 rootCandidates[0]
+// 从 agent entrypointDir（glm/）解析 packages/payswap-plugin。与 node-repl-host
+// 同一理由：dev 链不暂存就会跑上一次打包残留（或根本没有）的旧插件。
+const STAGED_PAYSWAP_PLUGIN_ENTRIES = ["dist", ".zcode-plugin", "package.json"];
+
 export function resolveAgentBundlePaths({ repoRoot, platformKey }) {
   const glmDir = resolve(repoRoot, "packages", "desktop", "bundled-agents", platformKey, "glm");
   return {
@@ -76,6 +82,22 @@ export function stageAgentBundle({ repoRoot, platformKey, log = console.log }) {
       }
     }
     log(`[stage:agent-bundle] staged node-repl-host runtime for dev self-seed`);
+  }
+  // PaySwap 官方插件暂存：dist/server.mjs 缺失说明调用方还没构建它
+  // （build-desktop-agent-cli 的 requiredDevPluginRuntimeBuilds 会先建），跳过并
+  // 留给打包链 fail-closed（prepare-agent-node-bundle 的 requiredRuntimePaths），
+  // 不产出残缺种子。
+  const payswapSource = resolve(repoRoot, "apps", "zcode-cli", "packages", "payswap-plugin");
+  const payswapTarget = resolve(glmDir, "packages", "payswap-plugin");
+  if (existsSync(resolve(payswapSource, "dist", "server.mjs"))) {
+    mkdirSync(payswapTarget, { recursive: true });
+    for (const entry of STAGED_PAYSWAP_PLUGIN_ENTRIES) {
+      const sourcePath = resolve(payswapSource, entry);
+      if (existsSync(sourcePath)) {
+        cpSync(sourcePath, resolve(payswapTarget, entry), { recursive: true });
+      }
+    }
+    log(`[stage:agent-bundle] staged payswap-plugin runtime for dev self-seed`);
   }
   log(`[stage:agent-bundle] staged ${stagedBundlePath}`);
   return { stagedBundlePath, stagedMetaPath };

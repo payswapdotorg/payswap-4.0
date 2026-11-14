@@ -188,6 +188,23 @@ if [ -n "${EXTRA_WDIO_ARGS:-}" ]; then
   docker_run_args+=(-e "EXTRA_WDIO_ARGS=${EXTRA_WDIO_ARGS}")
 fi
 
+# 修复原因（CI run 43161767622）：无摄像头容器里 getUserMedia 在到达权限请求前就以
+# NotFoundError 短路，permission-bar spec 永远等不到确认条。wdio.conf.ts 的
+# ZCODE_E2E_EXTRA_APP_ARGS 注入点（本分支 61e6c179 引入）正是为此设计——透传该环境
+# 变量即可按运行环境注入 Chromium 开关（如 --use-fake-device-for-media-stream 恢复
+# 真实权限请求流）；未设置时零影响。
+if [ -n "${ZCODE_E2E_EXTRA_APP_ARGS:-}" ]; then
+  docker_run_args+=(-e "ZCODE_E2E_EXTRA_APP_ARGS=${ZCODE_E2E_EXTRA_APP_ARGS}")
+fi
+
+# 修复原因（run 43503209205 三 attempt 各自不同的失败组合）：宿主级 UI 交互退化间歇性
+# 需要电池以全新会话有界重跑失败 spec（与手动 rerun 同语义，重跑即绿多轮证实）。
+# wdio.conf.ts 的 ZCODE_E2E_SPEC_RETRIES 注入点需要容器透传；未设置时零影响
+# （specFileRetries 默认 0，开发者本地行为不变）。
+if [ -n "${ZCODE_E2E_SPEC_RETRIES:-}" ]; then
+  docker_run_args+=(-e "ZCODE_E2E_SPEC_RETRIES=${ZCODE_E2E_SPEC_RETRIES}")
+fi
+
 if [ -n "${E2E_PROVIDER_API_KEY:-}" ]; then
   docker_run_args+=(-e "E2E_PROVIDER_API_KEY=${E2E_PROVIDER_API_KEY}")
 fi

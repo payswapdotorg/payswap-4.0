@@ -1254,9 +1254,17 @@ export function resolveSidePaneScopeState(
         ? { ...state, activeTabId: activeTabId ?? "" }
         : state,
     // 草稿重新进入时默认收起；空 scope 的历史展开偏好不能生成新标签页。
+    // 但草稿 scope 下“显式展开”的偏好（collapsedPreference === false，由
+    // revealSidePaneForCurrentOwner 与手动展开入口同步写入 per-owner 偏好）必须
+    // 被尊重：scope-sync 效应会因依赖扰动（activeTaskId/pluginUiScope 身份变化）
+    // 重跑，若在此无视刚保存的展开偏好强制收起，显式打开的 browser 面板会在数百
+    // 毫秒后自行折叠 —— run 43567845459 的完整因果链（面板打开 → tab 激活 →
+    // 效应重跑 → 草稿子句强制收起 → prompt 层随面板卸载）。无偏好（undefined）
+    // 时才回落“草稿默认收起”；plugin-ui 例外（site-settings 流）保持原语义。
     isSidePaneCollapsed:
       activeTabId === null ||
       (scope.ownerTaskId === null &&
+        collapsedPreference !== false &&
         !state?.tabs.some((tab) => tab.id === activeTabId && tab.type === "plugin-ui"))
         ? true
         : (collapsedPreference ?? false),

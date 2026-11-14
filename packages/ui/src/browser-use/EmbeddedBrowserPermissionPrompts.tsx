@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { MonitorUp, Paperclip, ShieldAlert, Usb, X } from "lucide-react";
 import {
   type EmbeddedBrowserPermissionPromptEvent,
@@ -121,8 +121,57 @@ export function EmbeddedBrowserPermissionPrompts({
     return () => disposers.forEach((dispose) => dispose());
   }, [prompts, dropPrompt]);
 
+  // 修复原因（CI run 43563053728 场景三 + 43565130043 观测盲区）：main 侧
+  // sendPrompt 成功 + prompt-timeout 照常结算，而 DOM prompts 计数恒 0 —— renderer
+  // 是否收到事件、归属过滤是否丢弃、弹层是否在挂载，此前全部不可见。弹层生命
+  // 周期 / prop 变化 / 收到事件 / 过滤丢弃四类观测点走 lifecycle 通道（生产构建
+  // 仍经桌面桥落盘 —— 普通 logger 级别在生产 no-op，43565130043 全部观测点丢失
+  // 的教训；与断言零耦合）。
   useEffect(() => {
-    const dispose = platform.onEmbeddedBrowserPermissionPrompt?.((event) => receivePrompt(event));
+    logger.lifecycle.info("[embedded-browser-permission] prompt layer mounted");
+    return () => {
+      logger.lifecycle.info("[embedded-browser-permission] prompt layer unmounted");
+    };
+  }, []);
+  const tabGuestRef = useRef<number | undefined>(guestWebContentsId);
+  useEffect(() => {
+    if (tabGuestRef.current === guestWebContentsId) return;
+    logger.lifecycle.info("[embedded-browser-permission] prompt layer tab guest changed", {
+      from: tabGuestRef.current,
+      to: guestWebContentsId,
+    });
+    tabGuestRef.current = guestWebContentsId;
+  }, [guestWebContentsId]);
+  const loggedDroppedRequestIds = useRef<Set<string>>(new Set());
+  const droppedByOwnership = prompts.filter(
+    (prompt) =>
+      prompt.guestWebContentsId !== undefined &&
+      prompt.guestWebContentsId !== guestWebContentsId,
+  );
+  useEffect(() => {
+    for (const prompt of droppedByOwnership) {
+      if (loggedDroppedRequestIds.current.has(prompt.requestId)) continue;
+      loggedDroppedRequestIds.current.add(prompt.requestId);
+      logger.lifecycle.warn(
+        "[embedded-browser-permission] prompt dropped by guest ownership filter",
+        {
+          requestId: prompt.requestId,
+          eventGuest: prompt.guestWebContentsId,
+          tabGuest: guestWebContentsId,
+        },
+      );
+    }
+  }, [droppedByOwnership, guestWebContentsId]);
+
+  useEffect(() => {
+    const dispose = platform.onEmbeddedBrowserPermissionPrompt?.((event) => {
+      logger.lifecycle.info("[embedded-browser-permission] renderer received prompt event", {
+        kind: event.kind,
+        requestId: event.requestId,
+        eventGuest: event.guestWebContentsId,
+      });
+      receivePrompt(event);
+    });
     if (!dispose) {
       logger.warn("[embedded-browser-permission] platform prompt subscription unavailable");
       return;

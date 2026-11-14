@@ -72,6 +72,7 @@ interface PluginControlAttributes {
   groupKey?: string;
   marketplaceId?: string;
   pluginId?: string;
+  surfaceId?: string;
 }
 
 export function requirePluginManualReview(): void {
@@ -702,6 +703,7 @@ function pluginControlSelector(testIdValue: string, attributes: PluginControlAtt
     ["data-group-key", attributes.groupKey],
     ["data-component-kind", attributes.componentKind],
     ["data-config-key", attributes.configKey],
+    ["data-surface-id", attributes.surfaceId],
   ];
   for (const [name, value] of attributeEntries) {
     if (value) selectors.push(`[${name}=${JSON.stringify(value)}]`);
@@ -733,7 +735,8 @@ export async function hasPluginControl(
           (!expected.marketplaceId || candidate.dataset.marketplaceId === expected.marketplaceId) &&
           (!expected.groupKey || candidate.dataset.groupKey === expected.groupKey) &&
           (!expected.componentKind || candidate.dataset.componentKind === expected.componentKind) &&
-          (!expected.configKey || candidate.dataset.configKey === expected.configKey),
+          (!expected.configKey || candidate.dataset.configKey === expected.configKey) &&
+          (!expected.surfaceId || candidate.dataset.surfaceId === expected.surfaceId),
       ),
     testIdValue,
     attributes,

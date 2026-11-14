@@ -4,7 +4,11 @@ import {
   TID_BROWSER_REFRESH_BUTTON,
   TID_BROWSER_WEBVIEW,
 } from "@zcode/shared/test-ids";
-import { clickTestIdByWebDriver } from "#e2e/helpers/desktop-app";
+import {
+  clickTestIdByDom,
+  clickTestIdByDomPointer,
+  waitForTestIdByDom,
+} from "#e2e/helpers/desktop-app";
 import { openFirstBrowserTab } from "#e2e/helpers/browser-side-pane";
 import { prepareV4ConversationE2E } from "#e2e/helpers/v4-conversation";
 
@@ -57,14 +61,33 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
     await prepareV4ConversationE2E({ skipProvider: true });
     await openFirstBrowserTab();
     await navigateTo(testServer.origin);
-    // URL 输入仍聚焦时滑杆按设计隐藏；真实点击网页结束地址编辑，再使用站点权限入口。
-    await clickTestIdByWebDriver(TID_BROWSER_WEBVIEW);
+    // URL 输入仍聚焦时滑杆按设计隐藏（BrowserToolbar 的 group-has-[input:focus] 隐藏规则）。
+    // 修复原因（CI run 43174278149，该 spec 首次在容器环境运行）：WebDriver 对
+    // <webview> 的坐标点击在容器里没有把焦点转移给 guest —— 地址输入保持 focus，
+    // 滑杆容器持续 display:none，click 永远等不到 interactable。改为先显式断言
+    // 「聚焦编辑时隐藏」这一设计契约（比旧行为更强的正向覆盖），再用键盘 Tab
+    // 结束地址编辑——与布局/焦点路由无关的真实用户手势。
+    expect(
+      await browser.execute(
+        (triggerId: string) => {
+          const trigger = document.querySelector<HTMLElement>(`[data-testid="${triggerId}"]`);
+          return trigger !== null && trigger.checkVisibility() === false;
+        },
+        "browser-permission-trigger",
+      ),
+    ).toBe(true);
+    await browser.keys("Tab");
 
     // 未授权默认 denied
     expect(await runInGuest("window.__permissionState('geolocation')")).toBe("denied");
 
     // 地址栏滑杆 → 站点信息气泡 → 权限设置
-    await clickTestIdByWebDriver("browser-permission-trigger");
+    // 修复原因（CI run 43456602866/43459195997）：滑杆（PopoverTrigger）与
+    // Select 触发器/选项都是 Radix 指针手势控件；Xvfb 无 WM 2 核容器里 WebDriver
+    // 坐标点击链间歇性「命令成功但未送达」（本轮触发器 45s 不可点击）。改
+    // clickTestIdByDomPointer（pointerdown+pointerup+click 的 DOM 派发，
+    // selectPluginSettingsScope 的既有 PointerEvent 纪律泛化）；断言不变。
+    await clickTestIdByDomPointer("browser-permission-trigger");
     await browser.waitUntil(
       async () =>
         await browser.execute(
@@ -72,7 +95,7 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
         ),
       { timeout: 10_000, timeoutMsg: "站点信息气泡没有出现" },
     );
-    await clickTestIdByWebDriver("browser-permission-open-settings");
+    await clickTestIdByDom("browser-permission-open-settings");
 
     // 独立设置标签页打开，展示站点 origin 与能力目录
     await browser.waitUntil(
@@ -87,30 +110,297 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
     );
     expect(originText).toBe(testServer.origin);
 
-    // geolocation 逐项改为「允许」→ guest 内 permissions.query 立即变 granted
-    await clickTestIdByWebDriver("site-permission-setting-geolocation");
-    await clickTestIdByWebDriver("site-permission-option-allow");
-    await browser.waitUntil(
-      async () =>
-        await browser.execute(
-          () => !!document.querySelector('[data-testid="browser-permission-saved"]'),
-        ),
-      { timeout: 10_000, timeoutMsg: "保存提示没有出现" },
+    // 真实用户前置条件（run 43467865171 根因修复）：本 spec 到此为止的检查全部是 DOM
+    // 存在性检查 + DOM 派发事件，而 TabsContent forceMount 的 keep-alive 会把「非激活」
+    // 的设置页连全部控件一起留在 DOM（display:none）；Radix 下拉又以 body 门户渲染，
+    // 不受页面 display:none 影响 —— 所以隐藏页上 focus/高亮/键盘全部照常工作。但
+    // useBrowserSitePermissions 的 enabled（isVisible）守卫会静默吞掉全部写入：main
+    // 无写入 IPC 日志、renderer 无错误日志、保存提示永不出现 —— 正是 43467865171 三次
+    // 尝试「保存提示没有出现」的完整证据链。真实用户必须先「看到」设置标签页才能逐项
+    // 修改。两项激活证据：(1) 标签 trigger data-state="active"（与 side-pane-scope 同一
+    // 契约）；(2) 重置按钮已解锁 —— 它只在 states 首读完成后解锁（refresh 仅在
+    // enabled=true 时运行），是写路径已打开的直接证据。
+    const waitForSettingsTabLive = (timeoutMsg: string, timeout = 15_000) =>
+      browser.waitUntil(
+        async () =>
+          await browser.execute(() => {
+            const activeSettingsTab = Array.from(
+              document.querySelectorAll<HTMLElement>(
+                '[data-side-pane-tab-id^="browser-permissions:"]',
+              ),
+            ).some((tab) => tab.getAttribute("data-state") === "active");
+            if (!activeSettingsTab) return false;
+            const reset = document.querySelector<HTMLButtonElement>(
+              '[data-testid="browser-permission-reset"]',
+            );
+            return !!reset && !reset.disabled;
+          }),
+        {
+          timeout,
+          timeoutMsg,
+        },
+      );
+    await waitForSettingsTabLive(
+      "站点权限设置标签页没有成为激活标签且完成首次读取（keep-alive 下非激活页会吞掉全部写入）",
     );
+
+    // geolocation 逐项改为「允许」→ guest 内 permissions.query 立即变 granted
+    // 修复历史（run 43456602866/43459195997/43464558855/43467865171 → 43474036538 →
+    // 43494794568 → 43503209205）：四轮归因迭代后，在本地真实 Chromium（agent-browser）
+    // 用最小复现页（真实 React 19 + 真实 @radix-ui/react-select，与本 spec 同受控形态）
+    // 定位并验证了确定性激活纪律。Radix Select 的两条指针激活路径：
+    // - mouse 路径：触发器 pointerdown(mouse) 开下拉的同时武装一个一次性 document 级
+    //   pointerup 捕获监听；无 pointermove 时 delta={0,0}≤10 → 对选项 pointerup 调
+    //   preventDefault → React onPointerUp 不触发 → 不提交（A/B 复现）；带坐标 +
+    //   pointermove 可解，但在 CI 容器仍有两种间歇失败态（43494794568：preventDefault
+    //   路径，下拉保持打开；43503209205：目标不在 content 判定路径，下拉被关闭）。
+    // - touch 路径（本 spec 主纪律，3/3 确定性）：触发器 pointerdown(touch) 只置
+    //   pointerTypeRef（不开下拉、不武装捕获监听 —— 位置引用仅 mouse 记录）；触发器
+    //   click → onClick(pointerType≠mouse) → handleOpen 开下拉；选项 pointerdown(touch)
+    //   + click → onClick(pointerType≠mouse) → handleSelect 提交并关闭。无坐标、无
+    //   pointerup、无捕获监听、无命中测试 —— 触屏用户 taps 的字面路径。
+    // 键盘路径（ArrowDown+Enter）在真实浏览器验证可用；CI 容器的 Enter 送达缺陷为
+    // 环境特定（43474036538：ArrowDown 生效而 Enter 始终不触发 handleSelect，main
+    // 零写入 IPC）。梯子序：dom-touch（确定性）→ dom-pointer（mouse 坐标纪律，CI 间歇
+    // 两态的持续证伪）→ keyboard。每步后用值证据归因（data-permission-setting 只在
+    // 写入+重读后翻转），失败路径倾倒诊断快照；断言语义不变（保存提示必须出现、
+    // granted 必须兑现、重置回 denied 必须兑现）。
+    const activationDisciplines = ["dom-touch", "dom-pointer", "keyboard"] as const;
+    let settingsSaved = false;
+    let lastDiagnosis = "unknown";
+    for (let attempt = 1; attempt <= activationDisciplines.length; attempt += 1) {
+      const discipline = activationDisciplines[attempt - 1]!;
+      try {
+        if (attempt > 1) {
+          // 上一次尝试可能残留打开的下拉：先 Escape 归一化。
+          await browser.keys("Escape");
+          await browser.pause(200);
+        }
+        await waitForTestIdByDom("site-permission-setting-geolocation", {
+          timeout: 15_000,
+          timeoutMsg: "geolocation 设置控件没有渲染",
+        });
+        const openSelectByDom = () =>
+          browser.execute(() => {
+            const trigger = document.querySelector<HTMLElement>(
+              '[data-testid="site-permission-setting-geolocation"]',
+            );
+            if (!(trigger instanceof HTMLElement)) return false;
+            // 坐标纪律：合成 pointerdown 必须带触发器中心坐标 —— Radix 捕获层用它
+            // 计算 pointerup delta；无坐标时 delta={0,0}≤10 → preventDefault 选项
+            // pointerup → React onPointerUp 不触发（本地真实浏览器 A/B 复现）。
+            const rect = trigger.getBoundingClientRect();
+            trigger.dispatchEvent(
+              new PointerEvent("pointerdown", {
+                bubbles: true,
+                button: 0,
+                ctrlKey: false,
+                pointerType: "mouse",
+                clientX: rect.left + rect.width / 2,
+                clientY: rect.top + rect.height / 2,
+                pointerId: 1,
+                isPrimary: true,
+              }),
+            );
+            return true;
+          });
+        if (discipline === "dom-touch") {
+          // 触屏用户 taps 的字面路径：触发器 pointerdown(touch)（只置 pointerTypeRef，
+          // 不开下拉、不武装捕获监听）→ 触发器 click（pointerType≠mouse → handleOpen）
+          // → 等选项渲染 → 选项 pointerdown(touch) + click（≠mouse → handleSelect）。
+          await browser.execute(() => {
+            const trigger = document.querySelector<HTMLElement>(
+              '[data-testid="site-permission-setting-geolocation"]',
+            );
+            if (!(trigger instanceof HTMLElement)) return false;
+            trigger.dispatchEvent(
+              new PointerEvent("pointerdown", {
+                bubbles: true,
+                cancelable: true,
+                button: 0,
+                pointerType: "touch",
+                isPrimary: true,
+              }),
+            );
+            trigger.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+            return true;
+          });
+          await browser.waitUntil(
+            async () =>
+              await browser.execute(
+                () => !!document.querySelector('[data-testid="site-permission-option-allow"]'),
+              ),
+            { timeout: 10_000, timeoutMsg: "下拉没有渲染「允许」项（dom-touch）" },
+          );
+          const dispatched = (await browser.execute(() => {
+            const element = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
+              (item) => item.dataset.testid === "site-permission-option-allow",
+            );
+            if (!(element instanceof HTMLElement)) return false;
+            element.dispatchEvent(
+              new PointerEvent("pointerdown", {
+                bubbles: true,
+                cancelable: true,
+                button: 0,
+                pointerType: "touch",
+                isPrimary: true,
+              }),
+            );
+            element.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+            return true;
+          })) as boolean;
+          if (!dispatched) {
+            throw new Error("「允许」项不可交互（dom-touch）");
+          }
+        } else if (discipline === "dom-pointer") {
+          await openSelectByDom();
+          await browser.waitUntil(
+            async () =>
+              await browser.execute(
+                () => !!document.querySelector('[data-testid="site-permission-option-allow"]'),
+              ),
+            { timeout: 10_000, timeoutMsg: "下拉没有渲染「允许」项（dom-pointer）" },
+          );
+          // 捕获层纪律：先 pointermove 到选项中心（真实用户移动；捕获层据此把
+          // delta 抬过 10px 阈值 → 选项 pointerup 不被 preventDefault → React
+          // onPointerUp 触发 handleSelect），再完整指针序列。
+          const dispatched = (await browser.execute(() => {
+            const element = Array.from(document.querySelectorAll<HTMLElement>("[data-testid]")).find(
+              (item) => item.dataset.testid === "site-permission-option-allow",
+            );
+            if (!(element instanceof HTMLElement)) return false;
+            const rect = element.getBoundingClientRect();
+            const init: PointerEventInit & MouseEventInit = {
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+              pointerType: "mouse",
+              pointerId: 1,
+              isPrimary: true,
+              clientX: rect.left + rect.width / 2,
+              clientY: rect.top + rect.height / 2,
+            };
+            element.dispatchEvent(new PointerEvent("pointermove", init));
+            element.dispatchEvent(
+              new PointerEvent("pointerdown", { ...init, button: 0, buttons: 1 }),
+            );
+            element.dispatchEvent(
+              new PointerEvent("pointerup", { ...init, button: 0, buttons: 0 }),
+            );
+            element.dispatchEvent(new MouseEvent("click", init));
+            return true;
+          })) as boolean;
+          if (!dispatched) {
+            throw new Error("「允许」项不可交互（dom-pointer）");
+          }
+        } else if (discipline === "keyboard") {
+          // keyboard：pointerdown 开下拉后先等任一项获得高亮（Radix 定位后
+          // focusSelectedItem 落焦），再 ArrowDown —— 消除落焦竞态。
+          await openSelectByDom();
+          await browser.waitUntil(
+            async () =>
+              await browser.execute(
+                () =>
+                  !!document.querySelector(
+                    '[data-testid^="site-permission-option-"][data-highlighted]',
+                  ),
+              ),
+            { timeout: 10_000, timeoutMsg: "下拉打开后没有高亮项（keyboard）" },
+          );
+          for (let step = 0; step < 4; step += 1) {
+            const allowHighlighted = await browser.execute(
+              () =>
+                !!document.querySelector(
+                  '[data-testid="site-permission-option-allow"][data-highlighted]',
+                ),
+            );
+            if (allowHighlighted) break;
+            await browser.keys("ArrowDown");
+            await browser.pause(150);
+          }
+          await browser.pause(150);
+          await browser.keys("Enter");
+        }
+      } catch (error) {
+        lastDiagnosis = `${discipline}:interact-error:${(error as Error).message}`;
+        if (attempt === activationDisciplines.length) {
+          await dumpSiteSettingsDiagnostics(`所有激活纪律失败（${lastDiagnosis}）`);
+          throw error;
+        }
+        await browser.pause(750);
+        continue;
+      }
+      // 值提交证据：data-permission-setting 只随 states（写入+重读）翻转。
+      const valueCommitted = await browser
+        .waitUntil(
+          async () =>
+            (await browser.execute(
+              () =>
+                document
+                  .querySelector('[data-testid="site-permission-setting-geolocation"]')
+                  ?.getAttribute("data-permission-setting"),
+            )) === "allow",
+          { timeout: 8_000, timeoutMsg: "选择「允许」后 Select 值没有提交" },
+        )
+        .then(
+          () => true,
+          () => false,
+        );
+      if (!valueCommitted) {
+        lastDiagnosis = `${discipline}:no-commit`;
+        await dumpSiteSettingsDiagnostics(`${discipline} 未提交值`);
+        if (attempt === activationDisciplines.length) break;
+        await browser.pause(750);
+        continue;
+      }
+      settingsSaved = await browser
+        .waitUntil(
+          async () =>
+            !!(await browser.execute(
+              () => !!document.querySelector('[data-testid="browser-permission-saved"]'),
+            )),
+          { timeout: attempt === 1 ? 6_000 : 10_000, timeoutMsg: "保存提示没有出现" },
+        )
+        .then(
+          () => true,
+          () => false,
+        );
+      if (settingsSaved) break;
+      lastDiagnosis = `${discipline}:no-notice`;
+      if (attempt === activationDisciplines.length) break;
+    }
+    if (!settingsSaved) {
+      await dumpSiteSettingsDiagnostics(`三种激活纪律均未达成保存提示（最后诊断：${lastDiagnosis}）`);
+      throw new Error(
+        `保存提示没有出现（三种激活纪律逐一尝试后仍未保存；最后诊断：${lastDiagnosis}）`,
+      );
+    }
     await browser.waitUntil(
       async () => (await runInGuest("window.__permissionState('geolocation')")) === "granted",
       { timeout: 15_000, timeoutMsg: "设置页允许后 permissions.query 应为 granted" },
     );
 
     // 整站重置 → 回到每次询问（query 为 denied）
-    await clickTestIdByWebDriver("browser-permission-reset");
-    await browser.waitUntil(
-      async () =>
-        await browser.execute(
-          () => !!document.querySelector('[data-testid="browser-permission-reset-done"]'),
-        ),
-      { timeout: 10_000, timeoutMsg: "重置完成提示没有出现" },
-    );
+    // 修复原因（run 43500382244）：granted 等待与重置点击之间设置页可能失去激活态
+    //（keep-alive 僵尸化：clickTestIdByDom 在隐藏页上照常返回 clicked:true，但
+    // enabled 守卫静默吞掉重置写入 —— main 零 IPC、零错误日志、提示永不出现，
+    // 与选择阶段同一家族）。重置前重验激活态；任何失败路径都倾倒诊断快照。
+    try {
+      await waitForSettingsTabLive(
+        "重置前设置标签页已不是激活可写状态（面板/标签在 granted 等待期间翻转）",
+      );
+      await clickTestIdByDom("browser-permission-reset");
+      await browser.waitUntil(
+        async () =>
+          await browser.execute(
+            () => !!document.querySelector('[data-testid="browser-permission-reset-done"]'),
+          ),
+        { timeout: 10_000, timeoutMsg: "重置完成提示没有出现" },
+      );
+    } catch (error) {
+      await dumpSiteSettingsDiagnostics("重置阶段失败");
+      throw error;
+    }
     await browser.waitUntil(
       async () => (await runInGuest("window.__permissionState('geolocation')")) === "denied",
       { timeout: 15_000, timeoutMsg: "重置后 permissions.query 应回到 denied" },
@@ -119,9 +409,44 @@ describe("站点权限设置标签页：地址栏入口与逐项修改", () => {
 });
 
 async function navigateTo(origin: string): Promise<void> {
-  const addressInput = await $(`[data-testid="${TID_BROWSER_ADDRESS_INPUT}"]`);
-  await addressInput.setValue(origin);
-  await browser.keys("Enter");
+  // 修复原因（CI run 43442176637 同族预防，见 browser-permission-prompt 的修复记录）：
+  // Xvfb 无 WM 容器里地址输入的 WebDriver 坐标交互链间歇性 "element not
+  // interactable"（本 spec 在 run 43418377362 已命中过同族滑杆问题）。地址输入是
+  // 普通 <input>，提交走真实键盘 Enter——用原生 value setter + input 事件 +
+  // 显式 focus() 写入，再以 browser.keys 提交；断言不变。
+  await browser.waitUntil(
+    async () =>
+      (await browser.execute(
+        (testIdValue: string, nextOrigin: string) => {
+          const input = document.querySelector<HTMLInputElement>(
+            `[data-testid="${testIdValue}"]`,
+          );
+          if (!input) return false;
+          input.focus();
+          const setter = Object.getOwnPropertyDescriptor(
+            HTMLInputElement.prototype,
+            "value",
+          )?.set;
+          setter?.call(input, nextOrigin);
+          input.dispatchEvent(new Event("input", { bubbles: true }));
+          return true;
+        },
+        TID_BROWSER_ADDRESS_INPUT,
+        origin,
+      )) === true,
+    { timeout: 15_000, timeoutMsg: "内置浏览器地址输入不可用" },
+  );
+  // 修复原因（runs 43514818284 场景三导航、43415362076 同族）：地址提交改走
+  // form.requestSubmit() —— 与 Enter 键同一提交管线（隐式提交的表单原生等价物），
+  // 但不经真实键盘事件投递（宿主池退化窗口内 browser.keys("Enter") 间歇不送达，
+  // site-settings 梯子的 Enter 送达缺陷同族）；断言（加载完成/origin/脚本就绪）不变。
+  await browser.execute((testIdValue: string) => {
+    const input = document.querySelector<HTMLInputElement>(`[data-testid="${testIdValue}"]`);
+    const form = input?.form;
+    if (!(form instanceof HTMLFormElement)) return false;
+    form.requestSubmit();
+    return true;
+  }, TID_BROWSER_ADDRESS_INPUT);
   await browser.waitUntil(
     () =>
       browser.execute((refreshTestId: string) => {
@@ -139,6 +464,58 @@ async function navigateTo(origin: string): Promise<void> {
       timeoutMsg: "测试页脚本未就绪",
     },
   );
+}
+
+/**
+ * run 43467865171 起的失败路径诊断快照：一次性回答「标签是否激活 / 值是否提交 /
+ * 下拉是否残留 / 写路径是否 busy」四类问题，避免下一轮 CI 只拿到同一个不可归因的
+ * 「保存提示没有出现」。倾倒进 wdio 控制台（side-pane-scope 的 afterEach 同款通道）。
+ */
+async function dumpSiteSettingsDiagnostics(label: string): Promise<void> {
+  const dump = await browser.execute(() => {
+    const describe = (element: Element | null) => {
+      if (!element) return null;
+      const html = element as HTMLElement;
+      return {
+        tag: html.tagName.toLowerCase(),
+        testid: html.getAttribute("data-testid"),
+        dataState: html.getAttribute("data-state"),
+        dataHighlighted: html.hasAttribute("data-highlighted"),
+        permissionSetting: html.getAttribute("data-permission-setting"),
+        ariaExpanded: html.getAttribute("aria-expanded"),
+        disabled: html instanceof HTMLButtonElement ? html.disabled : null,
+        visible: html.checkVisibility(),
+        text: html.textContent?.trim().slice(0, 40) ?? "",
+      };
+    };
+    const page = document.querySelector('[data-testid="browser-site-permissions"]');
+    return {
+      tabTriggers: Array.from(
+        document.querySelectorAll<HTMLElement>("[data-side-pane-tab-id]"),
+      ).map((tab) => ({
+        tabId: tab.getAttribute("data-side-pane-tab-id"),
+        state: tab.getAttribute("data-state"),
+      })),
+      // TabsContent 宿主的激活态 —— keep-alive 僵尸页的直接证据。
+      pageContentHostState: page?.closest("[data-state]")?.getAttribute("data-state") ?? null,
+      pageVisible: page instanceof HTMLElement ? page.checkVisibility() : null,
+      geolocationTrigger: describe(
+        document.querySelector('[data-testid="site-permission-setting-geolocation"]'),
+      ),
+      listbox: describe(document.querySelector('[role="listbox"]')),
+      activeElement: describe(document.activeElement),
+      resetButton: describe(
+        document.querySelector('[data-testid="browser-permission-reset"]'),
+      ),
+      savedNotice: !!document.querySelector('[data-testid="browser-permission-saved"]'),
+      resetDoneNotice: !!document.querySelector(
+        '[data-testid="browser-permission-reset-done"]',
+      ),
+      alertText: document.querySelector('[role="alert"]')?.textContent?.trim() ?? null,
+      windowFocused: document.hasFocus(),
+    };
+  });
+  console.error(`[site-settings 诊断] ${label}`, JSON.stringify(dump, null, 2));
 }
 
 async function readBrowserGuestWebContentsId(): Promise<number> {
