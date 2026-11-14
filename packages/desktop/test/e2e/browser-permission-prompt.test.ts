@@ -158,8 +158,19 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
     // Chromium 层不再调用 request handler（promise 永久 pending、零 permission
     // 活动 —— 与历次失败诊断一致；requestMediaAndAwait 的同文档 re-fire 无法
     // 恢复已被吞的请求）。真实用户的自然恢复是刷新页面 —— 文档重载复位 media
-    // 管线后再请求一次。结算后静默窗 + 重载重试一次；断言语义不变（确认条
-    // 必须出现、决策落盘、granted 兑现、二次请求不弹）。
+    // 管线后再请求一次。
+    // 修复原因（runs 43521061755/43525366174：钉 ubuntu-22.04 后同吞）：池镜像
+    // 夜间滚动假设已证伪 —— desktop-e2e 工作流全史 25/25 红、全天候时段失败
+    // （11:13–23:12 UTC），「21:26+ 夜窗退化」框架同样证伪。多轮盲等修复（静默
+    // 窗/同文档重发/重载重试/池钉版本）全部无效后升级为可观测静止门：
+    // enumerateDevices 与 getUserMedia 共用同一条
+    // frame 级 media dispatcher mojo 且不经过任何权限路径 —— 门若结算，导航
+    // 发起时刻 frame 的 media 通道是通的；门若挂起，楔死当场可见（此前八轮
+    // 只能从 15s 超时倒推）。刷新恢复阶梯 1 轮扩到 2 轮，改走刷新按钮（真实
+    // 用户手势；地址栏二次输入属已登记的「element not interactable / Enter
+    // 不送达」家族，run 43442176637/43514818284）。断言语义不变（确认条必须
+    // 出现、决策落盘、granted 兑现、二次请求不弹）。
+    await awaitMediaDispatcherQuiescence("after-scenario2-denies");
     await browser.pause(600);
     await navigateTo(allowServer.origin);
     expect(await runInGuest("location.origin")).toBe(allowServer.origin);
@@ -172,15 +183,39 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
         15_000,
         "权限确认条没有出现",
       );
+    let scenarioThreePromptSeen = false;
     try {
       await awaitScenarioThreePrompt();
-    } catch {
+      scenarioThreePromptSeen = true;
+    } catch (error: unknown) {
       console.info(
-        "[permission-e2e] 场景三确认条未现 —— media 管线 teardown 竞态（43415362076 族）；重载文档后重试一次",
+        "[permission-e2e] 场景三确认条未现 —— media 吞噬（43415362076 族）；进入刷新恢复阶梯",
+        { firstAttemptError: error instanceof Error ? error.message : String(error) },
       );
-      await navigateTo(allowServer.origin);
+    }
+    for (
+      let reloadAttempt = 1;
+      reloadAttempt <= 2 && !scenarioThreePromptSeen;
+      reloadAttempt += 1
+    ) {
+      console.info(
+        `[permission-e2e] 场景三刷新恢复第 ${reloadAttempt}/2 轮 —— 重载文档复位 media 管线后重试`,
+      );
+      await reloadPermissionTestPage();
       expect(await runInGuest("location.origin")).toBe(allowServer.origin);
-      await awaitScenarioThreePrompt();
+      await awaitMediaDispatcherQuiescence(`scenario3-reload-${reloadAttempt}`);
+      try {
+        await awaitScenarioThreePrompt();
+        scenarioThreePromptSeen = true;
+      } catch (error: unknown) {
+        console.info(
+          `[permission-e2e] 场景三刷新恢复第 ${reloadAttempt}/2 轮后确认条仍未现`,
+          { attemptError: error instanceof Error ? error.message : String(error) },
+        );
+      }
+    }
+    if (!scenarioThreePromptSeen) {
+      throw new Error("权限确认条没有出现（场景三：首轮 + 2 轮刷新恢复全部超时）");
     }
     await clickTestIdByDom(TID_BROWSER_PERMISSION_ALLOW_ALWAYS);
     // 允许后 permissions.query 变为 granted；无摄像头设备时 getUserMedia 是 NotFoundError（权限已过）
@@ -211,6 +246,61 @@ describe("内置浏览器权限默认拒绝与确认条四态", () => {
     );
   });
 });
+
+/**
+ * 场景三吞噬族（43415362076 家族）的可观测静止门。被吞请求死于 request handler
+ * 之前（零 permission 活动、promise 永久 pending）；「同文档 re-fire 无法恢复」与
+ * 「文档重载可复位」两条已登记证据都指向 frame 级 media dispatcher 楔死。
+ * enumerateDevices 与 getUserMedia 共用同一条 frame 级 dispatcher mojo，且不
+ * 经过任何权限路径（无确认条、无决策落盘）：它在被楔死的 frame 上同样挂起，
+ * 在健康的 frame 上必然结算。门只观测与记录，不参与任何断言、不阻断恢复
+ * 阶梯 —— 门挂起时照常继续，但日志里留下「楔死于导航前/重载后」的直接证据，
+ * 取代此前只能从 15s 超时倒推的诊断。
+ */
+async function awaitMediaDispatcherQuiescence(label: string, timeoutMs = 10_000): Promise<void> {
+  await runInGuest(
+    "void navigator.mediaDevices.enumerateDevices().then(() => { window.__enumerateDevicesSettled = true; }, () => { window.__enumerateDevicesSettled = true; })",
+  );
+  const startedAt = Date.now();
+  try {
+    await browser.waitUntil(
+      async () =>
+        (await runInGuest("window.__enumerateDevicesSettled === true").catch(
+          () => false,
+        )) === true,
+      { timeout: timeoutMs, timeoutMsg: `media dispatcher 静止门未结算（${label}）` },
+    );
+    console.info(
+      `[permission-e2e] media dispatcher 静止门通过（${label}，${Date.now() - startedAt}ms）`,
+    );
+  } catch {
+    console.info(
+      `[permission-e2e] media dispatcher 静止门楔死（${label}）—— frame 级 media 通道 ${Date.now() - startedAt}ms 未应答（43415362076 族的直接观测）`,
+    );
+  }
+}
+
+/**
+ * 刷新当前测试页（真实用户的自然恢复手势）。修复原因（runs 43442176637/43514818284
+ * 家族）：地址栏二次输入属已登记的「element not interactable / Enter 不送达」坐标
+ * 交互家族；刷新按钮是普通 Button（DOM click，本 spec 末尾已验证同款交互）。
+ * 以 window.__preReloadDocumentMarker 的消失证明旧文档已替换 —— title 断言对
+ * 同页重载恒真（重载前后 title 相同），不能单独充当换代证据。
+ */
+async function reloadPermissionTestPage(): Promise<void> {
+  await runInGuest("void (window.__preReloadDocumentMarker = true)");
+  await clickTestIdByDom(TID_BROWSER_REFRESH_BUTTON, {
+    timeout: 15_000,
+    timeoutMsg: "刷新按钮不可用",
+  });
+  await browser.waitUntil(
+    async () =>
+      (await runInGuest(
+        "window.__preReloadDocumentMarker === undefined && document.title === 'permission-test'",
+      ).catch(() => false)) === true,
+    { timeout: 15_000, timeoutMsg: "刷新后测试页脚本未就绪" },
+  );
+}
 
 async function navigateTo(origin: string): Promise<void> {
   // 修复原因（CI run 43442176637 场景三导航）：Xvfb 无 WM 容器里地址输入的
