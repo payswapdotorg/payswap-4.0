@@ -339,6 +339,24 @@ export interface PayswapAccountRefusal {
   readonly message: string;
 }
 
+/**
+ * 账户服务 typed refusal 的 strict 校验器（ADR-P2-2 账户 reader 桥起，refusal 是
+ * **跨进程值**—— 桥两端与一切后续消费面共用这一份校验法则；接口与 schema 共declare，
+ * 漂移即违约）。
+ */
+export const payswapAccountRefusalSchema = z
+  .object({
+    code: z.enum([
+      "validation_failed",
+      "unsupported_provider",
+      "unknown_connection",
+      "read_back_unavailable",
+      PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE_CODE,
+    ]),
+    message: z.string().min(1),
+  })
+  .strict();
+
 export type PayswapConnectResult =
   | { readonly kind: "connected"; readonly connection: PayswapConnectionStatusProjection }
   | { readonly kind: "refused"; readonly refusal: PayswapAccountRefusal };

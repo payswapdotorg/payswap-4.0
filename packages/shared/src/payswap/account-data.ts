@@ -29,6 +29,11 @@
  */
 
 import { z } from "zod";
+import {
+  payswapAccountCapabilityEvidenceSchema,
+  payswapAccountRefusalSchema,
+  payswapConnectionStatusProjectionSchema,
+} from "./account-connection.js";
 import type {
   PayswapAccountCapabilityEvidence,
   PayswapAccountRefusal,
@@ -285,3 +290,44 @@ export const payswapReadonlyCategoryResultSchemas: Readonly<
     z.object({ status: z.literal("unavailable"), detail: z.string().min(1) }).strict(),
   ]),
 };
+
+// ---------------------------------------------------------------------------
+// 概览 detail 联合的 strict 校验器（ADR-P2-2 账户 reader 桥起 —— detail 是跨进程
+// 值，桥两端共用这一份联合校验法则；叶子 schema 全部复用上方单一事实源）
+// ---------------------------------------------------------------------------
+
+export const payswapAccountOverviewDetailSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("detail"),
+      connection: payswapConnectionStatusProjectionSchema,
+      evidence: payswapAccountCapabilityEvidenceSchema,
+      data: z
+        .object({
+          balance: payswapReadonlyCategoryResultSchemas.balance,
+          payment_objects: payswapReadonlyCategoryResultSchemas.payment_objects,
+          customers: payswapReadonlyCategoryResultSchemas.customers,
+          disputes: payswapReadonlyCategoryResultSchemas.disputes,
+        })
+        .strict(),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("expired"),
+      connection: payswapConnectionStatusProjectionSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("revoked"),
+      connection: payswapConnectionStatusProjectionSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("refused"),
+      refusal: payswapAccountRefusalSchema,
+    })
+    .strict(),
+]);

@@ -48,3 +48,8 @@ export {
   type PayswapPspWarmupOptions,
   type PayswapPspWarmupResult,
 } from "./accountWarmup.js";
+export {
+  createPayswapDesktopAccountRuntime,
+  type PayswapDesktopAccountRuntime,
+  type PayswapDesktopAccountRuntimeOptions,
+} from "./accountRuntimeWiring.js";

@@ -45,5 +45,6 @@ export * from "./authorization-surfaces.js";
 export * from "./credential-security.js";
 export * from "./account-connection.js";
 export * from "./account-data.js";
+export * from "./account-reader-bridge.js";
 export * from "./surface-revocation.js";
 export * from "./approval-desktop.js";

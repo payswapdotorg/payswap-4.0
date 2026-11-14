@@ -1275,6 +1275,10 @@ modules:
       - shared-payswap
       # D12.7 入口装配：shouldEnableE2ETestBridge（E2E 观察桥门）来自 shared 主入口。
       - shared
+      # ADR-P2-2（P2.2 slice 6）：desktop main 持有账户运行时 ——
+      # accountRuntimeWiring 经 @zcode/services/node 的 publicEntrypoint 桶装配
+      # createPayswapAccountRuntime（单一账户服务实例；broker reader 桥的服务端半）。
+      - services
     publicEntrypoints:
       - packages/desktop/src/main/payswap/index.ts
       - packages/desktop/src/main/payswap/contract.ts

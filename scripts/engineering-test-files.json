@@ -102,6 +102,7 @@
   "packages/desktop/test/packagedSourcemapCleanup.test.ts",
   "packages/desktop/test/payswap-psp-key-store.test.ts",
   "packages/desktop/test/payswap-psp-warmup.test.ts",
+  "packages/desktop/test/payswap-account-runtime-wiring.test.ts",
   "packages/desktop/test/payswapBrokerPeerHelperSupply.test.ts",
   "packages/desktop/test/permissionInteractionId.test.ts",
   "packages/desktop/test/placeholderProducerDetection.test.ts",
