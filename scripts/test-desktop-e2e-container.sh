@@ -51,6 +51,17 @@ case "$E2E_SPEC_PRESET" in
 esac
 E2E_SPEC="${E2E_SPEC:-$PRESET_E2E_SPEC}"
 E2E_NETWORK_MODE="${E2E_NETWORK_MODE:-replay-isolated}"
+# 连接臂 E2E 的存储环境腿（P2 架构师评审 2026-11-14 第 4 项）：absent（缺省，
+# 历史行为）/ gnome-libsecret（dbus-run-session 内真实 gnome-keyring Secret
+# Service + Electron --password-store=gnome-libsecret —— 见容器入口脚本）。
+case "${ZCODE_E2E_KEYRING:-absent}" in
+  absent | gnome-libsecret)
+    ;;
+  *)
+    printf '[desktop-e2e-container] unsupported ZCODE_E2E_KEYRING: %s (expected absent or gnome-libsecret)\n' "${ZCODE_E2E_KEYRING}" >&2
+    exit 1
+    ;;
+esac
 SHM_SIZE="${SHM_SIZE:-2g}"
 DEFAULT_DRIVER_CACHE_VOLUME="zcode-desktop-e2e-driver-cache-${DOCKER_PLATFORM//\//-}"
 DRIVER_CACHE_VOLUME="${DRIVER_CACHE_VOLUME:-$DEFAULT_DRIVER_CACHE_VOLUME}"
@@ -195,6 +206,12 @@ fi
 # 真实权限请求流）；未设置时零影响。
 if [ -n "${ZCODE_E2E_EXTRA_APP_ARGS:-}" ]; then
   docker_run_args+=(-e "ZCODE_E2E_EXTRA_APP_ARGS=${ZCODE_E2E_EXTRA_APP_ARGS}")
+fi
+
+# 连接臂 E2E 的存储环境腿：容器入口脚本按该值分流（缺省 absent = 历史行为；
+# gnome-libsecret = 真实 Secret Service 腿）。spec 侧同读该值作期望标记。
+if [ -n "${ZCODE_E2E_KEYRING:-}" ] && [ "${ZCODE_E2E_KEYRING}" != "absent" ]; then
+  docker_run_args+=(-e "ZCODE_E2E_KEYRING=${ZCODE_E2E_KEYRING}")
 fi
 
 # 修复原因（run 43503209205 三 attempt 各自不同的失败组合）：宿主级 UI 交互退化间歇性

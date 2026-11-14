@@ -28,6 +28,11 @@ import {
 import { setDataBaseDir } from "@zcode/services/node";
 import { afterAll, describe, expect, it } from "vitest";
 import { createPayswapDesktopAccountRuntime } from "../src/main/payswap/accountRuntimeWiring.js";
+import {
+  createPayswapPspKeyStore,
+  PAYSWAP_PSP_KEY_STORE_FILE_NAME,
+  type PayswapPspSafeStoragePort,
+} from "../src/main/payswap/pspCredentialKeyStore.js";
 
 const TEST_SECRET = `sk_test_${"e5f6a7b8".repeat(6)}`;
 const PSP_KEY = "a".repeat(64);
@@ -110,6 +115,16 @@ function createPairedPorts(): [PayswapReaderBridgePort, PayswapReaderBridgePort]
     };
   }
   return [makeSide(0), makeSide(1)];
+}
+
+/** Gate E2 后端政策链臂的 safeStorage double：恒等加解密 + 可编程 Linux 后端。 */
+function backendPolicySafeStorageDouble(backend: () => string): PayswapPspSafeStoragePort {
+  return {
+    isEncryptionAvailable: () => true,
+    getSelectedStorageBackend: backend,
+    encryptString: (plain: string) => Buffer.from(plain, "utf8"),
+    decryptString: (encrypted: Buffer) => encrypted.toString("utf8"),
+  };
 }
 
 async function assembleWiring(
@@ -220,6 +235,54 @@ describe("payswap desktop account runtime wiring (ADR-P2-2 slice 6) — the supe
     keys.state.error = null;
     expect(await client.accountOverviewReader()).toEqual([]);
     expect(runtime.runtimeRebuilds).toBe(3);
+  });
+
+  it("Gate E2 backend policy chain (linux basic_text, available=true): real key store → empty env → connect refuses typed; at-rest stays zero-write (Blocker A end-to-end)", async () => {
+    // 架构师评审 Blocker A 的链级臂：isEncryptionAvailable() === true 但后端是
+    // basic_text → 键仓 null（pspCredentialKeyStore 两级 fail-closed）→ 空集 env
+    // 装配 → connect typed 存储 refusal → 拒绝先于任何 at-rest 写。真实键仓
+    // （真实 createPayswapPspKeyStore + 真实 fs）—— 仅 safeStorage 是 double。
+    const dir = await mkdtemp(join(tmpdir(), "payswap-wiring-basic-text-"));
+    createdDirs.push(dir);
+    setDataBaseDir(dir);
+    const runtime = createPayswapDesktopAccountRuntime({
+      keyStore: createPayswapPspKeyStore({
+        safeStorage: backendPolicySafeStorageDouble(() => "basic_text"),
+        platform: "linux",
+        resolveKeyStorePath: () => join(dir, PAYSWAP_PSP_KEY_STORE_FILE_NAME),
+        readFile: async (path) => {
+          try {
+            return await readFile(path);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+            throw error;
+          }
+        },
+        writeFile: async (path, data) => {
+          await writeFile(path, data, { mode: 0o600 });
+        },
+      }),
+      runtimeDependencies: {
+        resolveStorePath: () => join(dir, "payswap-connections.json"),
+        apiClient: recordingApiClient(stripeHandler),
+        mintConnectionId: () => "77777777-7777-4777-8777-777777777777",
+      },
+    });
+    const warm = await runtime.warmup();
+    expect(warm.keyAvailable).toBe(false); // 空集 env（后端政策拒绝，非不可用）
+    expect(warm.env).toEqual({});
+    const service = await runtime.getRuntime();
+    const refused = await service.accountService.connect({
+      providerId: "stripe",
+      operatorSecret: TEST_SECRET,
+    });
+    expect(refused.kind).toBe("refused");
+    if (refused.kind === "refused") {
+      expect(refused.refusal.code).toBe("PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE");
+    }
+    // at-rest 零写：键文件与连接记录都缺席（拒绝先于记录写）。
+    const entries = await readdir(dir);
+    expect(entries).toEqual([]);
   });
 
   it("server.stop() unsubscribes: no further responses (the bridge client times out)", async () => {

@@ -37,13 +37,13 @@ import {
   type PayswapAccountRuntimeDependencies,
 } from "@zcode/services/node";
 import {
-  warmupPayswapPspHostEnv,
+  warmupPayswapPspRuntimeEnv,
   type PayswapPspWarmupResult,
 } from "./accountWarmup.js";
 import type { PayswapPspKeyStore } from "./pspCredentialKeyStore.js";
 
 export interface PayswapDesktopAccountRuntimeOptions {
-  /** PSP 键 store（真实装配 = createPayswapPspKeyStore(safeStorage, fs)）。 */
+  /** PSP 键 store（真实装配 = createPayswapPspKeyStore(safeStorage, platform, fs)）。 */
   keyStore: Pick<PayswapPspKeyStore, "ensureUnwrappedKey">;
   /** 预热故障上报（fail-safe 降级不抛出；此处可见）。 */
   onWarmupError?: (error: unknown) => void;
@@ -76,7 +76,7 @@ export function createPayswapDesktopAccountRuntime(
   let rebuilds = 0;
 
   async function ensureRuntime(): Promise<PayswapAccountRuntime> {
-    const warm = await warmupPayswapPspHostEnv({
+    const warm = await warmupPayswapPspRuntimeEnv({
       keyStore: options.keyStore,
       onWarmupError: options.onWarmupError,
     });
@@ -100,7 +100,7 @@ export function createPayswapDesktopAccountRuntime(
       return rebuilds;
     },
     warmup: () =>
-      warmupPayswapPspHostEnv({
+      warmupPayswapPspRuntimeEnv({
         keyStore: options.keyStore,
         onWarmupError: options.onWarmupError,
       }),

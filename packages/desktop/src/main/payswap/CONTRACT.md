@@ -40,18 +40,23 @@ PSP cipher 随机键的 safeStorage 键仓（Electron main 是唯一能访问 sa
 
 - at-rest：键文件（app 配置目录 `payswap-psp-safe-storage-key`）只含 safeStorage
   包裹产物，0600 私有模式；仓自己从不写明文、fallback 派生物或第二份。
-- fail-closed：safeStorage 不可用 → null（不建文件、不造键、不 memoize —— 可
-  重试）；services 侧对 `payswap:psp:*` 键 typed 拒绝。
+- fail-closed 两级：①safeStorage 不可用 → null；②Linux 后端不在认可闭集
+  （`basic_text` / `unknown` / 未知名 —— 硬编码密码不是 OS 钥匙串保护，见
+  `pspSafeStorageBackendPolicy.ts`）→ null。两级都不建文件、不 memoize；
+  services 侧对 `payswap:psp:*` 键 typed 拒绝；拒绝先于任何读/写。
+- 首写往返验证：fresh 包裹产物解不回原键 = 不可用（不落盘、可重试 ——
+  fresh blob 无既有密文依赖，与既有文件的 typed 解包失败区分）。
 - 无静默轮换：包裹解不开（钥匙串更换/迁移）→ typed
   `PAYSWAP_PSP_KEY_UNWRAP_FAILED`（shared 法则），文件字节原样保留。
 - 并发：ensure 内部串行（in-flight 去重）—— 同一键、恰一次落盘；成功后
   memoize。
-- IO 全注入（safeStorage 端口 + fs 端口）—— 法则级测试无 Electron 依赖。
-- 交付：解包键经 `buildPayswapPspHostEnv`（shared 法则单一实现）组装为
-  `ZCODE_PAYSWAP_PSP_KEY`，由 spawnHostProcess 的 hostProcessLocalEnv 通道交付
-  host。**入口接线（app-ready 预热 + spawn 注入）随 P2.2 账户服务连接流与其
-  desktop Browser E2E 臂落地**（D12.7 同款纪律：法则与模块先行，入口接线随
-  活的窗口证明）。
+- IO 全注入（safeStorage 端口 + 平台值 + fs 端口）—— 法则级测试无 Electron
+  依赖（`getSelectedStorageBackend` 是 Linux-only API，仅 linux 平台查询）。
+- 交付（ADR-P2-2 Decision 2/5 —— 旧「spawnHostProcess 的 hostProcessLocalEnv
+  通道交付 host」已取代）：解包键经 `buildPayswapPspHostEnv`（shared 法则单一
+  实现）组装为 `ZCODE_PAYSWAP_PSP_KEY`，作为 desktop main 内账户运行时的
+  **进程内 env 视图**（accountRuntimeWiring 法则 2）；键与 PSP 密文不出
+  main 进程。入口接线已随 P2.2 连接流与其 desktop Browser E2E 臂落地。
 
 P2.2 slice 6 增补（ADR-P2-2 —— 账户运行时的进程安放）：`accountRuntimeWiring.ts`
 —— desktop main 的受监督账户运行时装配 + broker reader 桥的服务端半

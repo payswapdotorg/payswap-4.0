@@ -97,10 +97,14 @@ function subFrameEvent(frameUrl: string): IpcMainInvokeEvent {
   } as unknown as IpcMainInvokeEvent;
 }
 
-/** safeStorage double：可用性可编程；加解密为恒等（真实键 store 走完整落盘路径）。 */
-function safeStorageDouble(available: () => boolean) {
+/** safeStorage double：可用性与 Linux 后端可编程；加解密为恒等（真实键 store 走完整落盘路径）。 */
+function safeStorageDouble(
+  available: () => boolean,
+  backend: () => string = () => "gnome_libsecret",
+) {
   return {
     isEncryptionAvailable: available,
+    getSelectedStorageBackend: backend,
     encryptString: (plain: string) => Buffer.from(plain, "utf8"),
     decryptString: (encrypted: Buffer) => encrypted.toString("utf8"),
   };
@@ -174,7 +178,9 @@ describe("payswap desktop connection ipc (ADR-P2-2 Decision 4, slice 7) — the 
 // 入口装配（真实受监督运行时 + 真实 store 的全链路）
 // ---------------------------------------------------------------------------
 
-async function assembleConnections(options?: { safeStorageAvailable?: () => boolean }) {
+async function assembleConnections(
+  options?: { safeStorageAvailable?: () => boolean; safeStorageBackend?: () => string },
+) {
   const dir = await mkdtemp(join(tmpdir(), "payswap-connections-ipc-"));
   createdDirs.push(dir);
   setDataBaseDir(dir);
@@ -183,7 +189,12 @@ async function assembleConnections(options?: { safeStorageAvailable?: () => bool
   const installation = installDesktopPayswapConnections({
     getMainWindowFrameUrl: () => TRUSTED_URL,
     ipcMain,
-    safeStorage: safeStorageDouble(options?.safeStorageAvailable ?? (() => true)),
+    // 平台显式 linux：后端政策是 Linux-only 查询 —— 装配级测试不受宿主平台影响。
+    platform: "linux",
+    safeStorage: safeStorageDouble(
+      options?.safeStorageAvailable ?? (() => true),
+      options?.safeStorageBackend ?? (() => "gnome_libsecret"),
+    ),
     keyStoreDependencies: {
       resolveKeyStorePath: () => join(dir, "payswap-psp-safe-storage-key"),
       readFile: async (path) => {
@@ -271,6 +282,31 @@ describe("payswap desktop connections installation (ADR-P2-2 Decision 4, slice 7
     }
   });
 
+  it("Gate E2 backend policy (linux basic_text, available=true): connect answers the typed storage refusal AS DATA; at-rest stays zero-write (refusal precedes every write)", async () => {
+    // 架构师评审 Blocker A 的装配级臂：isEncryptionAvailable() === true 但后端是
+    // basic_text（硬编码密码 —— 非 OS 钥匙串）→ 与不可用同判。拒绝先于任何写：
+    // 键文件、凭据 store、连接记录全部缺席。
+    const { ipcMain, dir } = await assembleConnections({
+      safeStorageAvailable: () => true,
+      safeStorageBackend: () => "basic_text",
+    });
+    const response = await invoke(ipcMain, mainFrameEvent(TRUSTED_URL), {
+      op: "connect",
+      providerId: "stripe",
+      operatorSecret: TEST_SECRET,
+    });
+    expect(response.ok).toBe(true);
+    if (response.ok) {
+      const result = response.result as { kind: string; refusal?: { code: string } };
+      expect(result.kind).toBe("refused");
+      expect(result.refusal?.code).toBe("PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE");
+    }
+    // at-rest 零写：键文件与两个 store 都不建（拒绝先于记录/密文写）。
+    await expect(readFile(join(dir, "payswap-psp-safe-storage-key"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(dir, "payswap-connections.json"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(readFile(join(dir, ".zcode", "v2", "credentials.json"))).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
   it("rejects subframe senders and malformed payloads through the registered handler", async () => {
     const { ipcMain } = await assembleConnections();
     const denied = await invoke(ipcMain, subFrameEvent(TRUSTED_URL), { op: "list" });
@@ -294,6 +330,7 @@ describe("payswap desktop connections installation (ADR-P2-2 Decision 4, slice 7
     installDesktopPayswapConnections({
       getMainWindowFrameUrl: () => TRUSTED_URL,
       ipcMain,
+      platform: "linux",
       safeStorage: safeStorageDouble(() => true),
       keyStoreDependencies: {
         resolveKeyStorePath: () => join(dir, "payswap-psp-safe-storage-key"),

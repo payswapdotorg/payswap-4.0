@@ -33,8 +33,9 @@ RUN sed -i 's|http://deb.debian.org|https://deb.debian.org|g' /etc/apt/sources.l
       dbus-x11 \
       fonts-noto-cjk \
       fonts-noto-color-emoji \
-      g++ \
       git \
+      gnome-keyring \
+      g++ \
       libasound2 \
       libatk-bridge2.0-0 \
       libatk1.0-0 \
@@ -96,4 +97,7 @@ RUN apt-get update -qq && \
 
 RUN mkdir -p "${WDIO_BROWSER_DRIVER_CACHE_DIR}"
 
-CMD ["bash", "-lc", "dbus-run-session -- pnpm --filter @zcode/desktop test:e2e ${EXTRA_WDIO_ARGS:-}"]
+# 入口脚本见 scripts/desktop-e2e-container-entrypoint.sh（两条腿：缺省无钥匙串
+# 的 fallback-only 证明腿 + ZCODE_E2E_KEYRING=gnome-libsecret 的真实 Libsecret
+# 存储可用腿 —— gnome-keyring 包在上方 apt 层安装）。
+CMD ["bash", "-lc", "bash scripts/desktop-e2e-container-entrypoint.sh"]

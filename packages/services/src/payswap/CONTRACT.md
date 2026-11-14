@@ -65,14 +65,15 @@ corrupt-refuse-overwrite（typed `PAYSWAP_CONNECTIONS_STORE_CORRUPT`，绝不自
   `timeoutMs` 随 init 传递 —— 执行归实现，与 NodeApiClient 同一契约）；缺省
   = `globalThis.fetch` + AbortController 超时执行（缺省 10 s，可注入）。
 
-尚未落地（随 P2.2 后续切片，D12.7 同款纪律——法则与模块先行，入口接线随活的
-窗口证明）：
+P2.2 后续切片已全部落地（slice 5-9；ADR-P2-2 定案 —— 法则与模块先行、入口
+接线随活的窗口证明）：
 
-- additive RPC channel（连接 UI 的 host 暴露面）与平台壳 onboarding UI；
-- desktop main 入口接线（app-ready 预热 + `ZCODE_PAYSWAP_PSP_KEY` 的
-  hostProcessLocalEnv 注入 —— desktop-payswap/CONTRACT.md 的 P2 交付段；
-  生产装配把本切片的 Stripe adapter 与 accountOverviewReader 接进 broker）；
-- 连接流的 desktop Browser E2E 臂 —— 随活的窗口证明切片。
+- additive RPC channel（连接 UI 的 renderer→main 面，slice 7）与连接 UI
+  （slice 8）已落地；`ZCODE_PAYSWAP_PSP_KEY` 的交付按 ADR-P2-2 Decision 2
+  收窄为 desktop main 内账户运行时的**进程内 env 视图**（不再
+  hostProcessLocalEnv 跨进程注入 —— host 永不接触 PSP 秘密材料）；
+- desktop main 入口接线（app-ready 预热 + 桥入口 spawn 端口转移，slice 8/9）
+  与连接流的 desktop Browser E2E 臂（payswap-connection-ui.test.ts）已落地。
 
 **ADR-P2-1 只读数据面（slice 4）**：
 
@@ -108,12 +109,12 @@ corrupt-refuse-overwrite（typed `PAYSWAP_CONNECTIONS_STORE_CORRUPT`，绝不自
   （`ZCODE_PAYSWAP_PSP_KEY` 的 services-reader 契约；env 缺席 → 装配照常、
   拒绝在操作面）；真实 Stripe 双 adapter（读回 + 数据）接进服务；IO 全注入。
 - **desktop 键预热**（desktop-payswap `accountWarmup.ts`，
-  `warmupPayswapPspHostEnv`）：app-ready 现读键 store → `buildPayswapPspHostEnv`
-  组装恰 `ZCODE_PAYSWAP_PSP_KEY`；fail-safe（不可用/解包失败 → 空集 + 上报，
-  永不阻断启动）；每次现读（safeStorage 恢复后免重启）。
+  `warmupPayswapPspRuntimeEnv`）：app-ready 现读键 store → `buildPayswapPspHostEnv`
+  组装恰 `ZCODE_PAYSWAP_PSP_KEY`（desktop main 内账户运行时的进程内 env 视图
+  —— ADR-P2-2 Decision 2）；fail-safe（不可用/后端不在认可闭集/解包失败 →
+  空集 + 上报，永不阻断启动）；每次现读（safeStorage 恢复后免重启）。
 - **协调器透传**（bootstrap `spawn-wiring.ts`）：`accountOverviewReader`/
   `accountDetailReader` 经协调器选项透传到 broker boot 选项（生产装配的接缝）。
-- **开放决策（下一切片的 ADR）**：broker 住在 host 进程（CLI bundle —— 不依赖
-  `@zcode/services`），账户运行时与 broker 的同进程共置需要放置决策 ——
-  desktop-main 运行时 + 类型化跨进程 reader 桥，或 CLI 侧 services 准入。
-  additive RPC channel（连接 UI 的 renderer 面）同切片。
+- **放置决策已定案**（ADR-P2-2，Option A）：账户运行时住 desktop main，
+  broker 的 reader 面是类型化跨进程桥（host 进程永不接触 PSP 秘密材料）；
+  additive RPC channel（连接 UI 的 renderer 面）住 main —— 已随 slice 6-9 落地。

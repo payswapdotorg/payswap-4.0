@@ -45,11 +45,15 @@ export {
   type PayswapPspSafeStoragePort,
 } from "./pspCredentialKeyStore.js";
 export {
+  PAYSWAP_PSP_SECURE_LINUX_STORAGE_BACKENDS,
+  isSecurePayswapPspStorageBackendSelection,
+} from "./pspSafeStorageBackendPolicy.js";
+export {
   buildPayswapPspHostEnv,
   PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY,
 } from "@zcode/shared/payswap";
 export {
-  warmupPayswapPspHostEnv,
+  warmupPayswapPspRuntimeEnv,
   type PayswapPspWarmupOptions,
   type PayswapPspWarmupResult,
 } from "./accountWarmup.js";

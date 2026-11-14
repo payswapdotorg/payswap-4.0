@@ -129,6 +129,8 @@ export interface InstallDesktopPayswapConnectionsOptions {
   getMainWindowFrameUrl: () => string;
   /** safeStorage 端口（缺省 = Electron safeStorage；测试注入面）。 */
   safeStorage?: PayswapPspSafeStoragePort;
+  /** 进程平台（缺省 = process.platform；后端政策的裁决维度 —— 测试注入面）。 */
+  platform?: string;
   /** 键 store 依赖（缺省 = node fs + CLI 数据根的 app 配置目录 —— ADR-P2-2 附录 C pin）。 */
   keyStoreDependencies?: Pick<
     PayswapPspKeyStoreDependencies,
@@ -191,6 +193,7 @@ export function installDesktopPayswapConnections(
   const runtime = createPayswapDesktopAccountRuntime({
     keyStore: createPayswapPspKeyStore({
       safeStorage: options.safeStorage ?? safeStorage,
+      platform: options.platform ?? process.platform,
       ...keyStoreDependencies,
     }),
     ...(options.onWarmupError !== undefined ? { onWarmupError: options.onWarmupError } : {}),

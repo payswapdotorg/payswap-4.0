@@ -93,6 +93,31 @@ jobs:
           tests/payswap-approval-desktop.test.ts
           tests/payswap-credential-security.test.ts
           tests/payswap-account-connection.test.ts
+          tests/payswap-account-connection-rpc.test.ts
+          tests/payswap-account-reader-bridge.test.ts
+          tests/payswap-stdio-bridge-port.test.ts
+
+      # PaySwap P2（架构师评审 2026-11-14 第 2 项）：P2 法则级工程电池的 PR CI
+      # 可复现注册。此前这些测试只在本地 verify:pre-push（工程清单 176 文件）里
+      # 跑 —— 清单本身不是执行证据。本步把受 P2 影响的全集（services/desktop/UI
+      # 的 13 个 P2 文件）钉进 PR 门禁：exact PR head 上可复现的绿。其余工程清单
+      # 文件（非 P2 面）仍属本地全量门禁 —— 诚实边界，见 ci.yml 文件头。
+      - name: Payswap P2 engineering law battery (root engineering project)
+        run: >
+          pnpm exec vitest run --project engineering
+          packages/desktop/test/payswap-account-connection-ipc.test.ts
+          packages/desktop/test/payswap-account-runtime-wiring.test.ts
+          packages/desktop/test/payswap-psp-key-store.test.ts
+          packages/desktop/test/payswap-psp-warmup.test.ts
+          packages/desktop/test/payswap-psp-storage-backend-policy.test.ts
+          packages/desktop/test/payswap-reader-bridge-entry.test.ts
+          packages/desktop/test/payswap-reader-bridge-relay.test.ts
+          packages/services/test/payswap-account-data.test.ts
+          packages/services/test/payswap-account-runtime.test.ts
+          packages/services/test/payswap-account-service.test.ts
+          packages/services/test/payswap-credential-security.test.ts
+          packages/services/test/payswap-stripe-read-back.test.ts
+          packages/ui/test/payswap-connection-ui-presentation.test.ts
 
       # PaySwap P1.6：server 侧 operator-principal 生产边界套件（真实 createHttpServer +
       # 真实 HTTP/WS 升级握手 + 0600 原子持久化；packages/server/vitest.config.ts 装配

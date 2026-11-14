@@ -38,7 +38,7 @@ const PAYSWAP_PSP_KEY_STORE_FILE_NAME = "payswap-psp-safe-storage-key";
  *      available」）：typed PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE 呈现在连接
  *      UI（Gate E2 E2E 条款本体）；at-rest 无 PSP 密文、无连接记录（拒绝先于
  *      记录写）。后续 happy-path 行 this.skip()（环境事实，诚实跳过）。
- *    - 存储可用环境：connected → 行 4-7。
+ *    - 存储可用环境（真实 Libsecret 后端）：connected → 行 4-7。
  * 4. happy path：连接行（connected/test）+ at-rest 密文检查（记录无明文、
  *    凭据 store 含 connectionId 无明文）。
  * 5. refresh 闭集结局：read_back_unavailable（离线）/ expired（假密钥真 401）/
@@ -49,6 +49,16 @@ const PAYSWAP_PSP_KEY_STORE_FILE_NAME = "payswap-psp-safe-storage-key";
  *    预热 fail-safe（解包失败 → 空集 env）→ connect → typed 存储 refusal 呈现
  *    在 UI；at-rest 无新记录/新密文；既有记录仍可列表（readers 诚实，键故障
  *    不吞数据面）。
+ *
+ * 环境期望标记（P2 架构师评审 2026-11-14 第 4 项）：ZCODE_E2E_KEYRING 由 CI
+ * 两腿分别置为 absent / gnome-libsecret（scripts/desktop-e2e-container-entrypoint.sh
+ * 提供对应的真实环境）。标记的腿语义是**断言**：
+ * - discover（缺省，本地开发）：闭集两支皆 lawful（历史自适应行为）。
+ * - absent：行 3 必须命中 fallback-only 拒绝分支（connected = 测试失败 ——
+ *   absent 腿里存储不该在场）。
+ * - gnome-libsecret：行 3 必须命中 connected（typed 存储 refusal = 测试失败
+ *   —— 存储可用腿里 Electron 后端选择/钥匙串损坏要暴露，不能静默退化成
+ *   fallback-only）。
  */
 
 const TID_SECTION = "payswap-connections-section";
@@ -65,6 +75,12 @@ const STORAGE_REFUSAL_CODE = "PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE";
 /** 格式合法的假 test 密钥（formatCheck 通过；最终权威是 provider read-back）。 */
 const VALID_FORMAT_TEST_SECRET = `sk_test_${"e5f6a7b8".repeat(6)}`;
 const INVALID_FORMAT_SECRET = "not-a-stripe-key";
+
+/**
+ * 环境期望标记（见文件头「环境期望标记」段）：CI 两腿把它变成断言；本地缺省
+ * discover 保持历史自适应闭集。
+ */
+const KEYRING_EXPECTATION = process.env.ZCODE_E2E_KEYRING ?? "discover";
 
 const paths = getE2EAppDataPaths();
 const KEY_STORE_FILE = join(paths.appDataDir, PAYSWAP_PSP_KEY_STORE_FILE_NAME);
@@ -247,6 +263,13 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
     );
 
     if (notice.code === STORAGE_REFUSAL_CODE) {
+      if (KEYRING_EXPECTATION === "gnome-libsecret") {
+        throw new Error(
+          "ZCODE_E2E_KEYRING=gnome-libsecret 腿期望存储可用（connected），但 connect 呈现 " +
+            STORAGE_REFUSAL_CODE +
+            " —— Electron 后端选择或 Secret Service 在该环境损坏（见 scripts/desktop-e2e-container-entrypoint.sh 的自证探针）；存储可用腿不得静默退化成 fallback-only",
+        );
+      }
       // 「only the fallback available refuses」—— Gate E2 的 E2E 条款本体：
       // typed error surfaced in the connection UI。
       storageUnavailableInEnv = true;
@@ -261,6 +284,12 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
         expect(connections).not.toContain("stripe");
       }
       return;
+    }
+
+    if (KEYRING_EXPECTATION === "absent") {
+      throw new Error(
+        "ZCODE_E2E_KEYRING=absent 腿期望 fallback-only 拒绝（Gate E2 条款本体），但 connect 成功 —— absent 腿里存储不该在场（后端政策缺口或环境漂移）",
+      );
     }
 
     expect(notice.tone).toBe("positive");

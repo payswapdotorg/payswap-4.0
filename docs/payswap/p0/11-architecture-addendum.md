@@ -1268,6 +1268,29 @@ refuses; at rest, no PSP secret is decryptable under the fallback-derived key
 active; the existing `ICredentialService` behavior for **non-PSP** keys is unchanged
 (preservation matrix).
 
+**Backend precision (P2 architect review 2026-11-14, Blocker A):** the
+"OS keychain wraps the encryption key" requirement is enforced against the *named
+backend*, not against `isEncryptionAvailable()` alone. Electron's Linux
+`basic_text` backend (unrecognized desktop environment, or
+`--password-store="basic"`) protects data with a hardcoded password while
+`isEncryptionAvailable()` can still return true — it does not satisfy this gate and
+is therefore **refused**. The desktop key store accepts on Linux only the closed
+set `gnome_libsecret | kwallet | kwallet5 | kwallet6`
+(`safeStorage.getSelectedStorageBackend()` — a Linux-only API, consulted only on
+Linux; `unknown` = pre-ready = refused; unrecognized names fail closed);
+macOS/Windows stay on their OS-backed paths (Keychain / DPAPI); any other
+platform fails closed. The refusal precedes every write (key file, PSP
+credential, connection record) and surfaces as the same typed
+`PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE`. A first-write wrap→unwrap round-trip
+verification additionally gates the freshly generated key before it is persisted
+(a backend that cannot round-trip its own product is treated as unavailable —
+nothing is written). Law: `pspSafeStorageBackendPolicy.ts` (desktop-payswap);
+proofs: `payswap-psp-storage-backend-policy.test.ts` (pure matrix),
+`payswap-psp-key-store.test.ts` (key-store boundary), the wiring/ipc chain arms,
+and the two storage-environment E2E legs (`absent` proves the fallback-only
+clause; `gnome-libsecret` — a real Libsecret Secret Service in the harness —
+runs the storage-available lifecycle arms).
+
 ### 5.3 Gate E3 — controlled provider-authorization Browser flow (P1)
 
 Not an indiscriminate domain block — a controlled flow, preserving legitimate
