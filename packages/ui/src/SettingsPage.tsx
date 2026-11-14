@@ -89,6 +89,7 @@ import { PluginsSection } from "@/settings/PluginsSection.js";
 import { HooksSection } from "@/settings/HooksSection.js";
 import { WorkspaceFileSearchSection } from "@/settings/WorkspaceFileSearchSection.js";
 import { MemorySettingsSection } from "@/settings/MemorySettingsSection.js";
+import { PayswapConnectionsSection } from "@/payswap/PayswapConnectionsSection.js";
 import { PersonalizationSection } from "@/settings/PersonalizationSection.js";
 import { BrowserSettingsSection } from "@/settings/BrowserSettingsSection.js";
 import { ComputerUseSection } from "@/settings/ComputerUseSection.js";
@@ -2095,6 +2096,11 @@ export function SettingsPage({
                                 }
                               />
                             </ServiceProvider>
+                          ) : activeSection === "payswap" ? (
+                            // PaySwap 支付连接（P2.2）：本机 desktop main 的账户面
+                            // （ADR-P2-2 Decision 4）—— 与模型配置同款的本机全局事实源；
+                            // 组件内部按平台桥缺席呈现不可用说明（分区本身桌面端专属）。
+                            <PayswapConnectionsSection />
                           ) : activeSection === "personalization" ? (
                             // 个性化指令编辑的是本机 ~/.zcode/AGENTS.md（Agent 实际读取的文件）。
                             // 仅桌面本地入口可编辑：手机远控的 base services 可能归属远程

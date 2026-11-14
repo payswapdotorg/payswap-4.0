@@ -19,6 +19,7 @@ export {
 } from "./boot.js";
 export {
   createPayswapBrokerDispatch,
+  type PayswapAccountOverviewReader,
   type PayswapBrokerDispatch,
   type PayswapBrokerDispatchOptions,
   type PayswapBrokerLiveState,
@@ -35,6 +36,13 @@ export {
   type PayswapBrokerCoordinatorOptions,
   type PayswapBrokerProcessObserver,
 } from "./spawn-wiring.js";
+// P2.2 slice 9（ADR-P2-2 Addendum B）：agent 侧 stdio 帧适配器 —— 桥法则端口面在既有
+// stdio 协议通知帧上的透明装载（入口 zcode-protocol-entrypoint.ts 经 spawn env 标记门控）。
+export {
+  createPayswapStdioBridgePort,
+  type PayswapStdioBridgePort,
+  type PayswapStdioBridgePortOptions,
+} from "./stdio-bridge-port.js";
 export {
   isSessionWithinBindingScope,
   type PayswapEntityWorkspaceResolver,

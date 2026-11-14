@@ -7,8 +7,11 @@
 export const desktopPayswapModule = {
   id: "desktop-payswap",
   // shared-payswap：桌面批准 host + 真实 IPC 映射法则 + 通道常量；
-  // shared：E2E 观察桥门（shouldEnableE2ETestBridge —— D12.7 装配半）。
-  requires: ["shared-payswap", "shared"],
+  // shared：E2E 观察桥门（shouldEnableE2ETestBridge —— D12.7 装配半）；
+  // services：ADR-P2-2（P2.2 slice 6）desktop main 持有账户运行时 ——
+  // accountRuntimeWiring 经 @zcode/services/node 的 publicEntrypoint 桶装配
+  // createPayswapAccountRuntime（单一账户服务实例；broker reader 桥的服务端半）。
+  requires: ["shared-payswap", "shared", "services"],
   provides: ["desktop-payswap"],
   publicEntrypoints: ["index.ts", "contract.ts"],
 } as const;

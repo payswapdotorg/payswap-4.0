@@ -115,6 +115,12 @@ export interface ZCodeAgentProcessManagerOptions {
     workspaceKey: string;
     signal?: AbortSignal;
   }) => Promise<void> | void;
+  /**
+   * 每个新建 protocol client 的旁路 tap（所有泳道；同步、无返回值）。Desktop 窗口
+   * Host 的 stdio sideband 接线缝（P2.2 PaySwap reader 桥中继的 per-client 挂接 ——
+   * 通用通道，零业务语义；法则住 shared-payswap 与 desktop host）。
+   */
+  onZCodeProtocolClient?: (client: ZCodeProtocolClient) => void;
 }
 
 interface ManagedZCodeAgentProcess {
@@ -590,6 +596,7 @@ export class ZCodeAgentProcessManager {
   private readonly processLifecycleReporter: RuntimeProcessLifecycleReporter | undefined;
   private readonly resolveSpawnEnv: ZCodeAgentProcessManagerOptions["resolveSpawnEnv"];
   private readonly waitForSpawnAdmission: ZCodeAgentProcessManagerOptions["waitForSpawnAdmission"];
+  private readonly onZCodeProtocolClientTap: ZCodeAgentProcessManagerOptions["onZCodeProtocolClient"];
   private readonly spawnFallbackCwd: string | undefined;
   private readonly lane: string | undefined;
   private readonly idleTimeoutMs: number | undefined;
@@ -611,6 +618,7 @@ export class ZCodeAgentProcessManager {
     this.processLifecycleReporter = options?.processLifecycleReporter;
     this.resolveSpawnEnv = options?.resolveSpawnEnv;
     this.waitForSpawnAdmission = options?.waitForSpawnAdmission;
+    this.onZCodeProtocolClientTap = options?.onZCodeProtocolClient;
     this.spawnFallbackCwd = options?.spawnFallbackCwd;
     this.lane = options?.lane?.trim() || undefined;
     this.idleTimeoutMs =
@@ -1239,6 +1247,9 @@ export class ZCodeAgentProcessManager {
       requireStorageStartup: effectiveCommand.supportsStorageStartup,
       requestTimeoutMs: this.requestTimeoutMs,
     });
+    // stdio sideband tap（同步接线缝）：本 manager 的每个新建 client 都上报 —— Desktop
+    // 窗口 Host 的 PaySwap reader 桥中继经此挂接 per-client 订阅（P2.2 slice 9）。
+    this.onZCodeProtocolClientTap?.(client);
     if (child.pid) {
       const unregisterNetworkCapture = localRuntimeNetworkCapture.register(client, child.pid);
       child.once("close", unregisterNetworkCapture);

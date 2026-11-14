@@ -109,6 +109,13 @@ export interface SpawnHostProcessOptions {
   onPortReady?: (port: MessagePortMain) => void;
   /** 共享 SSH/WSL Host 初始化时不创建特殊的首个 workspace RPC port。 */
   attachInitialServicePort?: boolean;
+  /**
+   * PaySwap 账户 reader 桥端口铸造（P2.2 slice 9 / ADR-P2-2 Addendum B）：返回非 null
+   * 时，端口随独立 spawn 消息（PayswapReaderBridgePort）转移到本窗口 host —— host 侧
+   * 适配为透明中继的 main 面。返回 null = 本次不转移（桥缺席 = fail-closed 缺省）。
+   * 铸造/转移失败不阻断 spawn（fail-safe）。
+   */
+  mintPayswapReaderBridgePort?: () => MessagePortMain | null;
 }
 
 const exitedHostProcesses = new WeakSet<ElectronUtilityProcess>();
@@ -670,6 +677,24 @@ export function spawnHostProcess(
         [port1],
       );
     }
+  }
+
+  // PaySwap 账户 reader 桥端口转移（P2.2 slice 9 / ADR-P2-2 Addendum B）：随独立 spawn
+  // 消息携带（与 init 消息的服务端口互不干扰；同序到达）。铸造失败 → 跳过（fail-safe，
+  // 桥缺席 = fail-closed 缺省，spawn 照常）。
+  try {
+    const payswapReaderBridgePort = options?.mintPayswapReaderBridgePort?.() ?? null;
+    if (payswapReaderBridgePort) {
+      child.postMessage(
+        { type: HostMessageTypes.PayswapReaderBridgePort },
+        [payswapReaderBridgePort],
+      );
+    }
+  } catch (error) {
+    dependencies.logger.warn(
+      "[spawnHostProcess] payswap reader bridge port mint failed (fail-safe, skipping transfer):",
+      error,
+    );
   }
 
   const windowId = win.webContents.id;

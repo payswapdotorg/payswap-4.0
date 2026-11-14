@@ -42,7 +42,11 @@ import {
   injectPayswapBrokerMcpServers,
   resolveTrustedOfficialPayswapServerNames,
 } from "../mcp-config.js";
-import type { PayswapLiveStateReader } from "./dispatch.js";
+import type {
+  PayswapAccountDetailReader,
+  PayswapAccountOverviewReader,
+  PayswapLiveStateReader,
+} from "./dispatch.js";
 import type {
   PayswapEntityWorkspaceResolver,
   PayswapSessionScopeResolver,
@@ -70,6 +74,16 @@ export interface PayswapBrokerCoordinatorOptions {
   bootState?: PayswapBrokerBootState;
   /** §7.3 live 状态 reader（缺省 = fresh config 读，见 readPayswapLiveStateFromConfig）。 */
   liveStateReader?: PayswapLiveStateReader;
+  /**
+   * P2.2 slice 3/ADR-P2-1 account-overview reader（缺省 → 概览不答数据）。
+   * 生产装配经账户运行时绑定（createPayswapAccountRuntime.accountOverviewReader）。
+   */
+  accountOverviewReader?: PayswapAccountOverviewReader;
+  /**
+   * ADR-P2-1 account-detail reader（缺省 → connectionId 收窄只答投影行）。
+   * 生产装配经账户运行时绑定（createPayswapAccountRuntime.accountDetailReader）。
+   */
+  accountDetailReader?: PayswapAccountDetailReader;
   /**
    * §8.1 会话 resolver（Step 5，ADR-8 D8.6）：构造时初值（app 面在此一次性绑定）；
    * 协议宿主面用 bindSessionScopeResolver 延迟绑定（server 构造晚于协调器）。未绑定
@@ -163,6 +177,12 @@ export function createPayswapBrokerCoordinator(
         bootState: state,
         registry,
         liveStateReader,
+        ...(options.accountOverviewReader !== undefined
+          ? { accountOverviewReader: options.accountOverviewReader }
+          : {}),
+        ...(options.accountDetailReader !== undefined
+          ? { accountDetailReader: options.accountDetailReader }
+          : {}),
         sessionScopeResolver: sessionScopeFacade,
         ...(options.entityWorkspaceResolver !== undefined
           ? { entityWorkspaceResolver: options.entityWorkspaceResolver }

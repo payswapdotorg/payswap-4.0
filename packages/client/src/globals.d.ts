@@ -122,6 +122,13 @@ declare global {
       onPayswapCard?(
         handler: (event: import("@zcode/shared/payswap").PayswapDesktopCardEvent) => void,
       ): () => void;
+      /**
+       * PaySwap P2.2 账户连接 RPC（ADR-P2-2 Decision 4）：结构化透传 —— 三检/闭集
+       * 法则在 desktop main 侧执法；响应闭集（typed refusal 作数据）原样回 renderer。
+       */
+      payswapConnectionRpc?(
+        request: import("@zcode/shared/payswap").PayswapConnectionRpcRequest,
+      ): Promise<import("@zcode/shared/payswap").PayswapConnectionRpcResponse>;
       /** 释放当前窗口里的远程 session */
       disposeRemoteSession(sessionId: string): Promise<void>;
       /** 检查本机 Docker daemon 是否可用 */

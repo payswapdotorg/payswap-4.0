@@ -1090,6 +1090,8 @@ export type HostResourceUsageSnapshotRequestMessage = z.infer<
 export const hostIncomingMessageSchema = z.discriminatedUnion("type", [
   hostPrepareProjectWorkspaceMessageSchema,
   z.object({ type: z.literal("network-capture"), control: networkCaptureControlSchema }).strict(),
+  /** P2.2 slice 9（ADR-P2-2 Addendum B）：main 转移的 reader 桥端口随本消息到达 —— 携带的 MessagePort 由 host 侧中继接管（载荷本身无额外字段）。 */
+  z.object({ type: z.literal("payswap-reader-bridge-port") }).strict(),
   z
     .object({ type: z.literal("database-startup-control"), control: databaseStartupControlSchema })
     .strict(),

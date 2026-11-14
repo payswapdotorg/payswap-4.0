@@ -10,3 +10,4 @@
 
 export * from "./surfaceRevocationWiring.js";
 export { PayswapAuthorizationCardHost } from "./PayswapAuthorizationCardHost.js";
+export { PayswapConnectionsSection } from "./PayswapConnectionsSection.js";

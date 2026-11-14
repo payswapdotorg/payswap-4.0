@@ -76,6 +76,15 @@ interface ZCodeProtocolNdjsonConnectionOptions {
   logger?: Logger;
   onTransportClosed?: (error: Error) => void;
   output: NodeJS.WritableStream;
+  /**
+   * Sideband notification 消费钩子（同步；返回 true = 已消费）：被消费的通知帧**不进
+   * 串行处理队列、不经 server dispatch**。PaySwap reader 桥的 stdio 载波用此通道
+   * （P2.2 slice 9 / ADR-P2-2 Addendum B）—— get_account_overview 工具在生成请求
+   * handler 内执行，桥响应若排在串行队列里会等 handler 完成，而 handler 又在等桥
+   * 响应 → 死锁；旁路是传输形态的成立判据，不是优化。与 processNetworkCapture 同款
+   * 的「控制/侧带面不排队」先例。返回 false 的帧走既有分发路径（零行为变化）。
+   */
+  consumeNotification?: (message: ZCodeProtocolNotification) => boolean;
   takePostResponseMessages?: (
     requestId: ZCodeProtocolRequestId,
   ) => readonly ZCodeProtocolOutgoingMessage[];
@@ -213,6 +222,14 @@ export class ZCodeProtocolNdjsonConnection {
     if (this.terminal) return;
     const message = this.decodeLine(line);
     if (!message) {
+      return;
+    }
+    if (
+      !("id" in message) &&
+      "method" in message &&
+      this.options.consumeNotification?.(message as ZCodeProtocolNotification) === true
+    ) {
+      // Sideband 已消费（同步、旁路队列）：桥帧等侧带载荷不等待、不排队。
       return;
     }
     if (

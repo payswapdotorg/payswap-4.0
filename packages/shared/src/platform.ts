@@ -873,6 +873,15 @@ export interface IPlatformService {
     handler: (event: import("./payswap/index.js").PayswapDesktopCardEvent) => void,
   ): () => void;
 
+  /**
+   * PaySwap P2.2 账户连接 RPC（ADR-P2-2 Decision 4）：connect/revoke/refresh/list 四
+   * 操作经 desktop main 的连接通道（三检/闭集法则在 main 侧执法；typed refusal 作
+   * 数据返回 —— 连接 UI 按 code 呈现）。仅桌面平台实现；其它平台不实现（无连接面）。
+   */
+  payswapConnectionRpc?(
+    request: import("./payswap/index.js").PayswapConnectionRpcRequest,
+  ): Promise<import("./payswap/index.js").PayswapConnectionRpcResponse>;
+
   /** 释放当前窗口里已创建的远程 session */
   disposeRemoteSession(sessionId: string): Promise<void>;
 

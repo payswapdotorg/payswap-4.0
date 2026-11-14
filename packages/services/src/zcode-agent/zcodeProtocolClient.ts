@@ -7,6 +7,7 @@ import {
   sessionLifecycleSnapshotSchema,
   sessionLifecycleResultSchema,
 } from "@zcode/shared";
+import { PAYSWAP_READER_BRIDGE_NOTIFICATION_METHOD } from "@zcode/shared/payswap";
 import { ZCodeStorageStartupGate } from "#src/zcode-agent/zcodeStorageStartupGate.js";
 import { Emitter } from "@zcode/rpc";
 import type { IDisposable } from "@zcode/rpc";
@@ -23,6 +24,13 @@ import type { ZCodeProtocolTransport } from "./zcodeProtocolTransport.js";
 
 /** 客户端可发的方法名：旧 zcodeProtocolMethods + v4/*（M3 起并存，M5 波次 2 收敛为 v4）。 */
 export type ZCodeProtocolClientMethod = ZCodeProtocolMethod | V4Method;
+
+/**
+ * 通知面可发的额外方法：PaySwap reader 桥的 stdio 载波（P2.2 slice 9 / ADR-P2-2
+ * Addendum B —— 窗口 host 中继回送桥响应的唯一通道）。与请求方法集分立声明，
+ * 不污染 ZCodeProtocolClientMethod。
+ */
+export type ZCodeProtocolNotificationCarrierMethod = typeof PAYSWAP_READER_BRIDGE_NOTIFICATION_METHOD;
 
 interface ZCodeProtocolClientOptions {
   requireStorageStartup?: boolean;
@@ -322,7 +330,10 @@ export class ZCodeProtocolClient implements IDisposable {
     return resultPromise;
   }
 
-  async notify(method: ZCodeProtocolClientMethod, params?: unknown): Promise<void> {
+  async notify(
+    method: ZCodeProtocolClientMethod | ZCodeProtocolNotificationCarrierMethod,
+    params?: unknown,
+  ): Promise<void> {
     this.assertNotDisposed();
     await this.transport.send({ method, params });
   }

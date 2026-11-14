@@ -28,7 +28,51 @@ export {
   type PayswapDesktopApprovalE2EBridge,
 } from "./desktopPayswapBootstrap.js";
 export {
+  installDesktopPayswapConnections,
+  type InstallDesktopPayswapConnectionsOptions,
+  type PayswapDesktopConnectionsInstallation,
+} from "./desktopPayswapBootstrap.js";
+export {
   PAYSWAP_BROKER_PEER_HELPER_RESOURCE_DIR,
   resolvePayswapBrokerPeerHelperSupply,
 } from "./brokerPeerHelperSupply.js";
 export type { ResolvePayswapBrokerPeerHelperSupplyOptions } from "./brokerPeerHelperSupply.js";
+export {
+  createPayswapPspKeyStore,
+  PAYSWAP_PSP_KEY_STORE_FILE_NAME,
+  type PayswapPspKeyStore,
+  type PayswapPspKeyStoreDependencies,
+  type PayswapPspSafeStoragePort,
+} from "./pspCredentialKeyStore.js";
+export {
+  PAYSWAP_PSP_SECURE_LINUX_STORAGE_BACKENDS,
+  isSecurePayswapPspStorageBackendSelection,
+} from "./pspSafeStorageBackendPolicy.js";
+export {
+  buildPayswapPspHostEnv,
+  PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY,
+} from "@zcode/shared/payswap";
+export {
+  warmupPayswapPspRuntimeEnv,
+  type PayswapPspWarmupOptions,
+  type PayswapPspWarmupResult,
+} from "./accountWarmup.js";
+export {
+  installPayswapDesktopConnectionIpc,
+  PAYSWAP_DESKTOP_CONNECTION_IPC_CHANNEL,
+  type PayswapDesktopConnectionIpcOptions,
+  type PayswapDesktopConnectionIpcRegistration,
+} from "./accountConnectionIpc.js";
+export {
+  createPayswapDesktopAccountRuntime,
+  type PayswapDesktopAccountRuntime,
+  type PayswapDesktopAccountRuntimeOptions,
+} from "./accountRuntimeWiring.js";
+// P2.2 slice 9（ADR-P2-2 Addendum B）：reader 桥端口铸造（spawn 转移的 main 侧半）。
+export {
+  adaptMessagePortMainToPayswapReaderBridgePort,
+  createPayswapReaderBridgePortMinter,
+  type PayswapReaderBridgeChannelPair,
+  type PayswapReaderBridgeMessagePortFace,
+  type PayswapReaderBridgeServePortFace,
+} from "./accountReaderBridgeEntry.js";

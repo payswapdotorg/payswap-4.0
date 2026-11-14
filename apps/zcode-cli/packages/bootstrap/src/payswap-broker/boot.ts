@@ -45,7 +45,11 @@ import {
   type PayswapBrokerHandle,
   type PayswapBrokerMode,
 } from "./server.js";
-import type { PayswapLiveStateReader } from "./dispatch.js";
+import type {
+  PayswapAccountDetailReader,
+  PayswapAccountOverviewReader,
+  PayswapLiveStateReader,
+} from "./dispatch.js";
 import type {
   PayswapEntityWorkspaceResolver,
   PayswapSessionScopeResolver,
@@ -74,6 +78,18 @@ export interface PayswapBrokerBootOptions {
   auditSink?: (event: PayswapBrokerAuditEvent) => void;
   /** §7.3 live 状态 reader（Step 4；缺省 → S2 not_connected，见 dispatch.ts）。 */
   liveStateReader?: PayswapLiveStateReader;
+  /**
+   * §7.3/P2.2 slice 3 account-overview reader：get_account_overview 在 enabled +
+   * opted-in 时的连接投影数据源（每次 dispatch 现读）。缺省 → 概览不答数据。
+   * 仅当 live 状态**实读**为 opted-in 时被咨询（三码法则优先于数据路径）。
+   */
+  accountOverviewReader?: PayswapAccountOverviewReader;
+  /**
+   * ADR-P2-1 account-detail reader：get_account_overview 的 connectionId 收窄数据源
+   *（账户服务 getOverviewData —— 验证读 + 能力证据 + 四类别只读数据）。缺省 →
+   * detail 数据面诚实缺席。仅当三码法则已判定 opted-in 且状态实读时被咨询。
+   */
+  accountDetailReader?: PayswapAccountDetailReader;
   /** §8.1 会话 resolver（Step 5；缺省 → fail-closed session_unresolvable，见 server.ts）。 */
   sessionScopeResolver?: PayswapSessionScopeResolver;
   /** §8.3 实体工作区 resolver（Step 5；Wave 2 生产不接线，§13）。 */
@@ -240,6 +256,8 @@ export async function bootPayswapBroker(options: PayswapBrokerBootOptions): Prom
     closeGraceMs,
     auditSink,
     liveStateReader: options.liveStateReader,
+    accountOverviewReader: options.accountOverviewReader,
+    accountDetailReader: options.accountDetailReader,
     sessionScopeResolver: options.sessionScopeResolver,
     entityWorkspaceResolver: options.entityWorkspaceResolver,
     seenRecords: options.seenRecords,

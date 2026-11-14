@@ -155,3 +155,62 @@ PaySwap broker 协议的**唯一共享实现**（w2-01 §6.4(5)）：canonical J
   把真实 `IpcMainInvokeEvent` 交给 `host.handleApprovalResolution`（结构满足映射面，
   typecheck 即证明）；`getMainWindowFrameUrl` 供给生产受信 origin 值；真实窗口的
   注册与 `financialMode` reader 由 desktop Browser E2E 臂接线。
+- Gate E2 PSP 凭据安全法则（addendum §5.2，P2；`credential-security.ts`）：
+  `payswap:psp:*` 键的权威命名空间谓词（前缀精确 `payswap:psp:`；`payswap:psp`
+  无尾冒号不在内；退化空段在内 —— fail-closed）+ per-platform 决策表
+  （safeStorage 键在位 → `safe_storage`〔desktop 行，OS 钥匙串优先于 secret〕；
+  否则 `ZCODE_CREDENTIAL_SECRET` 在位 → `secret`〔server 行〕；否则
+  `fail_closed`〔neither 行 —— 确定性 fallback 派生键对 PSP 键永不可用〕）+
+  两类不重叠的 typed 失败（`PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE` = 存储通道
+  缺失的 fail-closed 拒绝；`PAYSWAP_PSP_KEY_UNWRAP_FAILED` = 键仓包裹解不开，
+  无静默轮换）+ host env 键契约（`ZCODE_PAYSWAP_PSP_KEY` —— desktop main 写侧
+  与 services 读侧的单一事实源）+ `buildPayswapPspHostEnv` 交付组装（null →
+  空对象 = 不注入即拒）。消费方：`@zcode/services` credentialService 的键级
+  cipher 解析（PSP 键：注入/env safeStorage 键优先，secret 在位且默认通道未被
+  替换时走默认通道，否则触盘前 typed 拒绝；非 PSP 键恒默认通道 —— 上游行为
+  零变更）与 `@zcode/desktop` main 的 safeStorage 键仓
+  （`pspCredentialKeyStore.ts`：at-rest 只落包裹产物、0600、ensure 串行去重、
+  memoize 成功不 memoize 不可用；入口接线随 P2.2 账户服务连接流与其 desktop
+  Browser E2E 臂落地）。
+- P2.2 账户连接法则（doc 05 §5 + doc 06 §2.2，`account-connection.ts`）：PSP 存储
+  键模板 `payswap:psp:<providerId>:<connectionId>:<secretKind>`（段空/含冒号 =
+  编程错误，fail-closed 抛出）；连接记录与状态投影 schema `.strict()`（投影 =
+  记录的去秘密子集，恰五字段；秘密形载荷 schema 级拒绝 —— 渲染层/模型侧在
+  类型面上拿不到秘密）；Stripe authSpec 事实（doc 04，检索日期在案；
+  oauth/client-credentials 形态随 P3 的 provider 评估落地，不提前发明）；
+  typed refusal 词汇（`validation_failed` 逐字 doc 05 §6.6；`unsupported_provider`/
+  `unknown_connection` 是 host-service 范围码；存储 fail-closed 逐字复用 Gate E2
+  常量）。**读回半（slice 2）**：状态词汇补全 `expired`（connected | expired |
+  revoked —— doc 05 §5「expiry is projected as connection status」；`expired` ⇄
+  `connected` 经 refreshEvidence 证据翻转，`revoked` 终态）；provider 读回端口
+  `PayswapAccountReadBackPort`（host 进程内执行；输入携带秘密值 —— 端口永不
+  持久化/日志/投影秘密）产出三值结局：`verified`（携带 `providerAccountId`
+  非秘密证据摘要）/ `auth-failed`（provider 拒绝凭据 —— 唯一能把状态翻到
+  `expired` 的证据）/ `unavailable`（网络/未知结局 —— 不是 expiry 证据，
+  doc 05 §6.4/§6.6 的 unknown 纪律）；refresh 结果四值 `verified | expired |
+  revoked | refused`；新拒绝码 `read_back_unavailable`（端口缺席、传输失败或
+  秘密缺失 —— 状态不变，fail-closed 不猜）。原始 read-back 的证据落账
+  （ledger seq、能力记录引用）随 P2 能力注册表切片，本切片只落状态迁移）。
+  **overview wire 形状（slice 3）**：`get_account_overview` 的成功 data
+  `PayswapAccountOverviewData`（`{kind:"overview", connections: 投影[]}`，与业务
+  拒绝 data 对称）住 `operations.ts` —— broker dispatch 的 account-overview
+  真数据半（§7.3「Read-only account data arrives with P2's Gate E2」的 P2.2
+  兑现）与插件侧共用同一 wire 形状；空清单 / reader 缺席仍答三码法则的
+  `not_connected`。
+
+**ADR-P2-1 只读数据面（slice 4）**：`account-data.ts` 承载 P2 对话内只读面的全部
+法则 —— 闭集类别枚举 `PAYSWAP_READONLY_CATEGORIES`（恰 `balance |
+payment_objects | customers | disputes`，无 write 类别：类别与操作枚举都不含
+doc 05 §6.1 的 write 动词集 `PAYSWAP_WRITE_OPERATION_VERBS` —— no-write 断言的
+battery 单一事实源）；能力证据 `payswapAccountCapabilityEvidenceSchema`（doc 04
+§1.2 capabilities + requirements 读回摘要，住 account-connection.ts 与读回结局
+同源）；per-category redacted 数据 schema（strict 白名单：余额 minor-unit 整数
+`{amount, currency}`；支付对象 `{id, amount, currency, status, created,
+description}`；客户 `{id, created, description}` —— **PII（email/name/phone）永不
+进数据面**；争议 `{id, amount, currency, status, reason, created}`）；四值类别
+结局 `ok | auth-failed | refused | unavailable`（401 唯一拒绝证据；403 →
+`refused{insufficient_permission}`；unknown ≠ failed）+ per-category strict
+校验器；数据读端口 `PayswapAccountDataReadPort`；概览 detail 联合
+`PayswapAccountOverviewDetail`（`detail | expired | revoked | refused` —— 与
+refreshEvidence 结果词汇同构）。读回 `verified` 结局 additive 可选携带 `evidence`
+（缺席时概览 detail 面 fail-closed 拒绝）。

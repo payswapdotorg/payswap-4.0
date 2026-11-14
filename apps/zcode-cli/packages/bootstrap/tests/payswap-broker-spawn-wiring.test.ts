@@ -509,3 +509,71 @@ describe("P1.4 Step 4 — live state from config (pure, all platforms)", () => {
     ).toEqual({ pluginEnabled: false, financialWorkspace: false });
   });
 });
+
+// ---------------------------------------------------------------------------
+// P2.2 slice 5 —— 生产装配半：账户 reader 面经协调器透传到 boot 选项
+// ---------------------------------------------------------------------------
+
+/** 最小 broker handle 替身（boot 接缝注入；协调器只用 close/registerInstance）。 */
+function bootHarness(): import("../src/payswap-broker/server.js").PayswapBrokerHandle {
+  return {
+    mode: "uds",
+    degradedReason: null,
+    endpointPath: "/tmp/payswap-slice5-harness.sock",
+    probe: { verified: true, pid: null, uid: null },
+    liveConnectionCount: 0,
+    registerInstance: () => undefined,
+    closed: false,
+    close: async () => undefined,
+  };
+}
+
+describe.skipIf(process.platform !== "linux")("P2.2 slice 5 — the account reader faces pass through the coordinator to the broker boot options", () => {
+  it(
+    "accountOverviewReader + accountDetailReader ride the boot seam verbatim (the production assembly binds the account runtime)",
+    async () => {
+      const seenBootOptions: Array<Record<string, unknown>> = [];
+      const overviewReader = () => [];
+      const detailReader = async () => ({ kind: "revoked" as const, connection: {
+        connectionId: "c", providerId: "stripe", mode: "test" as const, displayName: "d", status: "revoked" as const,
+      } });
+      const coordinator = createPayswapBrokerCoordinator({
+        liveStateReader: liveStateOptedIn,
+        accountOverviewReader: overviewReader,
+        accountDetailReader: detailReader,
+        boot: async (options) => {
+          seenBootOptions.push(options as unknown as Record<string, unknown>);
+          return bootHarness();
+        },
+      });
+      activeCoordinators.push(coordinator);
+      await injectWith(coordinator, makeSurfaces());
+      expect(seenBootOptions.length).toBe(1);
+      expect(seenBootOptions[0]?.accountOverviewReader).toBe(overviewReader);
+      expect(seenBootOptions[0]?.accountDetailReader).toBe(detailReader);
+      await coordinator.close();
+    },
+    20000,
+  );
+
+  it(
+    "without the reader options the boot options carry neither face (the default: overview answers not_connected, detail absent)",
+    async () => {
+      const seenBootOptions: Array<Record<string, unknown>> = [];
+      const coordinator = createPayswapBrokerCoordinator({
+        liveStateReader: liveStateOptedIn,
+        boot: async (options) => {
+          seenBootOptions.push(options as unknown as Record<string, unknown>);
+          return bootHarness();
+        },
+      });
+      activeCoordinators.push(coordinator);
+      await injectWith(coordinator, makeSurfaces());
+      expect(seenBootOptions.length).toBe(1);
+      expect(seenBootOptions[0]?.accountOverviewReader).toBeUndefined();
+      expect(seenBootOptions[0]?.accountDetailReader).toBeUndefined();
+      await coordinator.close();
+    },
+    20000,
+  );
+});
