@@ -33,16 +33,29 @@ if [ "${ZCODE_E2E_KEYRING:-absent}" = "gnome-libsecret" ]; then
     export XDG_CURRENT_DESKTOP=GNOME
     # 显式 pin 后端（DE 探测的双保险 —— 开关与 XDG 探测同源同效）。
     export ZCODE_E2E_EXTRA_APP_ARGS="${ZCODE_E2E_EXTRA_APP_ARGS:-} --password-store=gnome-libsecret"
-    # 空口令 login keyring（CI 标准 recipe；stdin 为口令行）。
+    # 空口令 login keyring（CI 标准 recipe；stdin 为口令行）。--daemonize 的父进程
+    # 先退出、fork 出的子进程稍后才在总线上完成注册 —— 探测必须带界重试。
     printf "\n" | gnome-keyring-daemon --unlock --replace --components=secrets --daemonize
-    # 自证：Secret Service 必须真的在会话总线上 —— 缺席 = 腿配置失败（fail loud）。
-    if ! dbus-send --session --print-reply --dest=org.freedesktop.DBus \
-        /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null \
-        | grep -q "org.freedesktop.secrets"; then
-      echo "[desktop-e2e-entrypoint] FATAL: org.freedesktop.secrets not on the session bus after gnome-keyring-daemon start (gnome-libsecret leg)" >&2
+    # 自证（有界重试，至多 ~15s）：Secret Service 必须真的在会话总线上 ——
+    # 缺席 = 腿配置失败（fail loud，不静默退化成 fallback-only 腿）。
+    secrets_on_bus=0
+    for attempt in $(seq 1 30); do
+      if dbus-send --session --print-reply --dest=org.freedesktop.DBus \
+          /org/freedesktop/DBus org.freedesktop.DBus.ListNames 2>/dev/null \
+          | grep -q "org.freedesktop.secrets"; then
+        secrets_on_bus=1
+        break
+      fi
+      sleep 0.5
+    done
+    if [ "$secrets_on_bus" != "1" ]; then
+      echo "[desktop-e2e-entrypoint] FATAL: org.freedesktop.secrets not on the session bus ${attempt:-0}x0.5s after gnome-keyring-daemon start (gnome-libsecret leg)" >&2
+      echo "[desktop-e2e-entrypoint] diagnostic: current session-bus names:" >&2
+      dbus-send --session --print-reply --dest=org.freedesktop.DBus \
+          /org/freedesktop/DBus org.freedesktop.DBus.ListNames >&2 || true
       exit 1
     fi
-    echo "[desktop-e2e-entrypoint] secret service active: org.freedesktop.secrets on the session bus (gnome-libsecret leg)"
+    echo "[desktop-e2e-entrypoint] secret service active: org.freedesktop.secrets on the session bus (gnome-libsecret leg, attempt ${attempt})"
     pnpm --filter @zcode/desktop test:e2e ${EXTRA_WDIO_ARGS:-}
   '
 else
