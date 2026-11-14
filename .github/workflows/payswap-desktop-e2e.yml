@@ -17,7 +17,7 @@
 # volume, replay-isolated networking (--network none; the PaySwap/browser
 # specs need no external network), and spec selection via ZCODE_E2E_SPEC.
 #
-# The battery (10 specs):
+# The battery (11 specs):
 # - payswap-approval-card: the D12.7 real-window approval rows (channel
 #   fail-closed, T3 live flip, the full card flow, N15 replay, deny +
 #   wrong-secret, forged-sender, T7 item 3 card-face arm).
@@ -25,6 +25,17 @@
 #   S1 Class-A surface through the real plugin-ui sandbox guest → T6
 #   declared-boolean option → T2 opt-in → T4 disable → T5 uninstall →
 #   restore (the marketplace pipeline end to end).
+# - payswap-connection-ui (P2, ADR-P2-2 Decision 4 + Gate E2 UI clause): the
+#   real-window connection journey through the real renderer face, real
+#   ipcMain and the real store files — section reachability + fail-closed
+#   malformed_request, validation_failed by code with secret single-flight,
+#   the Gate E2 fallback-only typed refusal (storage-unavailable environments
+#   prove the clause itself and honestly skip the storage arms), connected
+#   with at-rest ciphertext checks, the refresh closed set (offline refused /
+#   expired / verified), revoke delete-local-only, and the corrupted-key
+#   restart → app-ready fail-safe arm. Fake test secrets only; the refresh
+#   closed set accepts the offline outcome, so the spec is replay-isolated
+#   (--network none) compatible.
 # - the eight existing Browser specs (the E3-acceptance preservation clause:
 #   "the Browser battery unchanged").
 name: payswap-desktop-e2e
@@ -85,6 +96,7 @@ jobs:
           E2E_SPEC: >-
             ./test/e2e/payswap-approval-card.test.ts,
             ./test/e2e/payswap-plugin-lifecycle.test.ts,
+            ./test/e2e/payswap-connection-ui.test.ts,
             ./test/e2e/browser-empty-state-deferred-guest.test.ts,
             ./test/e2e/browser-human-viewport-preference.test.ts,
             ./test/e2e/browser-open-external-file-url.test.ts,
