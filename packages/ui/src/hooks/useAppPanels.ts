@@ -367,6 +367,17 @@ export function useAppPanels(options: {
     const collapsed =
       getSidePaneCollapsedPreference(restored, sidePaneOwnerIdRef.current) ??
       restored.isSidePaneCollapsed;
+    // 修复原因（CI run 43566789058 机制定位）：弹层 mounted→unmounted 观测流证明
+    // 浏览器面板在打开 ~800ms 后被折叠（prompt 层卸载 + 面板内元素不可交互双失败
+    // 同源）。本效应与 scope-sync 效应是折叠的两个入口 —— 决策入参现在走 lifecycle
+    // 通道落盘（普通 debug 级生产 no-op）。
+    logger.lifecycle.info("[App] side pane memory-key effect applied", {
+      memoryKey: sidePaneMemoryKey,
+      previousKey,
+      collapsed: collapsed ?? null,
+      restoredActiveTabId: restored.sidePaneState?.activeTabId ?? null,
+      restoredTabCount: restored.sidePaneState?.tabs.length ?? 0,
+    });
     setIsSidePaneCollapsed(collapsed);
     commitSidePaneState(() => restored.sidePaneState);
   }, [commitSidePaneState, sidePaneMemoryKey]);
@@ -392,7 +403,9 @@ export function useAppPanels(options: {
         collapsedPreference,
       );
       setIsSidePaneCollapsed(resolved.isSidePaneCollapsed);
-      logger.debug("[App] 同步对话右侧面板 scope", {
+      // 修复原因（CI run 43566789058 机制定位）：scope-sync 效应是面板折叠的另一入口
+      // —— 决策日志从 debug（生产 no-op）升 lifecycle 落盘。
+      logger.lifecycle.info("[App] 同步对话右侧面板 scope", {
         activeTabId: resolved.sidePaneState?.activeTabId ?? null,
         activeTaskId,
         isSidePaneCollapsed: resolved.isSidePaneCollapsed,
