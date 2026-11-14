@@ -293,7 +293,7 @@ import {
   getPluginSandboxHost,
   installPluginSandboxHost,
 } from "./pluginSandbox/index.js";
-import { installDesktopPayswapApproval } from "./payswap/index.js";
+import { installDesktopPayswapApproval, installDesktopPayswapConnections } from "./payswap/index.js";
 
 registerLocalMediaPreviewScheme(protocol, [
   PLUGIN_SANDBOX_PRIVILEGED_SCHEME,
@@ -2174,6 +2174,22 @@ app.whenReady().then(async () => {
     getMainWindowFrameUrl: () =>
       getApplicationWindowsExcludingCuaIndicator()[0]?.webContents.getURL() ?? "",
   });
+  // PaySwap P2.2 账户连接通道（ADR-P2-2 Decision 4）：受监督账户运行时（slice 6）
+  // + 连接 IPC（slice 7）的入口装配。注册无 boot 副作用（不触键 store、不装配
+  // runtime —— 首请求/app-ready 预热才触达）；通道无条件注册是安全的（三检
+  // fail-closed，不可信发送者 typed unauthorized_origin，载荷不解析）。预热在设置
+  // 引导（setDataBaseDir）之后进行 —— 键文件路径解析依赖 CLI 数据根（ADR-P2-2
+  // 附录 C pin）。连接 UI 住设置页 payswap 分区（桌面专属）。
+  const payswapConnectionsInstallation = installDesktopPayswapConnections({
+    getMainWindowFrameUrl: () =>
+      getApplicationWindowsExcludingCuaIndicator()[0]?.webContents.getURL() ?? "",
+    onWarmupError: (error) => {
+      logger.warn("[payswap] connection key warmup failed (fail-safe, empty env):", error);
+    },
+    onInternalError: (error) => {
+      logger.warn("[payswap] connection channel internal error:", error);
+    },
+  });
   // Bootstrap: 从设置文件读取自定义数据目录，在所有 host 进程启动前生效
   let loadedBootstrapLocale = false;
   let bootstrapSettings: AppSettings | undefined;
@@ -2224,6 +2240,13 @@ app.whenReady().then(async () => {
   } catch {
     // 读取失败不影响启动，使用默认 homedir
   }
+
+  // PaySwap P2.2 app-ready 预热（ADR-P2-2 Decision 2；accountWarmup 法则 1/2）：
+  // 现读键 store 组装 ZCODE_PAYSWAP_PSP_KEY 的进程内 env 视图，结果不缓存。
+  // fail-safe：safeStorage 不可用/解包失败 → 空集 env + 上报，永不阻断启动；
+  // 服务面对 payswap:psp:* 键 typed 拒绝（Gate E2 —— 连接 UI 按 code 呈现）。
+  // 必须在 setDataBaseDir 之后（键文件路径的解析基准 —— 上方设置引导块）。
+  void payswapConnectionsInstallation.runtime.warmup();
 
   // scheduler 也会打开 tasks-index；等 Host 完成统一准备，避免在启动页出现前抢先迁移。
   configureDatabaseStartupQuit(() => {

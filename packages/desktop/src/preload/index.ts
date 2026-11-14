@@ -105,6 +105,7 @@ import {
 import {
   PAYSWAP_DESKTOP_APPROVAL_IPC_CHANNEL,
   PAYSWAP_DESKTOP_CARD_CHANNEL,
+  PAYSWAP_DESKTOP_CONNECTION_IPC_CHANNEL,
 } from "@zcode/shared/payswap";
 import { createOAuthCallbackHandler } from "./oauthCallbackBridge.js";
 
@@ -326,6 +327,13 @@ contextBridge.exposeInMainWorld("zcode", {
     ipcRenderer.on(PAYSWAP_DESKTOP_CARD_CHANNEL, handler);
     return () => ipcRenderer.removeListener(PAYSWAP_DESKTOP_CARD_CHANNEL, handler);
   },
+  /**
+   * PaySwap P2.2 账户连接 RPC（ADR-P2-2 Decision 4）：结构化透传 —— 三检/闭集
+   * 法则在 desktop main 侧执法；preload 不持有任何判定。operatorSecret 只在
+   * connect 请求里上行（renderer → main 是它的唯一必经边界）。
+   */
+  payswapConnectionRpc: (request: unknown): Promise<unknown> =>
+    ipcRenderer.invoke(PAYSWAP_DESKTOP_CONNECTION_IPC_CHANNEL, request),
   isDockerAvailable: (): Promise<boolean> => ipcRenderer.invoke(PlatformChannels.IsDockerAvailable),
   listWSLDistros: () => ipcRenderer.invoke(PlatformChannels.ListWSLDistros),
   listDockerContainers: () => ipcRenderer.invoke(PlatformChannels.ListDockerContainers),

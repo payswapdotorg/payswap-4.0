@@ -1551,6 +1551,57 @@ const enUS: Record<string, string> = {
   "payswap.card.recipient": "Recipient",
   "payswap.card.purpose": "Purpose",
   "payswap.card.fees": "Max fees",
+  "settings.payswap.title": "Payment connections",
+  "payswap.connections.description":
+    "Connect payment provider accounts for financial workspaces. Secrets are wrapped by the OS keychain and never leave this device's main process.",
+  "payswap.connections.unavailable": "Payment connections are available in the desktop app.",
+  "payswap.connections.providerLabel": "Provider",
+  "payswap.connections.provider.stripe": "Stripe",
+  "payswap.connections.secretLabel": "Secret key",
+  "payswap.connections.secretPlaceholder": "sk_test_… or rk_test_… (restricted key preferred)",
+  "payswap.connections.secretHint":
+    "Restricted keys are preferred. The key is verified against the provider before the connection is trusted.",
+  "payswap.connections.displayNameLabel": "Display name (optional)",
+  "payswap.connections.displayNamePlaceholder": "e.g. Main Stripe account",
+  "payswap.connections.connect": "Connect",
+  "payswap.connections.connecting": "Connecting…",
+  "payswap.connections.listTitle": "Connected accounts",
+  "payswap.connections.listLoading": "Loading connections…",
+  "payswap.connections.listEmpty": "No payment accounts connected yet.",
+  "payswap.connections.columnName": "Name",
+  "payswap.connections.columnProvider": "Provider",
+  "payswap.connections.columnMode": "Mode",
+  "payswap.connections.columnStatus": "Status",
+  "payswap.connections.columnActions": "Actions",
+  "payswap.connections.actionRefresh": "Refresh evidence",
+  "payswap.connections.actionRevoke": "Revoke",
+  "payswap.connections.status.connected": "Connected",
+  "payswap.connections.status.expired": "Expired",
+  "payswap.connections.status.revoked": "Revoked",
+  "payswap.connections.status.unknown": "Unknown",
+  "payswap.connections.mode.test": "Test",
+  "payswap.connections.mode.live": "Live",
+  "payswap.connections.mode.unknown": "Unknown",
+  "payswap.connections.result.connected": "Account connected.",
+  "payswap.connections.result.verified": "Credentials verified with the provider.",
+  "payswap.connections.result.expired":
+    "The provider rejected these credentials; the connection is marked expired.",
+  "payswap.connections.result.revoked":
+    "Connection revoked. The locally stored secret was deleted.",
+  "payswap.connections.result.unexpected":
+    "The connection result could not be presented. Try again.",
+  "payswap.connections.refusal.validation_failed":
+    "The secret key format does not match the provider's expected format.",
+  "payswap.connections.refusal.unsupported_provider": "This provider is not supported yet.",
+  "payswap.connections.refusal.unknown_connection": "This connection no longer exists.",
+  "payswap.connections.refusal.read_back_unavailable":
+    "The provider could not be reached to verify the credentials. The connection status is unchanged.",
+  "payswap.connections.refusal.secure_storage_unavailable":
+    "Secure credential storage is unavailable on this device, so no payment secret can be stored. Enable the OS keychain (safeStorage) and try again.",
+  "payswap.connections.channel_error.malformed_request":
+    "The request was rejected before it reached the connection service.",
+  "payswap.connections.channel_error.internal_error":
+    "The connection service reported an internal error.",
   "browser.title": "Browser",
   "browser.addressPlaceholder": "Enter a URL and press Enter",
   "browser.permission.promptAriaLabel": "Site permission request",

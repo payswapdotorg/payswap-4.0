@@ -1,0 +1,404 @@
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import {
+  TID_SETTINGS_PAGE,
+  TID_SETTINGS_SECTION_NAV,
+  TID_TASK_SETTINGS_BUTTON,
+  testId,
+} from "@zcode/shared/test-ids";
+import {
+  DEFAULT_WORKSPACE,
+  clearAppData,
+  getE2EAppDataPaths,
+  waitForDefaultWorkspaceReady,
+} from "./helpers/desktop-app.js";
+import { sel } from "./helpers/selectors.js";
+import { skipOccupationOnboardingIfPresent } from "./helpers/occupation-onboarding.js";
+import { restartIntoWorkspacePreservingProfile } from "./helpers/model-provider-restart-runtime.js";
+
+/** PSP 键文件名（desktop-payswap pspCredentialKeyStore 的路径 pin；单一事实源在
+ *  desktop main —— E2E 侧按契约字面引用，改名时本臂 fail-loud）。 */
+const PAYSWAP_PSP_KEY_STORE_FILE_NAME = "payswap-psp-safe-storage-key";
+
+/**
+ * P2.2 slice 8 —— 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 的入口接线
+ * 证明；D12.7 纪律「入口接线随活的窗口证明」的 run 半；Gate E2 的 E2E 条款
+ * 「connecting an account with only the fallback available refuses; typed error
+ * surfaced in the connection UI」）。
+ *
+ * 覆盖行（法则级行已在 bootstrap/desktop 工程电池；本套件是真实窗口/真实
+ * ipcMain/真实 renderer UI/真实 store 文件的运行时证明）：
+ * 1. 分区可达 + 通道注册 fail-closed：真实 renderer 经 preload 面 invoke ——
+ *    list 直达（ok:true 数组）；畸形载荷 → ok:false malformed_request（载荷
+ *    不达服务）。
+ * 2. validation_failed 呈现按 code：格式非法秘密 → notice data-notice-code =
+ *    validation_failed；秘密单发清空；列表零行。
+ * 3. 首次合法 connect 的闭集结局（环境自适应，双分支各自 lawful）：
+ *    - 存储不可用环境（headless Linux safeStorage 缺席 = 「only the fallback
+ *      available」）：typed PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE 呈现在连接
+ *      UI（Gate E2 E2E 条款本体）；at-rest 无 PSP 密文、无连接记录（拒绝先于
+ *      记录写）。后续 happy-path 行 this.skip()（环境事实，诚实跳过）。
+ *    - 存储可用环境：connected → 行 4-7。
+ * 4. happy path：连接行（connected/test）+ at-rest 密文检查（记录无明文、
+ *    凭据 store 含 connectionId 无明文）。
+ * 5. refresh 闭集结局：read_back_unavailable（离线）/ expired（假密钥真 401）/
+ *    verified —— 三者皆 lawful；断言 UI 呈现与状态一致性（refused → 状态
+ *    不变；expired → 翻牌）。
+ * 6. revoke：终态 revoked + at-rest 本地秘密删除（delete-local-only）。
+ * 7. Gate E2 行（存储可用环境的确定性臂）：损坏键文件 + 真实重启 → app-ready
+ *    预热 fail-safe（解包失败 → 空集 env）→ connect → typed 存储 refusal 呈现
+ *    在 UI；at-rest 无新记录/新密文；既有记录仍可列表（readers 诚实，键故障
+ *    不吞数据面）。
+ */
+
+const TID_SECTION = "payswap-connections-section";
+const TID_SECRET_INPUT = "payswap-connect-secret";
+const TID_DISPLAY_NAME_INPUT = "payswap-connect-display-name";
+const TID_SUBMIT = "payswap-connect-submit";
+const TID_NOTICE = "payswap-connection-notice";
+const TID_ROW = "payswap-connection-row";
+const TID_ROW_REFRESH = "payswap-connection-refresh";
+const TID_ROW_REVOKE = "payswap-connection-revoke";
+const TID_LIST_EMPTY = "payswap-connection-list-empty";
+
+const STORAGE_REFUSAL_CODE = "PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE";
+/** 格式合法的假 test 密钥（formatCheck 通过；最终权威是 provider read-back）。 */
+const VALID_FORMAT_TEST_SECRET = `sk_test_${"e5f6a7b8".repeat(6)}`;
+const INVALID_FORMAT_SECRET = "not-a-stripe-key";
+
+const paths = getE2EAppDataPaths();
+const KEY_STORE_FILE = join(paths.appDataDir, PAYSWAP_PSP_KEY_STORE_FILE_NAME);
+const CONNECTIONS_STORE_FILE = join(paths.appDataDir, "payswap-connections.json");
+const CREDENTIALS_STORE_FILE = join(paths.appDataDir, "credentials.json");
+
+/** 环境事实登记（行 3 的分支裁决；后续行按它诚实跳过）。 */
+let storageUnavailableInEnv = false;
+
+interface RpcResponse {
+  ok: boolean;
+  code?: string;
+  op?: string;
+  result?: unknown;
+}
+
+async function invokeFromRenderer<T = RpcResponse>(payload: unknown): Promise<T> {
+  return browser.execute(
+    (bridgePayload: unknown) =>
+      (
+        window as {
+          zcode?: {
+            payswapConnectionRpc?: (input: unknown) => Promise<unknown>;
+          };
+        }
+      ).zcode?.payswapConnectionRpc?.(bridgePayload),
+    payload,
+  ) as Promise<T>;
+}
+
+async function clickVisibleTestId(currentTestId: string, timeoutMsg: string): Promise<void> {
+  await browser.waitUntil(
+    async () => {
+      const result = (await browser.execute(
+        (targetTestId: string) => {
+          const element = document.querySelector<HTMLElement>(`[data-testid="${targetTestId}"]`);
+          if (!element) return false;
+          const style = window.getComputedStyle(element);
+          if (style.display === "none" || style.visibility === "hidden") return false;
+          if (element.getClientRects().length === 0) return false;
+          element.click();
+          return true;
+        },
+        currentTestId,
+      )) as boolean;
+      return result;
+    },
+    { timeout: 15_000, timeoutMsg },
+  );
+}
+
+async function openPayswapSettingsSection(): Promise<void> {
+  await browser.keys("Escape");
+  await browser.pause(150);
+  const settingsPage = $(sel(TID_SETTINGS_PAGE));
+  if (!(await settingsPage.isDisplayed().catch(() => false))) {
+    await clickVisibleTestId(TID_TASK_SETTINGS_BUTTON, "没有找到设置入口按钮");
+    await settingsPage.waitForDisplayed({ timeout: 15_000 });
+  }
+  await clickVisibleTestId(
+    testId(TID_SETTINGS_SECTION_NAV, "payswap"),
+    "设置页没有支付连接分区入口",
+  );
+  await $(sel(TID_SECTION)).waitForDisplayed({ timeout: 15_000 });
+}
+
+async function submitConnect(secret: string, displayName?: string): Promise<void> {
+  await $(sel(TID_SECRET_INPUT)).waitForDisplayed({ timeout: 10_000 });
+  await $(sel(TID_SECRET_INPUT)).setValue(secret);
+  if (displayName !== undefined) {
+    await $(sel(TID_DISPLAY_NAME_INPUT)).setValue(displayName);
+  }
+  await clickVisibleTestId(TID_SUBMIT, "没有找到连接提交按钮");
+}
+
+interface NoticeState {
+  key: string;
+  code: string;
+  tone: string;
+}
+
+async function waitForNotice(predicate: (notice: NoticeState) => boolean, timeoutMsg: string): Promise<NoticeState> {
+  await browser.waitUntil(
+    async () => {
+      const notice = $(sel(TID_NOTICE));
+      if (!(await notice.isExisting().catch(() => false))) return false;
+      const candidate: NoticeState = {
+        key: (await notice.getAttribute("data-notice-key")) ?? "",
+        code: (await notice.getAttribute("data-notice-code")) ?? "",
+        tone: (await notice.getAttribute("data-notice-tone")) ?? "",
+      };
+      return predicate(candidate);
+    },
+    { timeout: 20_000, timeoutMsg },
+  );
+  // waitUntil 成功后重读（闭集判据已满足，此处取最终呈现态）。
+  const notice = $(sel(TID_NOTICE));
+  return {
+    key: (await notice.getAttribute("data-notice-key")) ?? "",
+    code: (await notice.getAttribute("data-notice-code")) ?? "",
+    tone: (await notice.getAttribute("data-notice-tone")) ?? "",
+  };
+}
+
+async function rowIds(): Promise<string[]> {
+  const rows = await $$(`[data-testid="${TID_ROW}"]`);
+  const ids: string[] = [];
+  for (const row of rows) {
+    ids.push((await row.getAttribute("data-connection-id")) ?? "");
+  }
+  return ids;
+}
+
+async function readTextIfExists(path: string): Promise<string | null> {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
+async function firstConnectionRowId(): Promise<string> {
+  const ids = await rowIds();
+  const first = ids[0];
+  if (!first) throw new Error("连接列表应至少有一行");
+  return first;
+}
+
+describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2 UI 条款）", () => {
+  before(async function () {
+    // 冷启动 + 延迟静态服务下工作区就绪可超过 60s（批准卡臂同款宽限）。
+    this.timeout(180_000);
+    await waitForDefaultWorkspaceReady(120_000);
+    await skipOccupationOnboardingIfPresent();
+  });
+
+  after(async () => {
+    await browser.electron.restoreAllMocks();
+    await clearAppData();
+  });
+
+  it("分区可达 + 通道注册 fail-closed：list 直达；畸形 → malformed_request", async () => {
+    await openPayswapSettingsSection();
+
+    const listed = await invokeFromRenderer({ op: "list" });
+    expect(listed.ok).toBe(true);
+    expect(Array.isArray(listed.result)).toBe(true);
+
+    const malformed = await invokeFromRenderer({ totally: "not-a-connection-request" });
+    expect(malformed.ok).toBe(false);
+    expect(malformed.code).toBe("malformed_request");
+  });
+
+  it("validation_failed 按 code 呈现；秘密单发清空；列表零行", async () => {
+    await submitConnect(INVALID_FORMAT_SECRET);
+
+    const notice = await waitForNotice(
+      (candidate) => candidate.code === "validation_failed",
+      "格式非法秘密应呈现 validation_failed typed 拒绝",
+    );
+    expect(notice.code).toBe("validation_failed");
+
+    // 秘密单发（法则 3）：提交后输入清空，永不复显。
+    const secretValue = await $(sel(TID_SECRET_INPUT)).getValue();
+    expect(String(secretValue)).toBe("");
+
+    // 拒绝先于记录：列表保持零行（空态可见）。
+    await $(sel(TID_LIST_EMPTY)).waitForDisplayed({ timeout: 10_000 });
+  });
+
+  it("首次合法 connect：闭集结局按 law 呈现（Gate E2 fallback-only 行或 connected）", async () => {
+    await submitConnect(VALID_FORMAT_TEST_SECRET, "E2E Stripe");
+
+    const notice = await waitForNotice(
+      (candidate) =>
+        candidate.key === "payswap.connections.result.connected" ||
+        (candidate.key === "payswap.connections.refusal.secure_storage_unavailable" &&
+          candidate.code === STORAGE_REFUSAL_CODE),
+      "首次合法 connect 应呈现闭集结局（存储 typed 拒绝或 connected）",
+    );
+
+    if (notice.code === STORAGE_REFUSAL_CODE) {
+      // 「only the fallback available refuses」—— Gate E2 的 E2E 条款本体：
+      // typed error surfaced in the connection UI。
+      storageUnavailableInEnv = true;
+      // at-rest：拒绝先于记录写 —— 无 PSP 密文、无连接记录。
+      const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
+      if (credentials !== null) {
+        expect(credentials).not.toContain("payswap:psp:");
+        expect(credentials).not.toContain(VALID_FORMAT_TEST_SECRET);
+      }
+      const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
+      if (connections !== null) {
+        expect(connections).not.toContain("stripe");
+      }
+      return;
+    }
+
+    expect(notice.tone).toBe("positive");
+    // connected：列表出现 connected/test 行（行 4 深检）。
+    await browser.waitUntil(
+      async () => (await rowIds()).length === 1,
+      { timeout: 15_000, timeoutMsg: "connected 后列表应恰有一行" },
+    );
+  });
+
+  it("happy path：connected 行 + at-rest 密文（记录无明文；凭据 store 含 id 无明文）", async function () {
+    if (storageUnavailableInEnv) {
+      this.skip();
+      return;
+    }
+    const connectionId = await firstConnectionRowId();
+    const row = $(`[data-testid="${TID_ROW}"][data-connection-id="${connectionId}"]`);
+    await row.waitForDisplayed({ timeout: 10_000 });
+    expect(await row.getAttribute("data-connection-status")).toBe("connected");
+    expect(await row.getAttribute("data-mode")).toBe("test");
+    const name = await $('[data-testid="payswap-connection-name"]').getText();
+    expect(name).toContain("E2E Stripe");
+
+    // at-rest：连接记录无秘密；凭据 store 是密文（含 connectionId、不含明文）。
+    const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
+    expect(connections).not.toBeNull();
+    expect(connections).toContain(connectionId);
+    expect(connections).not.toContain(VALID_FORMAT_TEST_SECRET);
+    const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
+    expect(credentials).not.toBeNull();
+    expect(credentials).toContain(connectionId);
+    expect(credentials).not.toContain(VALID_FORMAT_TEST_SECRET);
+  });
+
+  it("refresh：闭集结局呈现 + 状态一致（read_back_unavailable 不变 / expired 翻牌 / verified）", async function () {
+    if (storageUnavailableInEnv) {
+      this.skip();
+      return;
+    }
+    const connectionId = await firstConnectionRowId();
+    await clickVisibleTestId(TID_ROW_REFRESH, "没有找到刷新证据按钮");
+
+    const notice = await waitForNotice(
+      (candidate) =>
+        (candidate.key === "payswap.connections.refusal.read_back_unavailable" &&
+          candidate.code === "read_back_unavailable") ||
+        candidate.key === "payswap.connections.result.expired" ||
+        candidate.key === "payswap.connections.result.verified",
+      "refresh 应呈现闭集结局（refused 读回不可用 / expired / verified）",
+    );
+    const row = $(`[data-testid="${TID_ROW}"][data-connection-id="${connectionId}"]`);
+    if (notice.key === "payswap.connections.refusal.read_back_unavailable") {
+      // unknown ≠ expired：状态不变（fail-closed 不猜）。
+      expect(await row.getAttribute("data-connection-status")).toBe("connected");
+    } else if (notice.key === "payswap.connections.result.expired") {
+      // expired：provider 拒绝凭据（真 401）—— 状态翻牌。
+      await browser.waitUntil(
+        async () => (await row.getAttribute("data-connection-status")) === "expired",
+        { timeout: 15_000, timeoutMsg: "expired 结局后行状态应翻为 expired" },
+      );
+    } else {
+      // verified：读回认证（离线 mock 之外的合法结局）。
+      expect(await row.getAttribute("data-connection-status")).toBe("connected");
+    }
+  });
+
+  it("revoke：终态 revoked + at-rest 本地秘密删除", async function () {
+    if (storageUnavailableInEnv) {
+      this.skip();
+      return;
+    }
+    const connectionId = await firstConnectionRowId();
+    await clickVisibleTestId(TID_ROW_REVOKE, "没有找到撤销按钮");
+
+    const notice = await waitForNotice(
+      (candidate) => candidate.key === "payswap.connections.result.revoked",
+      "revoke 应呈现终态（muted）",
+    );
+    expect(notice.tone).toBe("muted");
+
+    const row = $(`[data-testid="${TID_ROW}"][data-connection-id="${connectionId}"]`);
+    await browser.waitUntil(
+      async () => (await row.getAttribute("data-connection-status")) === "revoked",
+      { timeout: 15_000, timeoutMsg: "revoke 后行状态应为 revoked" },
+    );
+
+    // at-rest：delete-local-only —— 凭据 store 中该连接的 PSP 键已删除；记录仍在（终态）。
+    const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
+    if (credentials !== null) {
+      expect(credentials).not.toContain(connectionId);
+    }
+    const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
+    expect(connections).toContain(connectionId);
+    expect(connections).toContain('"revoked"');
+  });
+
+  it("Gate E2 行（存储可用环境）：损坏键 + 真实重启 → typed 存储 refusal 呈现；既有记录仍可列表", async function () {
+    if (storageUnavailableInEnv) {
+      // 该环境的 Gate E2 行已在「首次合法 connect」行本体证明（环境只有 fallback）。
+      this.skip();
+      return;
+    }
+    const idsBeforeRestart = await rowIds();
+    expect(idsBeforeRestart.length).toBeGreaterThan(0);
+
+    // 损坏键文件（safeStorage 包裹产物之外的任意字节）→ 重启后 app-ready 预热
+    // 解包失败（typed unwrap 错误）→ fail-safe 空集 env（accountWarmup 法则 2）。
+    await restartIntoWorkspacePreservingProfile(DEFAULT_WORKSPACE, {
+      afterElectronProcessExit: async () => {
+        await writeFile(KEY_STORE_FILE, "corrupted-key-material-not-a-safestorage-blob", {
+          mode: 0o600,
+        });
+      },
+    });
+
+    await openPayswapSettingsSection();
+    // 键故障不吞数据面：既有记录仍可列表（readers 诚实）。
+    await browser.waitUntil(
+      async () => (await rowIds()).length === idsBeforeRestart.length,
+      { timeout: 15_000, timeoutMsg: "键故障后既有连接记录仍应可列表" },
+    );
+
+    await submitConnect(VALID_FORMAT_TEST_SECRET, "E2 Stripe Fallback");
+    const notice = await waitForNotice(
+      (candidate) =>
+        candidate.key === "payswap.connections.refusal.secure_storage_unavailable" &&
+        candidate.code === STORAGE_REFUSAL_CODE,
+      "损坏键下 connect 应呈现 Gate E2 typed 存储 refusal（E2E 条款）",
+    );
+    expect(notice.code).toBe(STORAGE_REFUSAL_CODE);
+    expect(notice.tone).toBe("danger");
+
+    // at-rest：拒绝先于记录写 —— 无新连接记录、无新 PSP 密文。
+    const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
+    expect(connections).not.toContain("E2E Stripe Fallback");
+    const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
+    if (credentials !== null) {
+      expect(credentials).not.toContain("payswap:psp:");
+    }
+  });
+});

@@ -103,3 +103,17 @@ P2.2 slice 7 增补（ADR-P2-2 Decision 4 + Addendum —— 连接 RPC 通道）
   随连接 UI 与其 desktop Browser E2E 臂落地（D12.7 纪律；本切片交付装配调用与
   法则级/装配级证明）。桥入口接线（spawn 端口转移 + 窗口 host 透明中继 + agent
   侧 stub）按 ADR-P2-2 Addendum B 的传输细化实施（下一切片）。
+
+P2.2 slice 8 增补（连接 UI 的入口接线 + renderer/preload 面 —— D12.7「入口接线
+随活的窗口证明」的兑现半）：`main/index.ts` 在批准装配旁调用
+`installDesktopPayswapConnections`（同一 `getMainWindowFrameUrl` 现读来源），
+app-ready 预热在设置引导（`setDataBaseDir`）**之后**进行 —— 键文件路径解析依赖
+CLI 数据根（Addendum C pin），预热结果不缓存（accountWarmup 法则 1）、fail-safe
+永不阻断启动（法则 2）。renderer 面：preload 暴露
+`payswapConnectionRpc`（`PAYSWAP_DESKTOP_CONNECTION_IPC_CHANNEL` 的结构化透传，
+不持任何判定）→ `IPlatformService.payswapConnectionRpc`（shared 类型面）→
+`desktopPlatform` 装配 → 设置页 `payswap` 分区（桌面专属 —— 连接 RPC 面只住
+desktop main）消费（`@zcode/ui/payswap/PayswapConnectionsSection`；呈现法则住
+`connectionUiPresentation.ts`，电池在 packages/ui/test）。不变量不变：三检/
+闭集/typed-refusal-作数据/秘密单向性全部住 slice 7 的法则（零改动）；slice 8
+只交付接线与呈现面。

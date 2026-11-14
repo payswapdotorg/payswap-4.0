@@ -58,6 +58,11 @@ export function createDesktopPlatform(options: {
     payswapResolveApproval: (payload) =>
       window.zcode.payswapResolveApproval?.(payload) ?? Promise.reject(new Error("unavailable")),
     onPayswapCard: (handler) => window.zcode.onPayswapCard?.(handler) ?? (() => {}),
+    // PaySwap P2.2 账户连接 RPC（ADR-P2-2 Decision 4）：preload 桥的结构化透传 ——
+    // 三检/闭集法则在 desktop main 侧执法，renderer 只提交请求与消费响应闭集。
+    payswapConnectionRpc: (request) =>
+      window.zcode.payswapConnectionRpc?.(request) ??
+      Promise.reject(new Error("unavailable")),
     disposeRemoteSession: (sessionId) => window.zcode.disposeRemoteSession(sessionId),
     isDockerAvailable: () => window.zcode.isDockerAvailable(),
     listWSLDistros: () => window.zcode.listWSLDistros(),

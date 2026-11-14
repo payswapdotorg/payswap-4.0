@@ -1,5 +1,6 @@
 import {
   Archive,
+  CreditCard,
   Folders,
   Monitor,
   Moon,
@@ -76,6 +77,14 @@ const BASE_SETTINGS_SECTIONS: SettingsSectionDefinition[] = [
     id: "modelProvider",
     icon: Package,
     titleId: "settings.modelProviderTitle",
+    groupId: "basics",
+  },
+  // PaySwap 支付连接（P2.2：平台 shell 的账户连接/onboarding 面 —— ADR-P2-2
+  // Decision 4 的 renderer 半；桌面端专属分区，见 DESKTOP_ONLY_SETTINGS_SECTIONS）。
+  {
+    id: "payswap",
+    icon: CreditCard,
+    titleId: "settings.payswap.title",
     groupId: "basics",
   },
   // 个性化（用户自定义指令）是 Agent 能力组的第一项：编辑 ~/.zcode/AGENTS.md，
@@ -256,7 +265,13 @@ export const SETTINGS_SECTION_GROUPS = BASE_SETTINGS_SECTION_GROUPS.map((group) 
 export type { SettingsSectionId };
 
 /** 依赖本机 Source Server 管理与设备连接的设置页，Web 与手机远控不显示。 */
-const DESKTOP_ONLY_SETTINGS_SECTIONS = new Set<SettingsSectionId>(["remoteDevices", "dataSync"]);
+const DESKTOP_ONLY_SETTINGS_SECTIONS = new Set<SettingsSectionId>([
+  "remoteDevices",
+  "dataSync",
+  // PaySwap 支付连接：连接 RPC 面只住 desktop main（ADR-P2-2 Decision 4 ——
+  // safeStorage/单写者运行时都在桌面拓扑）；Web/远控 renderer 无桥也无账户面。
+  "payswap",
+]);
 
 export function isSettingsSectionAvailable(
   section: SettingsSectionId,
