@@ -309,7 +309,13 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
     const row = $(`[data-testid="${TID_ROW}"][data-connection-id="${connectionId}"]`);
     await row.waitForDisplayed({ timeout: 10_000 });
     expect(await row.getAttribute("data-connection-status")).toBe("connected");
-    expect(await row.getAttribute("data-mode")).toBe("test");
+    // mode 徽章是行内的子元素（payswap-connection-mode 的 data-mode —— UI 契约：
+    // 行级只有 id/status 两属性；首跑即捕：本臂在存储可用腿首次真实执行，
+    // 行级 data-mode 查询是 slice 8 未曾运行的错误选择器，非 UI 契约）。
+    const mode = await $(
+      `[data-testid="${TID_ROW}"][data-connection-id="${connectionId}"] [data-testid="payswap-connection-mode"]`,
+    ).getAttribute("data-mode");
+    expect(mode).toBe("test");
     const name = await $('[data-testid="payswap-connection-name"]').getText();
     expect(name).toContain("E2E Stripe");
 
