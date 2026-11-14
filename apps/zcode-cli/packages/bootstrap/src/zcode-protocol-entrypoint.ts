@@ -3,7 +3,12 @@ import { createConfig, resolvePath } from "@zcode/adapters/config";
 import type { McpElicitationPort, McpNotificationPort } from "@zcode/contracts";
 import { createNodeModelSelectionFacade } from "@zcode/provider-node";
 import { createNodeLoggerFactory } from "@zcode/adapters/logging";
-import { createPayswapBrokerCoordinator } from "./payswap-broker/index.js";
+import { createPayswapBrokerCoordinator, createPayswapStdioBridgePort } from "./payswap-broker/index.js";
+import {
+  createPayswapReaderBridgeClient,
+  PAYSWAP_READER_BRIDGE_NOTIFICATION_METHOD,
+  ZCODE_PAYSWAP_READER_BRIDGE_ENV,
+} from "@zcode/shared/payswap";
 import {
   createMcpAdapterConnectionPool,
   createMcpTelemetryTracker,
@@ -14,6 +19,7 @@ import {
   zcodeProtocolNotifications,
   type ZCodeMcpResourceSample,
   type ZCodeMcpTelemetryEvent,
+  type ZCodeProtocolNotification,
 } from "@zcode/shared";
 import { createNodeSessionDataFiles, type SqliteSessionStore } from "@zcode/adapters/storage";
 import { traceContextToLogContext, createRootTraceContext } from "@zcode/contracts";
@@ -134,6 +140,10 @@ export async function runZCodeProtocolAgent(
 
   let sessionStore: SqliteSessionStore | undefined;
   let serverForCleanup: ZCodeProtocolAgentServer | undefined;
+  // P2.2 slice 9（ADR-P2-2 Addendum B）：reader 桥的 agent 侧半 —— 与上面各 owner 同款
+  // 「try 外声明、try 内赋值」纪律（finally 收口需要跨块可见）。
+  let payswapStdioBridge: ReturnType<typeof createPayswapStdioBridgePort> | undefined;
+  let payswapReaderBridgeClient: ReturnType<typeof createPayswapReaderBridgeClient> | undefined;
   let nodeReplBrowserBroker: NodeReplBrowserBroker | undefined;
   let officialCommandEndpoint: OfficialCommandEndpoint | undefined;
   let mcpConnectionPool: McpConnectionPool | undefined;
@@ -266,9 +276,38 @@ export async function runZCodeProtocolAgent(
     } | null = null;
     // PaySwap broker 协调器（进程级，Step 4）：lazy boot（首个受信 server 出现时）；
     // 观察者随 pool 的 adapter 工厂注入 —— 设置面 lease 与 session 工厂共享同一 pool。
+    //
+    // P2.2 slice 9（ADR-P2-2 Addendum B —— 桥入口接线的 agent 侧半）：spawn env 标记
+    // `ZCODE_PAYSWAP_READER_BRIDGE` 在活 → 构造 stdio 帧适配器 + reader 桥 stub，两个
+    // reader 面进协调器 options（桥法则 3：stub 的一切失败 = throw → §7.3 internal_error）；
+    // 标记缺席（headless CLI / 桥未建）→ reader 缺席 = 既有 fail-closed 缺省，拓扑不变。
+    // 出站 send 经 connection 晚绑定（协调器先于 connection 构造；stub 只在 dispatch 时
+    // 发帧，绑定完成前无消费者）。
+    const payswapBridgeSend: { send?: (notification: ZCodeProtocolNotification) => void } = {};
+    if ((options.env ?? process.env)[ZCODE_PAYSWAP_READER_BRIDGE_ENV] === "1") {
+      payswapStdioBridge = createPayswapStdioBridgePort({
+        send: (payload) =>
+          payswapBridgeSend.send?.({
+            method: PAYSWAP_READER_BRIDGE_NOTIFICATION_METHOD,
+            params: payload,
+          }),
+      });
+      payswapReaderBridgeClient = createPayswapReaderBridgeClient({
+        port: payswapStdioBridge.port,
+      });
+    }
+    const activePayswapReaderBridgeClient = payswapReaderBridgeClient;
+    const activePayswapStdioBridge = payswapStdioBridge;
     const payswapBrokerCoordinator = createPayswapBrokerCoordinator({
       env: options.env,
       workingDirectory: options.cwd,
+      ...(activePayswapReaderBridgeClient
+        ? {
+            accountOverviewReader: () => activePayswapReaderBridgeClient.accountOverviewReader(),
+            accountDetailReader: (connectionId: string) =>
+              activePayswapReaderBridgeClient.accountDetailReader(connectionId),
+          }
+        : {}),
     });
     mcpConnectionPool =
       configResult.config.features.mcp === false
@@ -399,8 +438,20 @@ export async function runZCodeProtocolAgent(
       logger,
       onTransportClosed: (error) => server.disconnectClient(error),
       output,
+      // P2.2 slice 9：reader 桥的 stdio 载波帧旁路串行队列（见 transport.ts 选项注 ——
+      // 生成请求 handler 内的工具执行等待桥响应，排队 = 死锁）。
+      ...(activePayswapStdioBridge
+        ? {
+            consumeNotification: (message) =>
+              activePayswapStdioBridge.consumeNotification(message),
+          }
+        : {}),
       takePostResponseBatch: (requestId) => server.takePostResponseBatch(requestId),
     });
+    // 晚绑定桥出站（见上方 payswapStdioBridge 构造注）：此刻起 stub 的 post 面向 connection。
+    if (activePayswapStdioBridge) {
+      payswapBridgeSend.send = (notification) => connection.send(notification);
+    }
     server.setNotificationSink((notification) => connection.send(notification));
     mcpResourceSink = (samples) =>
       connection.send({
@@ -439,6 +490,10 @@ export async function runZCodeProtocolAgent(
     throw error;
   } finally {
     options.lifecycle?.requestShutdown();
+    // P2.2 slice 9：reader 桥收口（幂等）—— stub 的 port_closed 拒绝在途呼叫，适配器
+    // 停止投递；桥法则 3/6 的入口侧落地。
+    payswapReaderBridgeClient?.dispose();
+    payswapStdioBridge?.dispose();
     await officialCommandEndpoint?.close().catch((error: unknown) => {
       logger.warn("Official command endpoint close failed", {
         error: error instanceof Error ? error.message : String(error),

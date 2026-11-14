@@ -1928,6 +1928,11 @@ function openUpdateStatusWindow() {
   });
 }
 
+// PaySwap P2.2 slice 9（ADR-P2-2 Addendum B）：窗口 host spawn 时的 reader 桥端口铸造器。
+// 模块级可空持有 —— spawn 接线（createWindowInstance 内）先于 whenReady 的连接装配
+// 定义，但只在窗口 spawn 时调用（装配完成后），可空判据 = 装配缺席时零行为变化。
+let mintPayswapReaderBridgePortForHost: (() => Electron.MessagePortMain | null) | null = null;
+
 function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
   const runtimeProcessEnvPreparation = takeRuntimeProcessEnvPreparation();
   const win = createWindow({
@@ -1979,6 +1984,11 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
           taskRealtimeBus,
           windowHostProcessMap,
           hostRunningTaskCountMap,
+          // P2.2 slice 9（ADR-P2-2 Addendum B）：reader 桥端口随 spawn 转移到窗口 host
+          // （中继 main 面）。装配未就绪/铸造失败 → 不转移（桥缺席 = fail-closed 缺省）。
+          ...(mintPayswapReaderBridgePortForHost
+            ? { mintPayswapReaderBridgePort: mintPayswapReaderBridgePortForHost }
+            : {}),
           onCuaOperationStateChanged: (source, event) =>
             windowsCuaOperationIndicator.handleState(source, event),
           onCuaOperationStateSourceExited: (source) =>
@@ -2190,6 +2200,10 @@ app.whenReady().then(async () => {
       logger.warn("[payswap] connection channel internal error:", error);
     },
   });
+  // P2.2 slice 9（ADR-P2-2 Addendum B）：连接装配持有受监督运行时 —— 窗口 host spawn
+  // 接线从这里取 reader 桥端口铸造器（每窗口 host 一个通道：port1 serve、port2 转移）。
+  mintPayswapReaderBridgePortForHost =
+    payswapConnectionsInstallation.mintReaderBridgePortForUtilityProcess;
   // Bootstrap: 从设置文件读取自定义数据目录，在所有 host 进程启动前生效
   let loadedBootstrapLocale = false;
   let bootstrapSettings: AppSettings | undefined;

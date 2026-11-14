@@ -23,7 +23,7 @@
  *   Browser E2E 臂落地（D12.7 纪律）。
  */
 
-import { BrowserWindow, ipcMain, safeStorage, webContents, type IpcMain } from "electron";
+import { BrowserWindow, ipcMain, safeStorage, webContents, type IpcMain, type MessagePortMain } from "electron";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -47,6 +47,7 @@ import {
   createPayswapDesktopAccountRuntime,
   type PayswapDesktopAccountRuntime,
 } from "./accountRuntimeWiring.js";
+import { createPayswapReaderBridgePortMinter } from "./accountReaderBridgeEntry.js";
 import {
   createPayswapPspKeyStore,
   PAYSWAP_PSP_KEY_STORE_FILE_NAME,
@@ -147,6 +148,13 @@ export interface PayswapDesktopConnectionsInstallation {
   runtime: PayswapDesktopAccountRuntime;
   /** 连接 IPC 注册（host + unregister）。 */
   registration: PayswapDesktopConnectionIpcRegistration;
+  /**
+   * P2.2 slice 9（ADR-P2-2 Addendum B）：为窗口 host spawn 铸造 reader 桥端口（每窗口
+   * host 一个通道 —— port1 serve、port2 转移；见 accountReaderBridgeEntry.ts）。铸造
+   * 失败返回 null（fail-safe，spawn 照常）。调用方：main/index.ts 的 spawnHostProcess
+   * 接线（mintPayswapReaderBridgePort 选项）。
+   */
+  mintReaderBridgePortForUtilityProcess(): MessagePortMain | null;
 }
 
 /**
@@ -198,5 +206,9 @@ export function installDesktopPayswapConnections(
       ? { onInternalError: options.onInternalError }
       : {}),
   });
-  return { runtime, registration };
+  return {
+    runtime,
+    registration,
+    mintReaderBridgePortForUtilityProcess: createPayswapReaderBridgePortMinter(runtime),
+  };
 }

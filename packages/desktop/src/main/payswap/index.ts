@@ -64,3 +64,11 @@ export {
   type PayswapDesktopAccountRuntime,
   type PayswapDesktopAccountRuntimeOptions,
 } from "./accountRuntimeWiring.js";
+// P2.2 slice 9（ADR-P2-2 Addendum B）：reader 桥端口铸造（spawn 转移的 main 侧半）。
+export {
+  adaptMessagePortMainToPayswapReaderBridgePort,
+  createPayswapReaderBridgePortMinter,
+  type PayswapReaderBridgeChannelPair,
+  type PayswapReaderBridgeMessagePortFace,
+  type PayswapReaderBridgeServePortFace,
+} from "./accountReaderBridgeEntry.js";

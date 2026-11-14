@@ -129,6 +129,8 @@ import {
   type ZCodeAutomationRunOutcome,
   type ModelSelection,
 } from "@zcode/shared";
+import { ZCODE_PAYSWAP_READER_BRIDGE_ENV } from "@zcode/shared/payswap";
+import { createPayswapReaderBridgeRelay } from "./payswapReaderBridgeRelay.js";
 import {
   parseHostIncomingMessageEvent,
   rejectUnavailableAttachedServicePort,
@@ -1214,6 +1216,18 @@ async function dispatchManualAutomationRun(params: {
 
 // Node warning 不是远端连接失败，改成结构化 warn，避免默认 stderr 被误染成 error。
 process.on("warning", (warning) => logger.warn(`${warning.name}: ${warning.message}`));
+
+// PaySwap P2.2 slice 9（ADR-P2-2 Addendum B）：账户 reader 桥的窗口 host 透明中继 ——
+// main 转移端口 ↔ agent stdio 通知帧的双向转发。零桥语义（不解析/不校验/不改写；
+// 法则住 shared-payswap 两端）。挂接面：parentPort 的 PayswapReaderBridgePort 消息
+// （main 面）+ createLocalServices 的 per-client tap（agent 面）；spawn env 可用性
+// 标记（ZCODE_PAYSWAP_READER_BRIDGE）由 isAvailable 现读。
+const payswapReaderBridgeRelay = createPayswapReaderBridgeRelay({
+  logger: {
+    info: (...args: unknown[]) => logger.info(...args),
+    warn: (...args: unknown[]) => logger.warn(...args),
+  },
+});
 
 registerHostNetworkTelemetry(parentPort);
 // Host 进程自身的 60 秒采样：一次读数两个出口——门控后写本地
@@ -2897,6 +2911,8 @@ async function disposeHostResources(reason: string): Promise<HostShutdownResult>
     hostSelfResourceTelemetry.stop();
     disposeLocalResourceTelemetry();
     disposeAttachedServicePorts();
+    // P2.2 slice 9：reader 桥中继收口（双向停止；幂等）。
+    payswapReaderBridgeRelay.dispose();
     windowHostControllerRuntime.dispose();
     for (const key of Array.from(cronRunSubscriptions.keys())) {
       disposeCronRunSubscription(key);
@@ -3077,6 +3093,18 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
   }
   if (msg.type === HostMessageTypes.NetworkCapture) {
     hostNetworkCapture.setCaptureId(msg.control.captureId);
+    return;
+  }
+  // P2.2 slice 9（ADR-P2-2 Addendum B）：main 随 spawn 转移的 reader 桥端口 —— 接管为
+  // 中继的 main 面（透明中继；端口缺席 = 桥缺席 = fail-closed 缺省，不阻断 host 初始化）。
+  if (msg.type === HostMessageTypes.PayswapReaderBridgePort) {
+    const readerBridgePort = e.ports[0];
+    if (!readerBridgePort) {
+      logger.error("payswap-reader-bridge-port message missing MessagePort");
+      return;
+    }
+    payswapReaderBridgeRelay.attachMainPort(readerBridgePort);
+    logger.info("[payswap-reader-bridge-relay] main port attached (reader bridge relay live)");
     return;
   }
   const port = e.ports[0];
@@ -4065,6 +4093,15 @@ parentPort.on("message", async (e: Electron.MessageEvent) => {
               hostApiNetworkTransport,
               resolveClientLanguage: () => applicationLocale,
               authorizeLocalMediaPreviewPath,
+              // P2.2 slice 9（ADR-P2-2 Addendum B）：reader 桥中继的 agent 侧挂接 —— 三个
+              // 泳道的每个新建 protocol client 都挂到中继；spawn env 可用性标记按中继
+              // main 端口现读（端口在活才注入 → agent 侧构造 stub；缺席 = fail-closed 缺省）。
+              onZCodeProtocolClient: (client) =>
+                payswapReaderBridgeRelay.attachProtocolClient(client),
+              agentSpawnEnv: (): Record<string, string> =>
+                payswapReaderBridgeRelay.isAvailable()
+                  ? { [ZCODE_PAYSWAP_READER_BRIDGE_ENV]: "1" }
+                  : {},
               // launch.md「The user's choice」：本机用户选择变化后，推给本窗口所有在线的远程 Host。
               forwardDynamicWorkflowUserMode: (mode) => {
                 void pushDynamicWorkflowUserModeToRemoteHosts(

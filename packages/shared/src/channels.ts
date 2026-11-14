@@ -681,6 +681,8 @@ export const HostMessageTypes = {
   ResourceUsageSnapshotRequest: "resource-usage-snapshot-request",
   ResourceUsageSnapshotCancel: "resource-usage-snapshot-cancel",
   NetworkCapture: "network-capture",
+  /** Main → 窗口 host：PaySwap 账户 reader 桥的 main 侧端口转移（P2.2 slice 9 / ADR-P2-2 Addendum B —— 随独立 spawn 消息携带一个 MessagePort；host 侧适配为中继的 main 面）。 */
+  PayswapReaderBridgePort: "payswap-reader-bridge-port",
   /** main → host：Main 的实时界面语言变化（Host 用于 ZCode endpoint 的 X-Client-Language） */
   ApplicationLocaleChanged: "application-locale-changed",
 } as const;

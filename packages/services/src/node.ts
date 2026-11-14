@@ -200,6 +200,7 @@ export type {
   ZCodeAgentProcessManagerOptions,
 } from "./zcode-agent/zcodeAgentProcessManager.js";
 export { ZCodeProtocolClient } from "./zcode-agent/zcodeProtocolClient.js";
+import type { ZCodeProtocolClient } from "./zcode-agent/zcodeProtocolClient.js";
 export type { ZCodeProtocolTransport } from "./zcode-agent/zcodeProtocolTransport.js";
 export { ZCodeStdioTransport } from "./zcode-agent/zcodeStdioTransport.js";
 export {
@@ -1297,6 +1298,18 @@ export function createLocalServices(options: {
     httpProxy?: string;
     noProxy?: string;
   };
+  /**
+   * 每个新建 agent protocol client 的旁路 tap（所有泳道；同步、无返回值）。Desktop
+   * 窗口 Host 的 stdio sideband 接线缝（PaySwap reader 桥中继的 per-client 挂接 ——
+   * 通用通道，零业务语义；P2.2 slice 9 / ADR-P2-2 Addendum B）。
+   */
+  onZCodeProtocolClient?: (client: ZCodeProtocolClient) => void;
+  /**
+   * 每次 agent spawn 前贡献的额外 env（spawn 时读取，天然「下次启动生效」；与
+   * resolveSpawnEnv 的内部合成同款时机）。Desktop 窗口 Host 用它注入 stdio sideband
+   * 的可用性标记（reader 桥中继在活断言）—— 通用通道，零业务语义。
+   */
+  agentSpawnEnv?: () => Record<string, string> | Promise<Record<string, string>>;
   /** 所属 Environment 的 ZCode Built-in Provider Config 物理路径。 */
   zcodeBuiltinProviderConfigFilePath: string;
   /** HTTP Server 只有在调用方明确配置认证时才暴露跨 Environment Provisioning target。 */
@@ -2326,6 +2339,8 @@ export function createLocalServices(options: {
       codingPlanSubscriptionService.getRequestVerificationConfig(),
     ...(modelSelectionReadinessSource ? { modelSelectionReadinessSource } : {}),
     authorizeLocalMediaPreviewPath: options?.authorizeLocalMediaPreviewPath,
+    // stdio sideband tap（P2.2 slice 9）：三个泳道的每个新建 protocol client 都上报给宿主。
+    onZCodeProtocolClient: options?.onZCodeProtocolClient,
     ...offPeakToolWiring,
     // 动态工作流灰度：与 Off-Peak 不同，
     // 这里不按 serviceAuthorityMode 裁剪——SSH/WSL/Docker 的 desktop-attached-remote Host
@@ -2429,6 +2444,8 @@ export function createLocalServices(options: {
     // 覆盖模型 API / MCP / Bash 出口流量并信任用户显式配置的证书；改动后下次启动 agent 生效。
     resolveSpawnEnv: async (context) => {
       const [settings] = await Promise.all([settingService.get(), providerRuntime.start()]);
+      // 宿主贡献的额外 spawn env（同一时机读取 —— desktop host 的 stdio sideband 可用性标记等）。
+      const contributedAgentSpawnEnv = (await options?.agentSpawnEnv?.()) ?? {};
       const agentNetwork =
         isDesktopAttachedRemote && options?.remoteAgentNetwork
           ? options.remoteAgentNetwork
@@ -2474,6 +2491,7 @@ export function createLocalServices(options: {
       // 先拿到尚不存在的 provider_config.json 并发布短暂空 Registry。
       await providerConfigRuntime.start();
       return {
+        ...contributedAgentSpawnEnv,
         ...buildAgentRuntimeEnv({
           httpProxy: agentNetwork.httpProxy,
           noProxy: agentNetwork.noProxy,

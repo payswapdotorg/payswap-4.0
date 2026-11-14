@@ -29,6 +29,19 @@
  *    `dispose()` = 端口终结：全部挂起以 `port_closed` 拒绝；后续呼叫立即拒绝。
  * 7. **IO 全注入**：port（结构面 —— post + subscribe）、callId 铸造、时限全部
  *    可注入；法则级测试无 Electron、无真实 MessagePort。
+ *
+ * ADR-P2-2 Addendum B 的传输形态（本模块同时是传输法则的单一事实源）：
+ * - 第 1 跳 main ↔ 窗口 host：spawn 时 `MessageChannelMain` 转移（main 侧 serve
+ *   端口适配 + host 侧中继端口适配 —— 两端适配都只做结构面映射，零语义）。
+ * - 第 2 跳 窗口 host ↔ agent：既有 stdio 协议（NDJSON 帧）上的透明中继 —— 桥
+ *   消息作为**不透明载荷**装在通知帧（`PAYSWAP_READER_BRIDGE_NOTIFICATION_METHOD`）
+ *   的 params 里双向转发；中继**不校验、不改写、不解释语义**（zod 校验只住真正
+ *   的两端 —— 本模块的 stub 与 server；「两端共享单一实现」纪律不因中继而稀释）。
+ *   中继唯一的读取面是 callId（路由键 —— `readPayswapReaderBridgeCallId`，恰一
+ *   字段，不作任何合法性裁决）。
+ * - 缺席判据：spawn env 标记 `ZCODE_PAYSWAP_READER_BRIDGE`（`ZCODE_PAYSWAP_READER_BRIDGE_ENV`）
+ *   是窗口 host 对中继在活的 spawn 时快照断言 —— 标记缺席（headless CLI / 桥未建）
+ *   = reader 缺席 = fail-closed 缺省；标记在活后的中继故障 = 桥法则 3 的 throw 语义。
  */
 
 import { randomUUID } from "node:crypto";
@@ -85,6 +98,34 @@ export type PayswapReaderBridgeResponse =
 export type PayswapReaderBridgeMessage =
   | PayswapReaderBridgeRequest
   | PayswapReaderBridgeResponse;
+
+/**
+ * Addendum B 第 2 跳的 stdio 载波方法：桥消息作为不透明载荷装在通知帧的 params 里
+ * 双向转发（agent→host = 桥请求；host→agent = 桥响应）。窗口 host 中继与 agent 侧
+ * 适配器都只认这个方法名，不触碰 params 语义。
+ */
+export const PAYSWAP_READER_BRIDGE_NOTIFICATION_METHOD = "payswap/accountReaderBridge";
+
+/**
+ * spawn env 可用性标记（Addendum B 缺席判据）：窗口 host 在中继 main 端口在活时
+ * 把 `ZCODE_PAYSWAP_READER_BRIDGE=1` 注入 agent spawn env（spawn 时快照）。agent
+ * 侧见到标记才构造 stdio 适配器 + stub；标记缺席 = reader 缺席 = fail-closed 缺省
+ * （headless CLI 拓扑不变）。标记在活后的中继/端口故障 = 桥法则 3 的 throw 语义，
+ * 与缺席有别。
+ */
+export const ZCODE_PAYSWAP_READER_BRIDGE_ENV = "ZCODE_PAYSWAP_READER_BRIDGE";
+
+/**
+ * 中继路由读（Addendum B：中继不是端 —— 本函数是中继唯一的读取面）：恰读
+ * `callId` 字段作路由键，非空字符串才返回，其余一律 null。**不作任何合法性裁决**
+ * （zod 校验只住真正的两端）；callId 缺席的帧对中继不可路由但仍被透明转发/由端
+ * 法则静默忽略。
+ */
+export function readPayswapReaderBridgeCallId(message: unknown): string | null {
+  if (typeof message !== "object" || message === null) return null;
+  const callId = (message as { callId?: unknown }).callId;
+  return typeof callId === "string" && callId.length > 0 ? callId : null;
+}
 
 /** 请求 strict 校验器（法则 1：畸形请求在服务端静默忽略的判定面）。 */
 export const payswapReaderBridgeRequestSchema = z.discriminatedUnion("op", [

@@ -117,3 +117,31 @@ desktop main）消费（`@zcode/ui/payswap/PayswapConnectionsSection`；呈现�
 `connectionUiPresentation.ts`，电池在 packages/ui/test）。不变量不变：三检/
 闭集/typed-refusal-作数据/秘密单向性全部住 slice 7 的法则（零改动）；slice 8
 只交付接线与呈现面。
+
+P2.2 slice 9 增补（ADR-P2-2 Addendum B —— 桥入口接线：spawn 端口转移 + 窗口
+host 透明中继 + agent 侧 stub）：传输法则常量住 shared-payswap
+`account-reader-bridge.ts`（`PAYSWAP_READER_BRIDGE_NOTIFICATION_METHOD` stdio 载波
+方法、`ZCODE_PAYSWAP_READER_BRIDGE_ENV` spawn env 可用性标记、
+`readPayswapReaderBridgeCallId` 中继路由读 —— 恰一字段，零合法性裁决）。本模块
+增 `accountReaderBridgeEntry.ts`（main 侧半）：`MessagePortMain` →
+`PayswapReaderBridgePort` 的零语义适配 + `createPayswapReaderBridgePortMinter`
+（每窗口 host 一个通道：port1 serve〔`runtime.serve`，close → `server.stop()`〕、
+port2 转移；通道工厂抛出 → null，fail-safe 不阻断 spawn）。`desktopHostProcess`
+的 spawn 流在 init 消息后随独立消息（`PayswapReaderBridgePort`）转移 port2；
+`main/index.ts` 经模块级可空持有接线（装配缺席 = 零行为变化）。窗口 host 侧
+（`packages/desktop/src/host/payswapReaderBridgeRelay.ts` + host/index.ts）：
+main 端口接管（parentPort 消息分支）+ 三个泳道每个 protocol client 的
+`onZCodeProtocolClient` tap + `agentSpawnEnv` 可用性标记（端口在活才注入
+`ZCODE_PAYSWAP_READER_BRIDGE=1`）。agent 侧（bootstrap `payswap-broker/
+stdio-bridge-port.ts` + `zcode-protocol-entrypoint.ts` + `zcode-protocol/
+transport.ts`）：env 标记在活才构造 stdio 适配器 + 桥 stub（两个 reader 面进
+协调器 options）；桥载波通知帧经 transport 的 `consumeNotification` sideband
+**旁路串行队列**（生成请求 handler 内的工具执行等待桥响应，排队 = 死锁 —— 这是
+传输形态的成立判据）；标记缺席 = reader 缺席 = 既有 fail-closed 缺省（headless
+CLI 拓扑不变）。不变量：中继不校验、不改写、不解释桥消息语义（zod 校验只住
+真正的两端 —— 「两端共享单一实现」纪律不因中继而稀释；中继不是端）。法则级/
+装配级证明：`bootstrap/tests/payswap-stdio-bridge-port.test.ts`（适配器 + 队列
+旁路 + 端到端 stub 往返）、`packages/desktop/test/payswap-reader-bridge-relay.test.ts`
+（中继透明性/路由/缺席-故障有别/生命周期）、`packages/desktop/test/
+payswap-reader-bridge-entry.test.ts`（端口适配 + 铸造端到端经真实受监督运行时）。
+desktop Browser E2E 桥臂归 CI（本地 file:// modulepreload 环境缺陷不变）。
