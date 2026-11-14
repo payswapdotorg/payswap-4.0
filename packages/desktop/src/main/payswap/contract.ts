@@ -5,6 +5,7 @@
 
 import type { IpcMain } from "electron";
 import type { PayswapDesktopApprovalHost } from "@zcode/shared/payswap";
+import type { ResolvePayswapBrokerPeerHelperSupplyOptions } from "./brokerPeerHelperSupply.js";
 
 export interface PayswapDesktopApprovalIpcOptions {
   /** ipcMain（或测试注入面）。 */
@@ -38,4 +39,19 @@ export interface DesktopPayswapContract {
   installPayswapDesktopApprovalIpc(
     options: PayswapDesktopApprovalIpcOptions,
   ): PayswapDesktopApprovalIpcRegistration;
+
+  /**
+   * 解析随包的 Windows peer-verification helper 对（resources/payswap-broker-peer/
+   * {manifest.json,<binary>}；dev 回退 bundled-tools 相对路径族）并在注入时验证
+   * digest（尺寸 + SHA-256 对 manifest 重算；ADR-15 D15.4）。
+   * 前置：调用方传入 isPackaged/resourcesPath 与 operator env（缺省 process.env）。
+   * 后置：合法且 operator 未设任一供给键 → 返回
+   * PAYSWAP_BROKER_HELPER_{PATH,SHA256} 两键 env；任何失配（损坏 manifest/target
+   * 失配/digest 失配/缺文件/非 win32/null helper）→ 返回空对象（诚实不注入，
+   * agent 落 degraded_refusing）。幂等：纯读取与重算，不落盘。spawn 时的
+   * verifyHelperBinary（shared-payswap，D13.4）保持单一验证点。
+   */
+  resolvePayswapBrokerPeerHelperSupply(
+    options: ResolvePayswapBrokerPeerHelperSupplyOptions,
+  ): Readonly<Record<string, string>>;
 }

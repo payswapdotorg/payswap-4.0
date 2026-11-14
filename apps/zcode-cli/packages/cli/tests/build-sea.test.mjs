@@ -48,6 +48,10 @@ import {
   seaRuntimeToolManifestAssetKey,
 } from "../scripts/sea-runtime-tool-assets.mjs";
 import {
+  collectSeaPayswapBrokerPeerAssets,
+  seaPayswapBrokerPeerManifestAssetKey,
+} from "../scripts/sea-payswap-broker-peer-assets.mjs";
+import {
   prepareSeaRuntimeToolAssets,
   resolveSeaRuntimeToolPreparationPlan,
 } from "../scripts/sea-runtime-tool-prepare.mjs";
@@ -462,6 +466,198 @@ test("fails SEA packaging when a target runtime tool is missing", async () => {
         target: "darwin-arm64",
       }),
       /Missing SEA runtime tool bfs for darwin-arm64/,
+    );
+  } finally {
+    await rm(directory, {
+      force: true,
+      recursive: true,
+    });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// ADR-15 D15.2/D15.3 —— payswap broker peer helper 的 SEA collector 行（fake
+// 二进制；P1 仅 win 目标内嵌，darwin/linux 一概不嵌 —— darwin 打包是 P9 递延）。
+// ---------------------------------------------------------------------------
+
+const brokerPeerHelperDir = (platformKey) =>
+  `packages/desktop/bundled-tools/${platformKey}/payswap-broker-peer`;
+
+function brokerPeerHelperManifest(target, helper) {
+  return { helper, target, version: 1 };
+}
+
+test("embeds the staged payswap broker peer helper pair for win targets", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zcode-sea-broker-peer-pair-"));
+  const root = join(directory, "root");
+  const bytes = Buffer.from("win-x64-broker-peer-helper");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const helperRecord = {
+    binaryName: "payswap-broker-peer-helper.exe",
+    sha256,
+    size: bytes.byteLength,
+  };
+
+  try {
+    await writeTestFile(
+      root,
+      `${brokerPeerHelperDir("win32-x64")}/payswap-broker-peer-helper.exe`,
+      bytes,
+    );
+    await writeTestFile(
+      root,
+      `${brokerPeerHelperDir("win32-x64")}/manifest.json`,
+      JSON.stringify(brokerPeerHelperManifest("win-x64", helperRecord)),
+    );
+
+    const { assets, manifest } = await collectSeaPayswapBrokerPeerAssets({
+      root,
+      target: "win-x64",
+    });
+
+    assert.deepEqual(manifest, brokerPeerHelperManifest("win-x64", helperRecord));
+    const binaryAssetKey = `zcode-payswap-broker-peer/${sha256}/payswap-broker-peer-helper.exe`;
+    assert.deepEqual(Object.keys(assets).sort(), [
+      binaryAssetKey,
+      seaPayswapBrokerPeerManifestAssetKey,
+    ]);
+    assert.equal(
+      assets[seaPayswapBrokerPeerManifestAssetKey].endsWith(
+        join("payswap-broker-peer", "manifest.json"),
+      ),
+      true,
+    );
+    assert.equal(assets[binaryAssetKey].endsWith("payswap-broker-peer-helper.exe"), true);
+  } finally {
+    await rm(directory, {
+      force: true,
+      recursive: true,
+    });
+  }
+});
+
+test("embeds only the explicit helper:null manifest when the staged record is absent", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zcode-sea-broker-peer-null-"));
+  const root = join(directory, "root");
+
+  try {
+    await writeTestFile(
+      root,
+      `${brokerPeerHelperDir("win32-arm64")}/manifest.json`,
+      JSON.stringify(brokerPeerHelperManifest("win-arm64", null)),
+    );
+
+    const { assets, manifest } = await collectSeaPayswapBrokerPeerAssets({
+      root,
+      target: "win-arm64",
+    });
+
+    assert.deepEqual(manifest, brokerPeerHelperManifest("win-arm64", null));
+    assert.deepEqual(Object.keys(assets), [seaPayswapBrokerPeerManifestAssetKey]);
+  } finally {
+    await rm(directory, {
+      force: true,
+      recursive: true,
+    });
+  }
+});
+
+test("embeds nothing broker-helper-related for darwin and linux targets", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zcode-sea-broker-peer-noop-"));
+  const root = join(directory, "root");
+  const bytes = Buffer.from("stray-helper");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+
+  try {
+    await writeTestFile(
+      root,
+      `${brokerPeerHelperDir("darwin-arm64")}/payswap-broker-peer-helper.exe`,
+      bytes,
+    );
+    await writeTestFile(
+      root,
+      `${brokerPeerHelperDir("darwin-arm64")}/manifest.json`,
+      JSON.stringify(
+        brokerPeerHelperManifest("darwin-arm64", {
+          binaryName: "payswap-broker-peer-helper.exe",
+          sha256,
+          size: bytes.byteLength,
+        }),
+      ),
+    );
+
+    for (const target of ["darwin-arm64", "linux-x64"]) {
+      const { assets, manifest } = await collectSeaPayswapBrokerPeerAssets({ root, target });
+      assert.deepEqual(assets, {});
+      assert.equal(manifest, null);
+    }
+  } finally {
+    await rm(directory, {
+      force: true,
+      recursive: true,
+    });
+  }
+});
+
+test("fails the SEA build when a win target has no staged manifest", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zcode-sea-broker-peer-missing-"));
+
+  try {
+    await assert.rejects(
+      collectSeaPayswapBrokerPeerAssets({
+        root: join(directory, "root"),
+        target: "win-x64",
+      }),
+      /Missing SEA payswap broker peer helper manifest for win-x64/u,
+    );
+  } finally {
+    await rm(directory, {
+      force: true,
+      recursive: true,
+    });
+  }
+});
+
+test("fails the SEA build when the staged pair digests diverge or the target mismatches", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "zcode-sea-broker-peer-stale-"));
+  const root = join(directory, "root");
+  const bytes = Buffer.from("stale-win-x64-broker-peer-helper");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  const helperDir = brokerPeerHelperDir("win32-x64");
+
+  try {
+    await writeTestFile(root, `${helperDir}/payswap-broker-peer-helper.exe`, Buffer.from("not-the-claimed-bytes"));
+    await writeTestFile(
+      root,
+      `${helperDir}/manifest.json`,
+      JSON.stringify(
+        brokerPeerHelperManifest("win-x64", {
+          binaryName: "payswap-broker-peer-helper.exe",
+          sha256,
+          size: bytes.byteLength,
+        }),
+      ),
+    );
+
+    await assert.rejects(
+      collectSeaPayswapBrokerPeerAssets({ root, target: "win-x64" }),
+      /stale payswap broker peer helper pair|sha256 mismatch/u,
+    );
+
+    await writeTestFile(
+      root,
+      `${helperDir}/manifest.json`,
+      JSON.stringify(
+        brokerPeerHelperManifest("win-arm64", {
+          binaryName: "payswap-broker-peer-helper.exe",
+          sha256,
+          size: bytes.byteLength,
+        }),
+      ),
+    );
+    await assert.rejects(
+      collectSeaPayswapBrokerPeerAssets({ root, target: "win-x64" }),
+      /target mismatch|Invalid payswap broker peer helper manifest/u,
     );
   } finally {
     await rm(directory, {

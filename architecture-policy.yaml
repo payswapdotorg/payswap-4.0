@@ -1600,3 +1600,7 @@ exceptions:
     paths:
       - packages/zcode-cua/src/**
     reason: The whole zcode-cua producer package (broker, native adapters, tools) entered the repo after the gate timestamp as pre-existing code moved from a separate repository; adopting its internal layers needs a dedicated CONTRACT pass (it has known internal cycles by design), not a mechanical split in this branch.
+  - id: payswap-sea-broker-peer-helper-new-file
+    rule: unmanaged-new-file
+    paths: [ apps/zcode-cli/packages/cli/src/sea-payswap-broker-peer.ts ]
+    reason: ADR-15 D15.3 规定 ensureSeaPayswapBrokerPeerHelper 是 sea-runtime-tools.ts 的同目录兄弟（同一 main.ts 注入位、同一 SEA 打包闭包、镜像 runtime-tools 纪律），只能落在上游持有的 cli src 根；broker/peer-verification 法则零改动（D15.5 —— 仅 node 内建 + @zcode/shared/payswap 常量 + 对兄弟文件的 type-only 导入）。为整个上游 cli src 树登记 managed 模块（会把数百个上游文件卷入治理）不在本次打包交付范围内；桌面供给面已入 desktop-payswap managed 模块。

@@ -821,6 +821,20 @@ export default {
           },
         ]
       : []),
+    ...(targetPlatform.os === "win32"
+      ? [
+          {
+            // ADR-15 D15.4：Windows peer-verification helper 随包对（binary + manifest
+            // 不可分离；prepare:payswap-broker-peer stage）。主进程 agent-env 组装按
+            // process.resourcesPath/payswap-broker-peer/ 解析并在注入时验证 digest；
+            // helper:null staging（外国宿主交叉构建）只拷 manifest —— 诚实缺席。
+            // P1 仅 win32；darwin 桌面资源在 P9 平台加固子里程碑前不携带 helper。
+            from: `bundled-tools/${targetPlatform.key}/payswap-broker-peer`,
+            to: "payswap-broker-peer",
+            filter: ["manifest.json", "*.exe"],
+          },
+        ]
+      : []),
     {
       // agent 运行时资产，打包到 resources/glm。
       // 桌面端内置的是 agent 的 JS bundle（glm/zcode.cjs，由 prepare:agent-bundle 生成），
