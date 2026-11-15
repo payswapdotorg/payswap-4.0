@@ -21,6 +21,7 @@
 
 | Sheet | Subject | Status (2026-11-15) |
 |---|---|---|
+| `stripe-readonly-endpoints.md` | Stripe read-only data-plane endpoint facts (P2/ADR-P2-1; baseline 2026-11-13) | pre-existing sheet — its own deadline: re-verify the Stripe rows when the Paystack/PayPal data-plane lists are established (P3, behind the ⚠ auth gates) |
 | `paystack.md` | Paystack auth/transfer facts | partially retrievable — API base live-verified; docs site unreachable from the ops network; all doc-04 facts remain ⚠ RE-VERIFY |
 | `paypal.md` | PayPal REST/OAuth/payouts facts | partially verified — OAuth 2.0 client-credentials + base URLs verified from official docs; payouts page is JS-rendered → dedupe facts remain ⚠ RE-VERIFY |
 | `protocols-ap2-x402-mpp.md` | AP2 / x402 / MPP protocol facts | boundary facts verified from official sources; version pins: AP2 v0.2 verified; x402/MPP version strings not yet verifiable (honestly unpinned) |
