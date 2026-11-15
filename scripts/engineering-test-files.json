@@ -167,6 +167,7 @@
   "packages/services/test/payswap-account-runtime.test.ts",
   "packages/services/test/payswap-account-service.test.ts",
   "packages/services/test/payswap-credential-security.test.ts",
+  "packages/services/test/payswap-protocol-contract.test.ts",
   "packages/services/test/payswap-stripe-read-back.test.ts",
   "packages/ui/test/payswap-connection-ui-presentation.test.ts",
   "packages/ui/test/payswap-surface-revocation-wiring.test.ts",
