@@ -104,13 +104,16 @@ ZCode owns conversation/task execution state. PaySwap records only financial mis
 
 The existing human-present path is unchanged: the trusted host-rendered Class-B card displays the exact closed transaction tuple and the authenticated operator approves or rejects it.
 
-The autonomous path introduces a **Financial Authority Envelope (FAE)**. A human operator, acting under an authenticated workspace role, approves a bounded policy envelope on a trusted, deterministic, non-agentic Class-B surface. The envelope lets host policy evaluate a bounded class of future tasks; it is not a payment instruction, transaction grant or permission to bypass eligibility.
+The autonomous path introduces a **Financial Authority Envelope (FAE)**. A human operator, acting under an authenticated workspace role, approves a bounded policy envelope on a trusted, deterministic, non-agentic Class-B surface. The envelope lets host policy evaluate a bounded class of future tasks; it is not a payment instruction, transaction grant or permission to bypass eligibility. Envelope approval carries the same approval-event security as transaction approval — one-time challenge, exact canonical-digest binding, host-derived rendering, no ambient approval (addendum §9.5).
 
 ### 5.2 Envelope constraints
 
 Every FAE is structured and binds, at minimum:
 
-- authenticated human principal and workspace;
+- the **operator principal** (the authenticated human who signs, bound to the
+  approving session and its one-time challenge) and the **financial principal**
+  (the business/workspace whose funds and policies the envelope governs),
+  recorded separately and never conflated (addendum §9.6);
 - explicitly connected source accounts;
 - permitted agent IDs, publishers, versions and task classes;
 - business purpose codes and cost-centre/project scope;
@@ -130,7 +133,19 @@ A host-owned delegation service may derive a child envelope for one agent and on
 
 The human/business operator remains the financial principal; the agent is recorded as the delegated actor. Each child records its parent, issuer, agent/version, task, mission and policy version. Delegation depth is zero unless a parent explicitly permits a bounded depth. Descendants inherit parent expiry and revocation. Revocation immediately blocks new grants; already-submitted operations proceed to reconciliation and are not assumed reversible.
 
-Aggregate spend and count are authoritative ledger-derived values checked/reserved atomically with grant issuance/consumption. No renderer counter, agent memory, cache or protocol session is budget authority.
+Aggregate spend and count are authoritative ledger-derived values under an atomic
+budget lifecycle — **reserve** (worst-case cost + one count unit, atomically with
+grant mint), **consume** (atomically with execution; reserved-vs-actual difference
+releases), **release** (expiry/cancel/never-submitted; unknown outcomes hold their
+reservation) — defined in addendum §9.7. No renderer counter, agent memory, cache
+or protocol session is budget authority.
+
+Envelope approval is itself an approval event under the full §1.6 security
+contract — trusted-renderer host-derived content, one-time challenge, and
+exact canonical-digest binding; there is no ambient approval of envelope
+classes (addendum §9.5). The autonomous path carries its own negative and
+concurrency matrix (the F-series, addendum §9.8) — the N1–N42 matrix covers
+only transaction-bound approval and does not substitute.
 
 ### 5.4 Exact closed transaction grant remains mandatory
 
@@ -216,7 +231,7 @@ Before adding any store, identify the existing authoritative owner, migration, l
 3. Agent, provider and protocol catalogs are distinct.
 4. Model/agent/protocol outputs are untrusted until deterministic verification.
 5. Agent tasks are principal/workspace/tool scoped and traceable to a mission.
-6. Delegation is human-signed, host-issued, bounded, expiring, revocable and monotonic-narrowing.
+6. Delegation is human-signed (challenge- and digest-bound — addendum §9.5), host-issued, bounded, expiring, revocable and monotonic-narrowing; the signing operator and the financial principal are distinct (§9.6), and the budget reserve/consume/release lifecycle is atomic and ledger-authoritative (§9.7).
 7. Both approval modes lead to exact closed transaction grants; agents never mint them.
 8. Trusted authorization surfaces are deterministic and non-agentic.
 9. No provider write before P7; no live mode before the separate operator gate.
