@@ -10,7 +10,13 @@ PaySwap 4.0 is ZCode (agent harness) + an **additive financial layer**. Two laye
 - **The model is an orchestrator, never a financial authority.** It proposes, asks, and narrates; deterministic host-side code validates, routes, authorizes, executes, and records.
 - **No duplicate runtimes, no duplicate state owners.** Every new piece of state has exactly one writer; every new service rides the existing service/RPC/plugin surfaces (AGENTS.md: 避免重复状态和多条写入路径).
 
-Everything below maps the thirteen financial domains onto actual upstream package boundaries verified at `a9fe401`.
+- **Agent-native control plane, not a second financial plane.** P3–P9 add outcome-first
+  agent discovery, financial mission coordination and bounded delegation over the
+  existing ZCode runtime. Agent catalog metadata, PSP capabilities and protocol
+  support are separate concepts. The coordinator cannot authorize or execute.
+  See `docs/payswap/p0/12-agent-payment-harness-architecture.md` and addendum §§8–12.
+
+The thirteen financial domains below remain the single PaySwap financial core and map onto actual upstream package boundaries verified at `a9fe401`. The agent-harness control plane composes these domains; it does not create a fourteenth execution or ledger authority.
 
 ### 1.1 Package boundary map (summary)
 
@@ -266,6 +272,11 @@ Reading rules: arrows into the ledger are *submissions* (the ledger repo is the 
 | Policy + live-gate state | eligibility/policy service | ledger records | operator actions | eligibility, executor |
 | FX snapshots | fx service | memory + ledger evidence | fx service | routing, approvals display |
 | UI projections | `payswapStore` (Zustand, additive) | renderer | UI only (from RPC reads) | components |
+| Agent descriptors | Existing ZCode manifests + trust records | existing plugin/agent/skill owners; PaySwap agent catalog is a rebuildable read projection | manifest publishers/install/trust services only | agent discovery, mission planner |
+| Agent task/session state | Existing ZCode agent/task/session/workflow owners | existing ZCode stores/runtime | existing ZCode runtime only | mission coordinator, user task UI |
+| Financial mission lineage | Existing PaySwap evidence ledger | `packages/services/src/payswap/ledger/` | host orchestration/authorization services through the ledger | audit, reconciliation, UI |
+| Authority envelopes / child delegations | Existing PaySwap authorization and ledger | same PaySwap ledger; no agent-specific ledger | host-only authorization/delegation services | eligibility, grant service, audit |
+| Protocol transport/session state | Individual host protocol adapter, where required | bounded adapter state only | owning adapter | adapter only; financial facts are still ledger-backed |
 
 Explicitly **not** owners: desktop Main (no business state, per AGENTS.md), external relay (auth/pairing/forwarding only, per AGENTS.md), the agent runtime (holds no financial state, no credentials), renderer-local state (never authoritative).
 
@@ -299,3 +310,57 @@ AGENTS.md mandates distinguishing desktop `desktop-continuous` from mobile `web-
 4. **Live money movement is gated until the full acceptance suite passes.** Per provider: the doc 05 §12 eight-part suite green + operator go-live checklist recorded in the ledger + reconciliation dry-run pass. Until then the executor refuses all live operations typed `policy_blocked: live_mode_not_enabled`, regardless of credentials present. Live unlock is itself an operator action recorded as a ledger record with evidence links.
 
 **Additional standing invariants:** the model is never a principal and never holds credentials; approvals are single-use and digest-bound; material changes force reauthorization; the ledger is append-only and hash-chained; every capability claim carries evidence; every provider fact carries a retrieval date and re-verification deadline.
+
+
+---
+
+## 9. Agent-harness control plane and financial boundary
+
+This is an architectural extension for P3–P9, not a new financial domain or a claim
+that these modules already exist. The detailed normative design is
+`docs/payswap/p0/12-agent-payment-harness-architecture.md`.
+
+### 9.1 Target service seams
+
+- `packages/services/src/payswap/agent-catalog/`: read-only discovery projection
+  over ZCode agent/plugin/skill/workflow manifests and existing trust state.
+  It cannot install, enable or authorize an agent.
+- `packages/services/src/payswap/orchestration/`: coordinates existing ZCode
+  agent tasks using typed mission/task/artifact contracts. It owns no second
+  runtime, session database or payment state machine.
+- `packages/shared/src/payswap/delegation/` plus the existing host
+  authorization service: pure schema/intersection law and a single host-owned
+  authority-envelope/child-delegation writer.
+- `packages/shared/src/payswap/protocols/` and
+  `packages/services/src/payswap/protocols/<protocolId>/`: versioned external
+  protocol schemas and host adapters, distinct from PSP provider adapters.
+
+### 9.2 State and authority boundaries
+
+The existing ZCode runtime owns agent execution and task/session state. The
+agent catalog is derived/rebuildable; it does not become a second agent
+registry of record. The PaySwap ledger records financial mission references,
+agent identity/version, authority-envelope lineage, exact grants, provider
+events and reconciliation. It does not duplicate transcripts or carry
+credentials.
+
+The orchestration service may request reads, prepare typed intents and ask the
+host authority service for a child delegation. It cannot write to PSPs, mint
+grants, approve its own proposals or assert settlement. The only path to a
+provider write remains the single PaySwap execution authority after exact
+grant validation and atomic consumption.
+
+### 9.3 Delegation and protocol model
+
+A human-signed, bounded authority envelope may authorize host-only derivation
+of single-use transaction grants in autonomous mode. The child delegation
+chain can only narrow the parent's accounts, beneficiaries, purpose, amount,
+budget, fees, FX, providers, corridors, time and frequency. The human/business
+principal remains the financial principal; agents are recorded as delegated
+actors. Without an active envelope, use the existing direct Class-B approval
+flow.
+
+AP2, x402, MPP, Visa Trusted Agent Protocol and Mastercard Agent Pay for
+Machines are protocol/identity integration targets, not new PSP adapters or
+execution authorities. Every adapter maps into the same PaySwap contracts and
+is disabled until its exact version and conformance behavior are verified.

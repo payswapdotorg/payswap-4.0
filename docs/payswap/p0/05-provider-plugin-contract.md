@@ -323,3 +323,82 @@ All eight green for a provider ⇒ that provider's adapter may request live-mode
 2. **Credential-entry-in-conversation UX** — when an operator says "connect my Stripe" in the New Task flow, do we open the settings surface (safe, existing patterns) or design an in-conversation credential attachment flow (new interaction contract)? P0 recommendation: settings surface + deep-link from conversation.
 3. **PayPal payouts-permission probing** — probing capabilities on a sandbox vs live app may differ; do we accept "live evidence collected at live-mode-gate time" as the first live capability record?
 4. **Webhook ingress topology** — desktop P0 runs poll-based reconciliation (doc 06 §2.10); confirm no desktop-local webhook listener is wanted for P0.
+
+
+---
+
+## 13. Payment-protocol adapter contract (distinct from PSP provider adapters)
+
+A PSP provider adapter (this document §§2–12) talks to a bank/PSP provider API
+and implements provider-specific account and operation facts. A
+`PaymentProtocolAdapter` speaks an external agent/payment protocol and maps
+messages into the PaySwap common financial contract. They are **not the same
+extension point** and must not share a generic interface that obscures
+different trust assumptions.
+
+### 13.1 Target interface
+
+The contract is illustrative until frozen contract-first in P3:
+
+```ts
+interface PaymentProtocolAdapter {
+  protocolId: string;
+  specificationVersion: string;
+  evidenceRef: string;
+  status: "experimental" | "enabled" | "disabled";
+  inspectInbound(input: unknown): Promise<ProtocolOffer | ProtocolRefusal>;
+  verifyInbound(
+    offer: ProtocolOffer,
+    context: ProtocolVerificationContext
+  ): Promise<VerifiedProtocolOffer | ProtocolRefusal>;
+  mapToFinancialIntent(
+    offer: VerifiedProtocolOffer
+  ): Promise<FinancialIntentDraft | ProtocolRefusal>;
+  mapOutboundResult(
+    result: ReconciledFinancialResult
+  ): Promise<ProtocolReceipt | ProtocolRefusal>;
+}
+```
+
+The precise schemas and method names are to be frozen contract-first in P3.
+The interface exposes no provider credential, routing authority, grant
+operation, ledger mutation or provider-write method.
+
+### 13.2 Required responsibilities
+
+- Pin a specification/version and official documentation URL with retrieval
+  date, re-verification date and enabled feature set.
+- Validate signatures, issuer/audience, replay identifiers, expiry, version,
+  nonce and protocol-specific constraints before mapping a message.
+- Treat HTTP payment challenges, agent assertions, merchant offers and
+  protocol receipts as untrusted until independently verified.
+- Map verified protocol data to the shared PaySwap intent/eligibility/route/
+  authorization contracts; unknown or unmappable fields refuse explicitly.
+- Return protocol receipts only from the verified execution/reconciliation
+  state. A protocol-level "accepted" message cannot by itself mark settlement.
+- Keep raw credential material out of protocol payloads and agent context;
+  use host-held scoped credentials or provider/network-approved opaque tokens.
+
+### 13.3 Initial protocol evidence register
+
+As checked on 2026-11-15 (these sources establish protocol/initiative scope,
+not PaySwap implementation, certification, access or Ghana availability):
+
+| Integration | Official source | P3+ treatment |
+|---|---|---|
+| AP2 v0.2 | https://ap2-protocol.org/ap2/specification/ | Mandate/receipt schema research and conformance contract. Current AP2 scope does not standardize agent-to-agent delegation; PaySwap's bounded child chain remains its own extension. Trusted Surface is non-agentic. |
+| x402 | https://www.linuxfoundation.org/press/linux-foundation-announces-operational-launch-of-x402-foundation-to-standardize-internet-native-payments-for-ai-agents-and-applications | HTTP payment-request interoperability; challenge does not imply consent or authorization. |
+| Stripe/Tempo MPP | https://stripe.com/blog/machine-payments-protocol | Machine-payment session interoperability; no bypass of PaySwap policy/grants. |
+| Visa Trusted Agent Protocol | https://corporate.visa.com/en/sites/visa-perspectives/press-releases/visa-bill-billtrust-launch-pilot.html | Agent identity and supplier-portal authentication integration; identity is not financial approval. |
+| Mastercard Agent Pay for Machines | https://www.mastercard.com/global/en/news-and-trends/press/2026/june/mastercard-launches-agent-pay-for-machines.html | Partner/network integration research; do not assume public API or availability. |
+
+### 13.4 Hard separation from provider execution
+
+Protocol adapters must not register/mutate PSP capability facts, retrieve/store
+PSP credentials, choose routes, mint/alter/consume grants, submit provider
+writes, retry payments, declare settlement, or append to the ledger outside
+the owning PaySwap services.
+
+Only PaySwap's existing provider adapters, called by the single execution
+authority after authorization, may submit provider operations. A protocol
+adapter can never become a second payment processor or settlement authority.
