@@ -1511,6 +1511,141 @@ timestamps. Persist only what is required for audit, reconciliation and
 disputes; use references/digests rather than duplicating transcripts.
 Secrets and credentials never enter the lineage record.
 
+### 9.5 Envelope approval is an approval event (the §1.6 contract applies in full)
+
+An FAE approval is not a weaker class of consent than a transaction approval.
+The full approval-event security contract of §1.6 applies to envelope approval,
+explicitly:
+
+1. **Trusted-renderer rendering of the envelope.** The envelope card renders
+   on the same non-agentic Class-B surface with host-derived content only:
+   every displayed constraint (accounts, beneficiaries, ceilings, aggregate
+   budget, count, fees/FX limits, expiry) is computed by host code from the
+   pending envelope record, and the rendered payload is asserted byte-equal to
+   it (the §1.6.0 content-origin discipline). No agent-, plugin-, protocol-,
+   webhook- or model-supplied display field may contribute an envelope value.
+   An agent-proposed envelope draft is data the operator may read; it is never
+   the rendered approval record itself.
+2. **One-time challenge per envelope proposal.** Envelope-card creation issues
+   a 256-bit cryptographically random, single-use challenge bound to that
+   pending envelope proposal and the approving operator session (§1.6.2 item 1;
+   session binding per §1.6.3). The recorded approval event must present it.
+   Consumed, expired or superseded challenges are rejected; challenges are
+   invalidated on session expiry/revocation and on any envelope edit.
+3. **Exact-digest binding.** The challenge binds a SHA-256 digest of the
+   canonical envelope bytes (the existing canonical-JSON law). At approval the
+   host recomputes the digest **from its own state** and rejects on mismatch.
+   The approval therefore binds the exact envelope: any post-approval edit
+   produces a different digest and voids the envelope (fresh approval
+   required; pending child delegations are re-evaluated against the new
+   digest or refused).
+4. **No ambient approval.** There is no standing "approve future envelopes"
+   state and no approval of envelope *classes*; each envelope proposal is
+   separately challenged, rendered and approved. Envelope approval events obey
+   the same sender verification (§1.6.2 item 3: expected webContents, expected
+   main frame, trusted application origin) and the same
+   impossible-by-construction rules for plugin webviews, model output and
+   protocol sessions (§1.6.2 item 4) — and these are tested for envelopes
+   exactly as for transactions.
+
+### 9.6 Two principals: the operator signer and the financial principal
+
+An envelope binds **two distinct principals, recorded separately and never
+conflated**:
+
+- the **operator principal** — the authenticated human who signs the envelope,
+  identified through the P1 operator-principal model and bound to the approving
+  session and its one-time challenge (§9.5);
+- the **financial principal** — the business/workspace whose funds, accounts,
+  budgets and policies the envelope governs and against whose aggregate budget
+  reservations are made.
+
+Rules:
+
+1. At approval the host verifies the operator principal holds a workspace role
+   empowered to delegate that financial principal's spending authority, and
+   records that role check on the envelope.
+2. By default the envelope requires **signer-role recheck at derivation**
+   (`signerRoleRecheck`, default on): if the signer's role binding is later
+   lost, further grants under the envelope fail closed with a typed refusal
+   until the workspace re-approves or revokes. An envelope may explicitly
+   record the recheck-off posture only as a deliberate, displayed constraint.
+3. Grants and ledger events carry both: the financial principal (whose budget
+   is consumed), the approving operator principal (via the envelope chain) and
+   the delegated actor. Child delegation preserves the financial principal
+   unchanged; the delegated actor is never promoted to financial principal.
+4. Cross-workspace use — an envelope whose financial principal does not match
+   the workspace of the derived grant — is a typed refusal with zero provider
+   writes.
+5. Operator-session revocation invalidates the operator's pending envelope
+   challenges (§1.6.3) but does not by itself rewrite signed envelopes;
+   workspace operators retain the revocation handle per workspace policy.
+
+### 9.7 Atomic budget lifecycle: reserve → consume → release
+
+Budget authority is the ledger, serialized by the one ledger writer under the
+fenced lease (§4.6). The lifecycle is exactly:
+
+1. **Reserve — atomic with grant mint.** Both mint paths (§9.3) atomically
+   reserve the worst-case executable cost — amount + maximum fees + the
+   envelope's FX-worst-case bound — against the envelope's aggregate budget,
+   and one unit against the maximum transaction count. A grant mints only if
+   `available = aggregate − Σconsumed − Σoutstanding reservations` covers the
+   worst-case cost and the count bound holds. Reservation and issuance are
+   one ledger transaction: there is no check-then-act window. Two concurrent
+   derivations against the last unit of budget produce exactly one mint and
+   one typed `budget_exhausted` refusal.
+2. **Consume — atomic with execution.** The single execution authority's
+   atomic single-use grant consumption converts the reservation to consumed
+   spend, recording actual cost; any difference between reserved worst-case
+   and actual cost releases to available in the same ledger event.
+3. **Release — without submission.** A reservation releases to available when
+   the grant (a) expires unsubmitted, (b) is cancelled or its envelope revoked
+   before submission, or (c) is refused or abandoned before the execution
+   boundary. Release is an atomic ledger event.
+4. **Unknown outcomes hold their reservation.** A submitted operation with an
+   unknown outcome keeps its reservation held — it is never auto-released and
+   never auto-retried (the P7 saga rules); it converts to consumed at
+   reconciliation read-back, and releases only when provider read-back proves
+   non-execution.
+5. **Expiry/revocation boundary.** Envelope expiry or revocation blocks new
+   grants and new reservations immediately; outstanding unsubmitted grants
+   release per item 3, except that a grant already at the execution boundary
+   is consumed-or-refused and never silently released; already-submitted
+   operations proceed to reconciliation (§9.2).
+6. **No budget leakage.** A never-submitted grant's reservation holds until
+   grant expiry, then releases (item 3a) — no manual GC, no silent leakage.
+   Ledger-derived `available` is always reconstructible as
+   `aggregate − consumed − outstanding reservations`.
+
+### 9.8 Autonomous-path negative and concurrency matrix (F-series — mandatory, distinct from N1–N42)
+
+The N1–N42 matrix covers the transaction-bound approval path. It does **not**
+cover envelope approval, child delegation or the budget lifecycle, and a green
+N-series does not substitute for coverage here. P7 acceptance requires a
+distinct, machine-asserted matrix — the **F-series** — over the autonomous
+path:
+
+| Row | Precondition | Operation / attack | Expected outcome |
+|---|---|---|---|
+| F1 | any session | envelope-approval event originating from a plugin webview, model output or protocol session | cannot reach the approval channel (no transport, no challenge); asserted refused end-to-end (§9.5 item 4) |
+| F2 | envelope proposal pending | replayed / expired / cross-session envelope challenge | rejected; no envelope approval (§9.5 item 2) |
+| F3 | envelope approved | envelope bytes edited after approval (digest mismatch) | approval void; envelope unusable until fresh approval; pending child delegations re-evaluated or refused (§9.5 item 3) |
+| F4 | envelope expired or revoked | grant derivation attempt | typed refusal; zero provider writes (§9.3) |
+| F5 | budget has room for exactly one grant | two concurrent derivations | exactly one mints; the other receives typed `budget_exhausted`; ledger shows one reservation (§9.7 item 1) |
+| F6 | parent envelope active | child delegation that widens any axis (accounts, recipients, purpose, geography, currency, provider, rail, amount, fees, budget, count, rate, time, depth) | child derivation refused; widening never persists (§9.2) |
+| F7 | delegation depth bounded | grandchild beyond permitted depth | refused; depth accounting recorded (§9.2) |
+| F8 | envelope bound to workspace A | derived grant against workspace B | typed refusal — financial-principal mismatch (§9.6 item 4) |
+| F9 | `signerRoleRecheck` on, signer's role binding lost | grant derivation | typed refusal until re-approval or revocation (§9.6 item 2) |
+| F10 | submitted operation, unknown outcome | budget release attempt / retry attempt | reservation held; no release, no auto-retry; resolves only at read-back (§9.7 item 4) |
+| F11 | grant at execution boundary as envelope expires | expiry-mid-submission race | consumed-or-refused at the boundary; never silently released (§9.7 item 5) |
+| F12 | grants in flight as envelope is revoked | new-derivation attempt + submitted operation | new grants blocked immediately; submitted operation proceeds to reconciliation (§9.2, §9.7 item 5) |
+| F13 | grant derived, operator cancels before submission | cancellation | reservation released atomically; available restored (§9.7 item 3) |
+| F14 | count-exhausted envelope | derivation attempt | typed refusal; count reservations consistent with issued grants (§9.7 item 1) |
+| F15 | ledger with consumed + outstanding reservations | reconstruct available from ledger events | reconstruction equals ledger-derived `available` (§9.7 item 6) |
+
+F-rows are P7 gate criteria and run alongside the N-series; both must be green.
+
 ## §10. Payment-protocol adapters are not providers or executors
 
 A PaymentProtocolAdapter translates a versioned external protocol into the
