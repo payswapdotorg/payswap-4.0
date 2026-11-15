@@ -44,7 +44,23 @@ This register is maintained **in this file only**. Update it in the same PR that
   detail 即答数据——链路已证到拒绝边界）。证据工件：
   payswap-backups/evidence/live-acceptance/（e2e-live.log 155KB、harness2.log、
   live-conversational-evidence.json、at-rest stores）。行保持 in_progress——四类别
-  对话数据流落地或 TL 按现证据裁决 complete，二者其一。 |
+  对话数据流落地或 TL 按现证据裁决 complete，二者其一。**可复现性收口
+  （2026-11-15，架构师评审跟进项）**：live 验收工具链入仓控——E2E live spec
+  （`packages/desktop/test/e2e/payswap-connection-live.test.ts`，env-gated on
+  `ZCODE_E2E_STRIPE_LIVE_KEY`，不进 CI 电池清单——需真实网络，与回放隔离
+  不相容）+ 对话面 harness（`scripts/payswap/live/`：main.cjs 生产装配 +
+  build-live-harness.mjs 源码编译 + VM 运行器 + E2B 驱动示例，仓控重建版——
+  溯源与有意差异见 docs/payswap/p2/live-acceptance-evidence.md §4）；消毒
+  证据登记入仓（同文件 + evidence/live-acceptance/：存活三工件 SHA-256
+  manifest；155KB wdio 原始日志与 harness 控制台日志随 2026-11-15 宿主回收
+  遗失，如实登记）；打包侧 ESM 裁决入档（生产 `createRequire(import.meta.url)`
+  为合法 ESM 形态非缺陷——修补住 harness bundle 后处理，不改生产源码）。
+  四类别终局运行待账户邮箱激活后以该工具链执行（RESULT_HARNESS=0 即终局
+  证据）。工具链加固（2026-11-15 架构师评审跟进）：harness 设计内 typed
+  拒绝不再短路桥形态 detail 步（直连/桥两形态拒绝边界都登记）；E2B 驱动器
+  增完整性判定层（期望工件齐备 + RESULT↔evidence 互证 + env 文件 0600
+  断言 + tar/base64 二进制安全取回——见 docs/payswap/p2/live-acceptance-evidence.md
+  §6）。 |
 | P3 — Paystack, PayPal and protocol contracts | in_progress | Verification/contract layer opened 2026-11-15 per the architect handoff (P2 remains the top blocker and stays in_progress — its last criterion is the four-category live read-back, blocked on account activation). Done this pass: provider-facts register (docs/payswap/provider-facts/ — dated official-source retrievals; Paystack docs site unreachable from the ops network and PayPal payouts page JS-rendered are recorded honestly, so no provider authSpecs are encoded — `unsupported_provider` remains the designed typed refusal) + versioned protocol contracts (packages/shared/src/payswap/protocols/: pinned AP2 v0.2 / x402 / MPP registry from verified official sources with honest null pins, adapter-boundary contract + closed protocol refusal vocabulary + registration gate, law-tested and pinned into CI). Next: close the ⚠ re-verification lists, then Paystack/PayPal read-only conformance behind them; no provider writes. |
 | P4 — Agent/provider discovery, eligibility and intent | not_started | Starts after P3. Adds distinct agent and provider catalogs, typed financial missions and bounded delegation-envelope contracts. |
 | P5 — Multi-agent financial missions in New Task | not_started | Starts after P4. Uses the existing ZCode agent runtime for specialist workflows; no agent receives financial authority. |
