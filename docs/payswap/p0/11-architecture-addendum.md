@@ -107,7 +107,10 @@ model controls.
 
 ### 1.3 Authorization Grant — construction and binding
 
-A grant is a ledger-recorded record created **exclusively** by this path:
+A grant is a ledger-recorded record created only by one of two
+host-owned paths.
+
+**Human Present — exact-transaction approval (existing path):**
 
 ```
 host-rendered authorization card — Class B, §1.6.0 (human click)
@@ -115,9 +118,20 @@ host-rendered authorization card — Class B, §1.6.0 (human click)
     → grant record appended to the ledger (single writer)
 ```
 
-No other code path may create a grant. Specifically: not a tool call, not a subagent,
-not an automation run, not a webhook, not the model, not the PaySwap MCP server
-process itself.
+**Human Not Present — bounded-envelope evaluation (new P3–P7 path):**
+
+```
+previously human-signed Financial Authority Envelope (FAE)
+  → host policy/delegation service checks principal, workspace, parent/child
+    constraints, fresh eligibility/evidence, budgets, replay and expiry
+    → host authorization service derives exact closed transaction grant
+      → grant record appended to the same ledger (single writer)
+```
+
+No tool call, subagent, automation, webhook, model, protocol adapter, provider
+adapter or PaySwap MCP server process may mint a grant. In autonomous mode,
+agents may request a child delegation or propose a transaction, but only the
+host evaluates the human-signed envelope and creates the grant.
 
 A grant binds the full tuple, per the mission mandate and deliverable 06 §4:
 
@@ -147,7 +161,7 @@ leg, different recipient hash, amount above bound, past expiry) is a typed refus
 | Session allow rule / `allowedTools` | Allow the *invocation* (possibly without prompt). Grant still required. |
 | Owned workflow amendment | Amends a run, not a grant. Grant still required. |
 | Preapproved carve-outs | None of them name PaySwap tools; even if a future one did, it would only affect invocation. Grant still required. |
-| Subagent in a yolo session | The child may call `payswap_*` freely — executor refuses without a grant. Additionally, grants are issued only from interactive host-rendered approval cards (§1.6.0); a subagent or automation context cannot originate one (no approval event exists in that context). |
+| Subagent in a yolo session | The child may call `payswap_*` freely — executor refuses without a grant. A subagent or automation cannot approve an envelope, mint a grant or widen authority. If an already human-signed envelope explicitly permits that exact agent/task, the host may independently derive a closed grant under §9; the agent never receives that authority. |
 | Automation run | Same as above: invocation possible, execution impossible; read-only operations remain available. |
 | Model "approves" in prose | Model text is not a renderer approval event; the host cannot be convinced by content. The grant ledger sequence is host-allocated. |
 
@@ -1371,10 +1385,200 @@ Revision 5 (fourth R1–R4 round — implementation-contract corrections, revisi
 | 10 P1 | Broker replay scope corrected (contiguous watermark + retained completed sequences + gap bound); server-principal scope adds the handshake, credential lifecycle, and workspace-scoped roles; N39–N41 and the strengthened T7 in acceptance |
 | 10 P7 | Fenced-lease scope adds the owner-checked release contract; N42 in acceptance |
 
-## §7. What this addendum deliberately does not change
+## §7. P0/P1 baseline that remains in force
 
-The extension strategy, the preservation matrix, the financial domain decomposition
-(deliverable 06 §2), the provider contract (deliverable 05), the evidence-or-refusal
-law, the routing taxonomy, the mission invariants, and the P1→P9 sequence all stand
-as submitted. No ZCode surface is replaced; every mechanism above is additive and
-anchored to a precedent already shipped in the codebase at `a9fe401`.
+The ZCode preservation matrix, additive extension strategy, broker trust chain,
+operator-principal model, trusted Class-B approval origin, N1–N42/T1–T7 security
+baseline, evidence-or-refusal law, provider contract and single-writer financial
+ledger controls remain binding. P3–P9 extend the product with an agent-native
+payment-harness control plane; they do not weaken or replace those controls.
+
+The canonical roadmap remains the only authority for P1–P9 order, scope,
+acceptance and status. The architecture design in
+[12-agent-payment-harness-architecture.md](12-agent-payment-harness-architecture.md)
+defines how the approved P3–P9 product fits the existing ZCode and PaySwap
+boundaries. It is subordinate to this addendum's trust/security invariants.
+
+## §8. One agent-native payment harness, one financial core
+
+1. All agent execution uses the existing ZCode runtime, task, session, agent,
+   MCP, plugin, skill, workflow and automation mechanisms. No second agent
+   supervisor, conversation store or execution lifecycle.
+2. PaySwap financial services remain the only owners of accounts, provider
+   capabilities, eligibility, routing, grants, provider writes, evidence ledger
+   and reconciliation. No parallel owner is permitted.
+3. Agent/skill discovery, provider/account capability evidence and protocol
+   version support are distinct domains. An agent listing never establishes
+   provider capability or permission.
+4. LLM text, agent-to-agent messages, skill outputs, marketplace descriptors,
+   protocol payloads and external content are untrusted proposals/evidence
+   candidates until host code verifies schema, provenance, identity, policy
+   and provider evidence.
+5. ZCode owns conversations and task-runtime state. PaySwap records financial
+   task references, agent identity/version, mission lineage, mandate/delegation
+   events, authorization, provider events and reconciliation in the existing
+   append-only ledger. Do not duplicate full chat transcripts or create an
+   agent-specific payment ledger.
+6. Agents receive scoped host-mediated capabilities, never raw PSP API keys,
+   refresh tokens, bank credentials, broker tokens or provider secrets.
+7. Every provider write is reachable only through the existing PaySwap
+   execution authority after grant validation and atomic grant consumption.
+   Protocol adapters and agent coordinators have no provider-write client.
+
+## §9. Bounded delegated authority and autonomous grants
+
+The human-present exact-transaction path remains unchanged. This section adds
+a second, host-only path: deterministic derivation of a closed grant from a
+previously human-signed bounded authority envelope.
+
+### 9.1 Authority envelope is not a transaction grant
+
+A Financial Authority Envelope (FAE) is a policy record approved by a
+host-verified human operator acting within an authenticated workspace, on
+the trusted non-agentic Class-B surface. It authorizes the host policy engine
+to evaluate a bounded class of future work. It is not a provider instruction,
+payment credential, transaction grant or permission to bypass PaySwap
+eligibility.
+
+The envelope binds, at minimum: principal and workspace; connected source
+accounts; permitted agent IDs, publishers, versions and task classes; purpose
+and business/cost-centre scope; exact verified beneficiary allowlist or
+deterministic pre-approved vendor policy; country/corridor, currency,
+provider, rail and method; per-transaction ceiling, aggregate budget and
+maximum count; fee and FX limits; rate/frequency; start time, expiry,
+revocation handle and policy version; maximum delegation depth and explicit
+permission for child delegation.
+
+Unknown, missing or unenforceable constraints fail closed. Free text is
+informational only and never an executable rule. Every envelope is bounded
+in time and revocable by its principal or authorized workspace operator.
+
+### 9.2 Host-issued child delegation only
+
+A host-owned service may derive a child envelope for one identified agent
+and task. It intersects the parent envelope with workspace policy, agent
+task scope, authenticated principal/role and current PaySwap eligibility.
+Every child is equal to or narrower than its parent; it cannot add accounts,
+recipients, purposes, countries, currencies, providers, amount, fees, budget,
+count, frequency, time or delegation depth.
+
+The human/business principal remains the financial principal. Agent identity
+is only the delegated actor. Every child references its parent, issuer,
+agent/version, task and policy version. Delegation depth is zero by default;
+a parent must explicitly permit a bounded depth. Descendants inherit parent
+expiry and revocation. Revocation blocks new grants immediately; already
+submitted provider operations remain subject to reconciliation.
+
+Aggregate spend/count limits are authoritative ledger-derived values and
+must be checked/reserved atomically with grant issuance/consumption. Renderer
+counters, agent memory, cached policy and protocol-session state cannot decide
+remaining budget.
+
+### 9.3 Closed grants remain exact, single-use and host-minted
+
+Every provider write still requires a closed Authorization Grant bound to
+the exact tuple from §1.3. It additionally records delegated actor
+identity/version, mission/task IDs, parent/child envelope chain,
+authorization mode and policy version.
+
+There are exactly two permitted host-owned grant paths:
+1. **Human Present:** the trusted Class-B card approves the exact closed
+   tuple; host code recomputes its digest and mints the grant.
+2. **Human Not Present:** the trusted Class-B card previously approved a
+   bounded FAE; deterministic host policy code evaluates the proposed tuple,
+   every child constraint, fresh provider capability/evidence, roles,
+   recipient verification, budgets, expiry, replay and live-mode gates,
+   then derives and mints a single-use closed grant.
+
+The second path does not make an agent an approver or call a model to decide
+whether a payment "looks reasonable". No agent, LLM, plugin, MCP server,
+automation, webhook, protocol adapter, provider adapter or external service
+can mint a grant. The one execution authority atomically consumes it.
+Material transaction changes require a new direct approval or newly derived
+closed grant under the active envelope.
+
+No active envelope means no autonomous payment. Policy uncertainty, missing
+or stale evidence, unsupported route, unverified beneficiary,
+expired/revoked/exhausted budget, wrong role, over-limit or unknown protocol
+state produces typed refusal and zero provider writes.
+
+### 9.4 Audit, privacy and dispute lineage
+
+Every grant/evidence record carries principal, workspace, agent identity,
+publisher/version, task/mission, envelope/delegation chain, policy version,
+exact tuple digest, provider operation, route/leg, evidence references and
+timestamps. Persist only what is required for audit, reconciliation and
+disputes; use references/digests rather than duplicating transcripts.
+Secrets and credentials never enter the lineage record.
+
+## §10. Payment-protocol adapters are not providers or executors
+
+A PaymentProtocolAdapter translates a versioned external protocol into the
+common PaySwap financial vocabulary and maps verified receipts/events back.
+It does not own account identity, provider credentials, routing, eligibility,
+transaction grants, money submission, settlement truth or the ledger.
+
+- **AP2:** current v0.2 supports human-present and human-not-present mandate
+  flows. Its Trusted Surface is non-agentic. Agent-to-agent mandate
+  delegation is outside its current scope; PaySwap's child chain is its own
+  extension, not an AP2 claim.
+- **x402:** HTTP payment requests/challenges are untrusted. They must become a
+  typed PaySwap intent and pass active authority and eligibility. A 402 is
+  not consent.
+- **MPP:** machine-payment sessions are protocol data, not PaySwap grants.
+  Repeated/metered charges require an envelope covering resource, merchant,
+  amount/rate, duration and aggregate spend.
+- **Visa Trusted Agent Protocol:** portal/agent identity is not payment
+  consent or PaySwap financial authorization.
+- **Mastercard Agent Pay for Machines:** a scheme/network integration that
+  requires official specs, access and conformance; not a universal provider API.
+- **MCP/A2A:** agent/tool identity and task invocation convey neither PSP
+  credentials nor financial authority.
+
+Each adapter pins the exact supported specification/version, verifies
+identity/signature/replay/expiry according to that protocol, has negative
+conformance tests and fails closed for unknown versions. Official
+documentation and access conditions are dated. Integration remains disabled
+until its evidence and acceptance suite passes.
+
+## §11. Non-custodial product boundary
+
+PaySwap 4.0 is a non-custodial payment-orchestration and evidence product.
+Customer funds remain with banks, licensed PSPs, e-money issuers, card
+issuers/networks or other authorized providers. Credential custody within
+the protected host store is not custody of funds.
+
+PaySwap does not accept deposits, maintain customer stored-value balances,
+hold float, pool/safeguard funds, issue wallets or stored value, perform its
+own settlement, become merchant of record, lend or extend credit. The
+append-only ledger is an operational/evidence journal, not a customer
+balance ledger, general ledger, balance sheet or proof that PaySwap holds
+funds. Provider acceptance is not settlement; external provider/bank
+read-back and reconciliation remain required.
+
+Any future custody, wallet, escrow, stored value, credit/lending, netting,
+clearing, settlement or merchant-of-record proposal requires a separate
+product and regulatory decision and is not authorized by this roadmap.
+
+## §12. Regulatory perimeter and launch gates
+
+Non-custodial architecture does not by itself determine licensing status.
+The legal perimeter depends on the deployed functions in each jurisdiction,
+including payment initiation, routing, switching, aggregation, facilitation,
+portal access, credential handling, data processing and the contractual
+role of each licensed partner.
+
+For Ghana, counsel must review the Payment Systems and Services Act, 2019
+(Act 987), current Bank of Ghana licence categories/notices and the actual
+operating model before launch. Act 987 includes technological services
+facilitating switching, routing, clearing and data management among regulated
+payment-service activities; the Bank of Ghana publishes PSP and PFTSP
+categories. This is a research flag, not a conclusion that a particular
+licence is required or not required. A written perimeter assessment and
+any required BoG engagement/licensed PSP or bank partnership are release
+gates for Ghana-facing commercial operation.
+
+The same country-by-country analysis applies to other corridors. A provider's
+licence does not automatically transfer to PaySwap; contract, outsourcing,
+data, AML/CFT, sanctions, disclosure and incident obligations must be
+allocated explicitly.
