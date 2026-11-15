@@ -18,6 +18,8 @@ packages/desktop/.e2e-home-*/
 packages/desktop/.e2e-artifacts/
 packages/desktop/.e2e-cache/
 packages/desktop/.e2e-network-capture/
+# P2 live 验收 harness 的构建/运行产物（build-live-harness.mjs 输出 + main.cjs 草稿目录）。
+packages/desktop/.live-harness/
 *.tsbuildinfo
 .DS_Store
 coverage/
