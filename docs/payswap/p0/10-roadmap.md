@@ -61,7 +61,7 @@ This register is maintained **in this file only**. Update it in the same PR that
   增完整性判定层（期望工件齐备 + RESULT↔evidence 互证 + env 文件 0600
   断言 + tar/base64 二进制安全取回——见 docs/payswap/p2/live-acceptance-evidence.md
   §6）。 |
-| P3 — Paystack, PayPal and protocol contracts | not_started | Starts after P2 is complete. Adds Paystack/PayPal read-only provider conformance plus versioned AP2/x402/MPP contracts; no provider writes. |
+| P3 — Paystack, PayPal and protocol contracts | in_progress | Verification/contract layer opened 2026-11-15 per the architect handoff (P2 remains the top blocker and stays in_progress — its last criterion is the four-category live read-back, blocked on account activation). Done this pass: provider-facts register (docs/payswap/provider-facts/ — dated official-source retrievals; Paystack docs site unreachable from the ops network and PayPal payouts page JS-rendered are recorded honestly, so no provider authSpecs are encoded — `unsupported_provider` remains the designed typed refusal) + versioned protocol contracts (packages/shared/src/payswap/protocols/: pinned AP2 v0.2 / x402 / MPP registry from verified official sources with honest null pins, adapter-boundary contract + closed protocol refusal vocabulary + registration gate, law-tested and pinned into CI). Next: close the ⚠ re-verification lists, then Paystack/PayPal read-only conformance behind them; no provider writes. |
 | P4 — Agent/provider discovery, eligibility and intent | not_started | Starts after P3. Adds distinct agent and provider catalogs, typed financial missions and bounded delegation-envelope contracts. |
 | P5 — Multi-agent financial missions in New Task | not_started | Starts after P4. Uses the existing ZCode agent runtime for specialist workflows; no agent receives financial authority. |
 | P6 — Protocol-aware deterministic routing | not_started | Starts after P5. Routes only through evidence-backed providers/rails; protocols remain boundary adapters. |
@@ -69,7 +69,7 @@ This register is maintained **in this file only**. Update it in the same PR that
 | P8 — Financial workspace, budgets and automations | not_started | Starts after P7. Class-A views and read-only automation first; autonomous actions remain mandate- and live-gate-constrained. |
 | P9 — Wider provider/protocol network and launch readiness | not_started | Starts after P8. Includes Ghana/corridor perimeter review, partner integrations and production conformance evidence. |
 
-**Last reconciled:** 2026-11-15 (architecture rebaseline only; no milestone status was advanced). The TL must update this register from actual merged Git state and CI evidence; never infer completion from a report or an unmerged branch.
+**Last reconciled:** 2026-11-15 (architecture rebaseline; P3 verification/protocol-contract layer opened per the architect handoff — provider facts + versioned protocol contracts, adapters still gated; P2 unchanged and remains the top blocker). The TL must update this register from actual merged Git state and CI evidence; never infer completion from a report or an unmerged branch.
 
 
 ## Wave plan
