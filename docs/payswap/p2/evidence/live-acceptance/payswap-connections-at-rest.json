@@ -1,0 +1,14 @@
+[
+  {
+    "connectionId": "5060109a-807d-4f4e-b62f-514ac93e5f6f",
+    "providerId": "stripe",
+    "mode": "test",
+    "displayName": "P2 Live Conversational",
+    "status": "connected",
+    "secretKinds": [
+      "api-key"
+    ],
+    "createdAt": "2026-11-14T22:53:46.635Z",
+    "updatedAt": "2026-11-14T22:53:46.635Z"
+  }
+]
