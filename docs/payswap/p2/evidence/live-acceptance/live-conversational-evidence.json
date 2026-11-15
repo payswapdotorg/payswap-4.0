@@ -1,0 +1,70 @@
+{
+  "harness": "payswap-p2-live-conversational",
+  "startedAt": "2026-11-14T22:53:46.548Z",
+  "steps": [
+    {
+      "name": "safeStorage backend is a real OS keychain backend",
+      "ok": true,
+      "detail": {
+        "backendSelected": "gnome_libsecret"
+      }
+    },
+    {
+      "name": "app-ready warmup: PSP key available from the real keyring",
+      "ok": true,
+      "detail": {
+        "keyAvailable": true
+      }
+    },
+    {
+      "name": "connect with the real restricted key lands connected",
+      "ok": true,
+      "detail": {
+        "connectionId": "5060109a-807d-4f4e-b62f-514ac93e5f6f",
+        "mode": "test"
+      }
+    },
+    {
+      "name": "at-rest: connections store contains the connection, never the key",
+      "ok": true,
+      "detail": {}
+    },
+    {
+      "name": "at-rest: credential store contains the connection id, never the key",
+      "ok": true,
+      "detail": {}
+    },
+    {
+      "name": "refresh against live api.stripe.com lands verified with the real account id",
+      "ok": true,
+      "detail": {
+        "kind": "verified",
+        "providerAccountId": "acct_1UblugEz3o7yd7Uo"
+      }
+    },
+    {
+      "name": "bridge mint produces a real MessageChannelMain transfer face",
+      "ok": true,
+      "detail": {}
+    },
+    {
+      "name": "conversational overview via the bridge: the connected account is listed",
+      "ok": true,
+      "detail": {
+        "count": 1
+      }
+    },
+    {
+      "name": "direct service getOverviewData returns real detail",
+      "ok": false,
+      "detail": {
+        "kind": "refused",
+        "refusal": {
+          "code": "read_back_unavailable",
+          "message": "The provider read-back for 'stripe' returned no capability evidence; refusing the overview detail."
+        }
+      }
+    }
+  ],
+  "failedAt": "direct service getOverviewData returns real detail"
+}
