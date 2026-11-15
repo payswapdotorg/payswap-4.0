@@ -7,13 +7,15 @@
  * `evaluatePayswapProtocolAdapterRegistration`（注册门）的法则行为：
  *
  * 1. **注册表不变量**：每个 pin 都有 https 官方源、可解析的 ISO 检索日期、
- *    非空已验证事实与非空再验证清单（清单空 = 消息面门已关 —— P3 开工时
- *    三个协议的门都还没关，如实）。
- * 2. **版本 pin 或如实缺席**：x402/mpp 的 versionPin 为 null（官方源未暴露
- *    可引用版本串 —— fail-closed：不猜版本）。
- * 3. **注册门闭集**：AP2 v0.2 与注册表一致 → registered；错误版本 →
- *    protocol_version_unsupported；x402/mpp（版本未验证）→
- *    protocol_version_unpinned；未注册协议 → protocol_not_registered。
+ *    非空已验证事实与非空再验证清单（清单空 = 消息面门已关 —— P3 二批
+ *    检索后三个协议的清单仍非空，消息面实现仍被挡，如实）。
+ * 2. **版本 pin 或如实缺席**：二批检索后三个协议均已 pin（AP2 v0.2 / x402
+ *    v2 / MPP draft-httpauth-payment-01，来源均为规范文档本体）；「版本未验证
+ *    → protocol_version_unpinned」的法则行为经合成注册表（null pin）继续
+ *    证明 —— 法则不因当前三 pin 全绿而丢失证明面。
+ * 3. **注册门闭集**：与注册表一致的描述符 → registered；错误版本 /
+ *    事实源漂移 → protocol_version_unsupported；未注册协议 →
+ *    protocol_not_registered；合成 null pin → protocol_version_unpinned。
  * 4. **事实源漂移拒绝**：描述符的 officialSourceUrl/factsRetrievedAt 与注册
  *    表不一致 → protocol_version_unsupported（事实漂移 fail-closed）。
  * 5. **拒绝码闭集**：PAYSWAP_PROTOCOL_REFUSAL_CODES 是唯一词汇 —— 无带警告
@@ -44,18 +46,30 @@ describe("PAYSWAP_PROTOCOL_PIN_REGISTRY invariants (doc 04 §5 dated-evidence di
       expect(pin.officialSourceUrl.startsWith("https://")).toBe(true);
       expect(ISO_DATE.test(pin.factsRetrievedAt)).toBe(true);
       expect(pin.verifiedBoundaryFacts.length).toBeGreaterThan(0);
-      // P3 开工事实：三个协议的消息面再验证清单都未清空（适配器实现被挡）。
+      // P3 二批检索后仍如实：三个协议的消息面再验证清单都未清空（适配器实现被挡）。
       expect(pin.reverifyBeforeAdapter.length).toBeGreaterThan(0);
     }
   });
 
-  it("AP2 pins the v0.2 spec page; x402 and MPP honestly record an unverified version string", () => {
+  it("pins exact version strings from specification documents (second retrieval pass 2026-11-15)", () => {
     expect(PAYSWAP_PROTOCOL_PIN_AP2.versionPin).toBe("v0.2");
     expect(PAYSWAP_PROTOCOL_PIN_AP2.officialSourceUrl).toBe("https://ap2-protocol.org/ap2/specification/");
-    expect(PAYSWAP_PROTOCOL_PIN_X402.versionPin).toBeNull();
-    expect(PAYSWAP_PROTOCOL_PIN_X402.officialSourceUrl).toBe("https://x402.org");
-    expect(PAYSWAP_PROTOCOL_PIN_MPP.versionPin).toBeNull();
-    expect(PAYSWAP_PROTOCOL_PIN_MPP.officialSourceUrl).toBe("https://stripe.com/blog/machine-payments-protocol");
+    expect(PAYSWAP_PROTOCOL_PIN_X402.versionPin).toBe("v2");
+    expect(PAYSWAP_PROTOCOL_PIN_X402.officialSourceUrl).toBe(
+      "https://github.com/x402-foundation/x402/blob/main/specs/x402-specification-v2.md",
+    );
+    expect(PAYSWAP_PROTOCOL_PIN_MPP.versionPin).toBe("draft-httpauth-payment-01");
+    expect(PAYSWAP_PROTOCOL_PIN_MPP.officialSourceUrl).toBe(
+      "https://github.com/tempoxyz/mpp-specs/blob/main/specs/core/draft-httpauth-payment-01.md",
+    );
+  });
+
+  it("carries the second-pass AP2 corrections as recorded facts (five roles, two in-scope modes)", () => {
+    const facts = PAYSWAP_PROTOCOL_PIN_AP2.verifiedBoundaryFacts.join("\n");
+    expect(facts).toContain("Shopping Agent");
+    expect(facts).toContain("Merchant Payment Processor");
+    expect(facts).toContain("There are two `modes`");
+    expect(facts).toContain("outside the scope of the current specification");
   });
 });
 
@@ -68,6 +82,22 @@ describe("evaluatePayswapProtocolAdapterRegistration (addendum §10 pinning gate
       factsRetrievedAt: PAYSWAP_PROTOCOL_PIN_AP2.factsRetrievedAt,
     });
     expect(outcome).toEqual({ kind: "registered", protocolId: "ap2", versionPin: "v0.2" });
+  });
+
+  it("registers x402 v2 and MPP draft-httpauth-payment-01 adapters against the second-pass pins", () => {
+    for (const pin of [PAYSWAP_PROTOCOL_PIN_X402, PAYSWAP_PROTOCOL_PIN_MPP]) {
+      const outcome = evaluatePayswapProtocolAdapterRegistration({
+        protocolId: pin.protocolId,
+        versionPin: pin.versionPin as string,
+        officialSourceUrl: pin.officialSourceUrl,
+        factsRetrievedAt: pin.factsRetrievedAt,
+      });
+      expect(outcome).toEqual({
+        kind: "registered",
+        protocolId: pin.protocolId,
+        versionPin: pin.versionPin,
+      });
+    }
   });
 
   it("refuses a wrong or future version (fail-closed on unknown versions)", () => {
@@ -83,18 +113,27 @@ describe("evaluatePayswapProtocolAdapterRegistration (addendum §10 pinning gate
     }
   });
 
-  it("refuses adapters for protocols whose version string is not yet verified (never guess a version)", () => {
-    for (const pin of [PAYSWAP_PROTOCOL_PIN_X402, PAYSWAP_PROTOCOL_PIN_MPP]) {
-      const outcome = evaluatePayswapProtocolAdapterRegistration({
-        protocolId: pin.protocolId,
+  it("refuses adapters for protocols whose version string is not yet verified (never guess a version — proven on a synthetic null-pin registry)", () => {
+    // 二批起三个协议均已 pin，但「版本未验证 → unpinned」的法则行为仍须证明：
+    // 以合成注册表（versionPin: null）孤立验证门本身，不碰生产注册表。
+    const syntheticPin: typeof PAYSWAP_PROTOCOL_PIN_AP2 = {
+      ...PAYSWAP_PROTOCOL_PIN_AP2,
+      protocolId: "ap2",
+      versionPin: null,
+    };
+    const syntheticRegistry = new Map([["ap2", syntheticPin] as const]);
+    const outcome = evaluatePayswapProtocolAdapterRegistration(
+      {
+        protocolId: "ap2",
         versionPin: "invented-v1",
-        officialSourceUrl: pin.officialSourceUrl,
-        factsRetrievedAt: pin.factsRetrievedAt,
-      });
-      expect(outcome.kind).toBe("refused");
-      if (outcome.kind === "refused") {
-        expect(outcome.refusal.code).toBe("protocol_version_unpinned");
-      }
+        officialSourceUrl: syntheticPin.officialSourceUrl,
+        factsRetrievedAt: syntheticPin.factsRetrievedAt,
+      },
+      syntheticRegistry,
+    );
+    expect(outcome.kind).toBe("refused");
+    if (outcome.kind === "refused") {
+      expect(outcome.refusal.code).toBe("protocol_version_unpinned");
     }
   });
 

@@ -19,18 +19,25 @@
 
 ## Sheets
 
-| Sheet | Subject | Status (2026-11-15) |
+| Sheet | Subject | Status (2026-11-15, second pass) |
 |---|---|---|
-| `stripe-readonly-endpoints.md` | Stripe read-only data-plane endpoint facts (P2/ADR-P2-1; baseline 2026-11-13) | pre-existing sheet — its own deadline: re-verify the Stripe rows when the Paystack/PayPal data-plane lists are established (P3, behind the ⚠ auth gates) |
-| `paystack.md` | Paystack auth/transfer facts | partially retrievable — API base live-verified; docs site unreachable from the ops network; all doc-04 facts remain ⚠ RE-VERIFY |
-| `paypal.md` | PayPal REST/OAuth/payouts facts | partially verified — OAuth 2.0 client-credentials + base URLs verified from official docs; payouts page is JS-rendered → dedupe facts remain ⚠ RE-VERIFY |
-| `protocols-ap2-x402-mpp.md` | AP2 / x402 / MPP protocol facts | boundary facts verified from official sources; version pins: AP2 v0.2 verified; x402/MPP version strings not yet verifiable (honestly unpinned) |
+| `stripe-readonly-endpoints.md` | Stripe read-only data-plane endpoint facts (P2/ADR-P2-1; baseline 2026-11-13) | **re-verified 2026-11-15** — S-RO-1..6 closed with one recorded drift (dispute id prefix `dp_*` → `du_*`); RAK permission model, webhook tolerance (5 min) and idempotency retention (24 h) verified; Connect OAuth posture deferred |
+| `paystack.md` | Paystack auth/transfer facts | **advanced 2026-11-15 (second pass)** — docs site still Cloudflare-blocked (even headless-browser JS + Turnstile); live API probes verify base URL, six read routes, both 401 envelopes; official SDK v1.2.2 (auto-generated from Paystack's OpenAPI spec, 2026-10-21) verifies the endpoint surface; official WooCommerce plugin corroborates HMAC-SHA512 webhook scheme; key-shape/permissions/transfer-enum/magic-number items stay ⚠ and keep `unsupported_provider` fail-closed |
+| `paypal.md` | PayPal REST/OAuth/payouts facts | **substantially verified 2026-11-15 (second pass)** — the JS-rendered payouts page blocker is resolved (page moved; new URL verified); dedupe semantics (30-day `sender_batch_id` window), item status enum, UNCLAIMED→RETURNED (30 days), webhook verification (self-verify preferred + postback API + exact headers), rate-limit posture, read-only scope URIs and the read data plane (`/v1/reporting/balances`, `/v1/reporting/transactions`, `/v1/customer/disputes`, `/v1/identity/openidconnect/userinfo`) all verified; remaining ⚠: documented default token lifetime (sample only), own-account scope grantability (live sandbox question), recipient-verification surface |
+| `protocols-ap2-x402-mpp.md` | AP2 / x402 / MPP protocol facts | **all three pinned 2026-11-15 (second pass)** — x402 **v2** (canonical spec in x402-foundation/x402 `specs/`; coinbase/x402 is a fork); MPP **draft-httpauth-payment-01** (tempoxyz/mpp-specs + paymentauth.org + mpp.dev; Tempo Labs + Stripe authors); AP2 v0.2 with two recorded corrections (five roles; two in-scope modes — A2A delegation explicitly out of scope) and the published mandate `vct` versioning + SD-JWT securing; adapter message-face lists narrowed, not closed |
 
 ## Retrieval environment honesty
 
-Retrievals on 2026-11-15 were performed from the TL ops environment: plain
-HTTPS fetches (no JS rendering). Consequences, recorded per sheet: pages that
-require JavaScript rendering (e.g. PayPal's payouts reference) or that block
-the retrieval network (e.g. Paystack's docs site, HTTP 403) could **not** be
-re-verified this pass. Those items stay ⚠ and gate their adapter code. This is
-preferred over citing stale or second-hand facts.
+- **2026-11-15 first pass**: plain HTTPS fetches (no JS rendering) from the TL
+  ops environment. Paystack docs HTTP 403; PayPal payouts page empty without
+  JS — recorded per sheet.
+- **2026-11-15 second pass**: headless-browser JS rendering (developer.paypal.com
+  fully readable — the payouts blocker was a page move, not a block), live
+  unauthenticated/fake-credential API probes (zero real secrets, zero writes),
+  official first-party code artifacts (npm registry tarballs, GitHub repos) and
+  `raw.githubusercontent.com` spec sources. `paystack.com` remains Cloudflare-
+  blocked including the interactive challenge; `archive.org` answered 429 for
+  the whole pass; `api.github.com` REST was rate-limited (github.com HTML and
+  raw endpoints worked); IETF datatracker answered 403 behind a Cloudflare
+  challenge. Where a source was unreachable it is recorded as unreachable —
+  preferred over citing stale or second-hand facts.

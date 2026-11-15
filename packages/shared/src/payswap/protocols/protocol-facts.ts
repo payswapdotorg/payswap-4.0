@@ -47,9 +47,13 @@ export interface PayswapProtocolPin {
 const RETRIEVED_AT = "2026-11-15";
 
 /**
- * AP2 v0.2 —— 官方规范页检索 2026-11-15（https://ap2-protocol.org/ap2/specification/）。
- * 版本串 v0.2 照录规范页标题（「Agentic Payment Protocol (v0.2)」）；站点页头
- * 同时使用「Agent Payments Protocol」措辞 —— 两名并存如实记录，不裁决正名。
+ * AP2 v0.2 —— 官方规范页检索 2026-11-15 两批（首批 plain HTTPS；二批补
+ * raw.githubusercontent.com 规范 md：specification / payment_mandate /
+ * checkout_mandate / agent_authorization，repo google-agentic-commerce/AP2
+ * 发布 tag v0.2.0）。版本串 v0.2 照录规范页标题（「Agentic Payment Protocol
+ * (v0.2)」）；站点页头同时使用「Agent Payments Protocol」措辞 —— 两名并存
+ * 如实记录，不裁决正名。二批事实含两处对首批记录的更正（roles 五枚举、
+ * modes 两枚举），更正依据均为规范正文逐字引文。
  */
 export const PAYSWAP_PROTOCOL_PIN_AP2: PayswapProtocolPin = {
   protocolId: "ap2",
@@ -60,66 +64,92 @@ export const PAYSWAP_PROTOCOL_PIN_AP2: PayswapProtocolPin = {
   verifiedBoundaryFacts: [
     "spec 页标题自述「Agentic Payment Protocol (v0.2)」—— 为 agent 执行的支付交易提供安全协议，并使用 Agent Authorization model",
     "站点页头使用「Agent Payments Protocol - AP2」措辞（两名并存，均照录）",
-    "角色集含 Trusted Surface (TS)：「a UI surface that is trusted to get informed user consent for an Intent before creating a user-signed Mandate」—— PaySwap 侧对应既有的 trusted 非代理 Class-B 面（doc 12 §6 边界规则）",
-    "Payment Mandate 模式三枚举照录规范页目录：Direct (Human Present) / Autonomous (Human Not Present) / Agent-to-Agent Delegation",
+    "【二批更正】角色集为五枚举（Shopping Agent / Credential Provider / Merchant / Merchant Payment Processor / Trusted Surface）；「The following role MUST be non-agentic: Trusted Surface」；单实体可兼多角色。注意：AP2 的角色缩写 MPP（Merchant Payment Processor）与 Machine Payments Protocol 的 MPP 缩写撞名 —— 两者无关，均照录不更名",
+    "角色 Trusted Surface (TS)：「a UI surface that is trusted to get informed user consent for an Intent before creating a user-signed Mandate」—— PaySwap 侧对应既有的 trusted 非代理 Class-B 面（doc 12 §6 边界规则）",
+    "【二批更正】§Modes 明文只有两模式：「There are two `modes` that AP2 can consider to operate in.」（Human Present (Direct) / Human Not Present (Autonomous)）；§Agent-to-Agent Delegation 明文「This is outside the scope of the current specification.」—— 首批按目录著录的三模式记录就此更正",
+    "Mandate Versioning 已公布且为精确匹配：「Each AP2 Mandate type identifies its schema using the `vct` claim. The `vct` value includes a numeric suffix that acts as a schema version number (e.g. `mandate.payment.1`, `mandate.checkout.open.1`). Implementations MUST match the exact `vct` string, including the version suffix.」",
+    "VDC 形态已验证：「AP2 specifies the use of `SD-JWT`s for securing the Payment and Checkout Mandates」（其他 VDC 仅列为可能）",
+    "Payment Mandate 字段级 schema 已随 spec md 公布（payment_mandate.md：vct=mandate.payment.1 / mandate.payment.open.1；字段含 _sd_alg/allowed/currency/execution_date/frequency/max/max_occurrences/min/not_after/not_before/payee/payment_amount/payment_instrument/vct；Payment Mandate 以 Checkout JWT 的密码学哈希绑定特定 Checkout）",
+    "Agent Authorization 机制页已公布（agent_authorization.md：OpenID4VP User Credential delegation（transaction_data 携 base64url 编码的 mandate-delegation 对象，type 必须为 `delegate`）；Mandate Delegation / Mandate Structure / Action Authorization / Errors 各节在案）",
     "Checkout Mandate + Receipt 与 Payment Mandate + Receipt 成对，作为争议时点的证据（spec 自述）",
-    "AP2 自述「operates as a security feature within a Commerce Protocol」（协议是 Commerce Protocol 内的安全特性，不是支付执行引擎 —— 与 addendum §10 边界一致）",
+    "AP2 自述「operates as a security feature within a Commerce Protocol」（协议是 Commerce Protocol 内的安全特性，不是支付执行引擎 —— 与 addendum §10 边界一致）；自述「designed explicitly to be compatible with the Universal Commerce Protocol (UCP)」",
   ],
   reverifyBeforeAdapter: [
-    "mandate/receipt 的字段级 schema（规范页结构需逐节核对后才能定型消息面）",
-    "Verifiable Digital Credential Formats (VDCs) 的形态与验证规则",
-    "Agent Authorization Framework 的机制细节（进站消息的签名/验签要求）",
-    "Mandate Versioning 规则（版本兼容矩阵与拒收语义）",
+    "OpenID4VP delegation 对象与 Action Authorization 错误语义的字段级抽取（页面已公布 —— 适配器消息面测试需逐字段钉住并引证，不是重新检索）",
+    "checkout mandate 字段集的字段级抽取（同上：页面已公布，逐字段钉进消息面测试）",
   ],
 };
 
 /**
- * x402 —— 官方站检索 2026-11-15（https://x402.org）。落地页未发布可引用的
- * 版本串（H1/文案无版本号）→ versionPin 如实为 null：适配器实现被
- * protocol_version_unpinned 挡住，直至从官方规范源验证到版本串。
+ * x402 v2 —— 规范文档源检索 2026-11-15 二批
+ * （https://github.com/x402-foundation/x402/blob/main/specs/x402-specification-v2.md，
+ * raw 逐字验证：「# X402 Protocol Specification」/「**Protocol Version**: 2」）。
+ * 溯源：github.com/coinbase/x402 为 fork（页面内嵌 repository_is_fork: true、
+ * repository_parent_nwo: x402-foundation/x402）—— x402 Foundation 仓为 canonical；
+ * x402.org 与 docs.x402.org 均链接该仓。官方渲染文档 docs.x402.org 自述
+ * 「the credibly neutral source of truth for x402 … under the Apache-2.0
+ * license」。首批的如实 null 就此解除：版本串 v2 已从规范文档验证在案。
  */
 export const PAYSWAP_PROTOCOL_PIN_X402: PayswapProtocolPin = {
   protocolId: "x402",
   officialName: "x402",
-  versionPin: null,
-  officialSourceUrl: "https://x402.org",
+  versionPin: "v2",
+  officialSourceUrl: "https://github.com/x402-foundation/x402/blob/main/specs/x402-specification-v2.md",
   factsRetrievedAt: RETRIEVED_AT,
   verifiedBoundaryFacts: [
-    "自述「an open, neutral standard for internet-native payments」",
-    "交互流自述：未付费请求到达时服务端回 HTTP 402 Payment Required，客户端支付后重试（「If a request arrives without payment, the server responds with HTTP 402, prompting the client to pay and retry」）",
-    "落地页示例为服务端 middleware 形态（paymentMiddleware 按路由声明 accepts 网络/scheme 列表）",
-    "落地页文案提及 AI agent 以 stablecoins 即时支付（「AI agent pays instantly with stablecoins」）—— rail 事实以官方规范为准，落地页文案不编码为规则",
+    "自述「an open, neutral standard for internet-native payments」（x402.org 落地页，首批）",
+    "规范文档头逐字：「# X402 Protocol Specification」/「**Protocol Version**: 2」（specs/x402-specification-v2.md；同目录存在 v1 规范「**Protocol Version**: 1」）",
+    "canonical 仓 x402-foundation/x402（「A payments protocol for the internet. Built on HTTP.」）；coinbase/x402 为 fork（repository_is_fork: true、repository_parent_nwo: x402-foundation/x402）",
+    "HTTP transport（specs/transports-v2/http.md）：「The server indicates payment is required using the HTTP 402 'Payment Required' status code.」+「HTTP 402 status code with `PAYMENT-REQUIRED` header」；头集 PAYMENT-REQUIRED（→客户端，base64 编码 PaymentRequired）/ PAYMENT-SIGNATURE（→服务端，base64 编码 PaymentPayload）/ PAYMENT-RESPONSE（→客户端，base64 编码 SettlementResponse）；「None of the three headers above is CORS-safelisted.」",
+    "V1→V2 迁移表（docs.x402.org/guides/migration-v1-to-v2.md）：V1 头 X-PAYMENT / X-PAYMENT-RESPONSE、字符串网络格式（base-sepolia）、x402Version: 1；V2 头 PAYMENT-SIGNATURE / PAYMENT-RESPONSE、CAIP-2 网络格式（eip155:84532）、x402Version: 2。【更正】不存在「X-PAY」头 —— V1 客户端头为 X-PAYMENT",
+    "402 载荷示例（docs.x402.org/schemes/overview.md）：JSON 含 x402Version: 2、error、resource{url,description,mimeType}、accepts[{scheme,network,amount,asset,payTo,maxTimeoutSeconds,extra}]（示例 scheme=exact、network=eip155:84532、USDC 资产地址；另有 solana:EtWTRABZaYq6iMfeYKouRu166VU2xqa1）",
+    "scheme 集：v2 核心规范列「including `exact`, `upto`, and `batch-settlement`」；docs overview 增列 auth-capture（escrow 可退款）；exact=固定价、upto=单请求用量计费、batch-settlement=高频/重复微支付",
+    "网络（CAIP-2，docs.x402.org/core-concepts/network-and-token-support.md）：eip155:<chainId>、solana:<genesisHash>、tvm/algorand/stellar/aptos/hedera/keeta/near/canton/ccd/xrpl/cardano/sui；scheme overview 另列 Bitcoin Lightning（lnbtc）",
+    "EVM 转账方法（specs/schemes/exact/scheme_exact_evm.md）：EIP-3009 / Permit2 / ERC-7710；缺省 assetTransferMethod 为 eip3009",
+    "facilitator：「The server verifies and settles the payment independently, or by leveraging an x402 facilitator's /verify and /settle endpoints」（docs introduction）",
+    "npm 包溯源：x402 / x402-fetch @ 1.2.0（author 「x402 Foundation」，repository git+https://github.com/x402-foundation/x402.git，Apache-2.0）",
   ],
   reverifyBeforeAdapter: [
-    "官方规范文档的 URL 与可引用版本串（落地页未暴露 —— 找到规范源并检索日期在案前不猜）",
-    "402 payment request/response 的字段级 wire format",
-    "接受的资产/网络/scheme 闭集与验证要求",
-    "收据/重放保护语义（未知 —— 不发明）",
+    "per-scheme 的 PaymentRequired / PaymentPayload / SettlementResponse 字段级 schema（v2 规范与各 scheme 分册已公布 —— 适配器消息面测试需逐字段钉住并引证）",
+    "facilitator /verify 与 /settle 的语义与验证规则（进站结算声明仍按 doc 12 §6 为不可信输入）",
+    "maxTimeoutSeconds 之外的重放/超时语义（未验证到的不发明）",
   ],
 };
 
 /**
- * MPP —— Stripe 官方公告检索 2026-11-15
- * （https://stripe.com/blog/machine-payments-protocol）。公告页非规范文档，
- * 无版本串 → versionPin 如实为 null（同 x402 处理）。
+ * MPP draft-httpauth-payment-01 —— 规范套件源检索 2026-11-15 二批
+ * （https://github.com/tempoxyz/mpp-specs/blob/main/specs/core/draft-httpauth-payment-01.md，
+ * raw 逐字验证 kramdown-rfc YAML：title: The "Payment" HTTP Authentication
+ * Scheme / docname: draft-httpauth-payment-01 / version: "01"；作者 Tempo Labs
+ * + Stripe）。渲染版 paymentauth.org/draft-httpauth-payment-01.html；官方站
+ * mpp.dev（machinepayments.dev 与 machinepaymentsprotocol.org 均 301 → mpp.dev）。
+ * IETF datatracker（draft-ryan-httpauth-payment）本批 Cloudflare 403 不可读 ——
+ * 草案名与 -01 修订号由 mpp-specs README 与 paymentauth.org 渲染套件佐证，
+ * datatracker 直读仍留在再验证清单。首批的如实 null 就此解除。
  */
 export const PAYSWAP_PROTOCOL_PIN_MPP: PayswapProtocolPin = {
   protocolId: "mpp",
   officialName: "Machine Payments Protocol (MPP)",
-  versionPin: null,
-  officialSourceUrl: "https://stripe.com/blog/machine-payments-protocol",
+  versionPin: "draft-httpauth-payment-01",
+  officialSourceUrl: "https://github.com/tempoxyz/mpp-specs/blob/main/specs/core/draft-httpauth-payment-01.md",
   factsRetrievedAt: RETRIEVED_AT,
   verifiedBoundaryFacts: [
-    "自述「an open standard, internet-native way for agents to pay — co-authored by Tempo and Stripe」",
-    "自述「provides a specification for agents and services to coordinate payments programmatically, enabling microtransactions, recurring payments, and more」",
-    "自述 Stripe 用户可经 MPP 以法币收款：「fiat with cards and buy now, pay later payment methods via Shared Payment Tokens (SPTs)」",
-    "公告示例含按会话计费的服务消费（Browserbase 按 session 付费的 headless 浏览器）—— 与 doc 12 §6「Metered/repeated charges require envelope bounds」的边界对应",
+    "自述「an open standard, internet-native way for agents to pay — co-authored by Tempo and Stripe」（Stripe 公告，首批）",
+    "核心草案逐字（abstract）：「This document defines the 'Payment' HTTP authentication scheme, enabling HTTP resources to require a payment challenge to be fulfilled before access. The scheme extends HTTP Authentication, using the HTTP 402 'Payment Required' status code.」",
+    "交互流（草案 ASCII 图）：402 + WWW-Authenticate: Payment id/method/intent/request → 客户端支付 → 以 Authorization: Payment <credential> 重试 → 200 OK + Payment-Receipt",
+    "术语逐字：「Payment Challenge: A `WWW-Authenticate` header with scheme 'Payment'…」；「Payment Credential: … The default field name is `Authorization`. A Payment challenge MAY select `Payment-Authorization` with the `header` parameter」；「Request: Method-specific data … Encoded as base64url JSON in the `request` parameter」",
+    "失败语义：malformed-credential / invalid-challenge / payment-expired / verification-failed 问题类型均答 402 并携新 challenge",
+    "intent 集（mpp.dev 官方站）：Charge（一次性）/ Session（按量计费）/ Subscription（周期固定）",
+    "SPT 机制（draft-stripe-charge-00.txt，paymentauth.org）：「Shared Payment Token (SPT): A single-use token (prefixed with spt_) that represents authorization to charge a payment method」；§10.1 SPT Single-Use Constraint",
+    "治理（mpp.dev/governance）：核心锚定 IETF（「Anchoring the core at the IETF means no single company controls i[t]」；IETF Trust 许可）",
+    "草案套件广度（paymentauth.org）：core（-01）+ discovery/charge/session/subscription/transport-mcp 各 rail 分册（多为 -00）",
+    "mpp.dev 页面载有 <body data-version=1.0> —— 观察到但语义未标注，不作为协议版本引用（草案修订号才是可辩护的 pin）",
+    "SDK 生态（mpp-specs README）：TS wevm/mppx（npm mppx 0.19.0）/ Python tempoxyz/pympp / Rust tempoxyz/mpp-rs / Go tempoxyz/mpp-go / Ruby stripe/mpp-rb",
   ],
   reverifyBeforeAdapter: [
-    "规范文档的官方 URL 与版本串（公告页非规范 —— 找到规范源并检索日期在案前不猜）",
-    "machine-payment session 的生命周期与消息 schema",
-    "SPT（Shared Payment Tokens）机制与 PaySwap 凭据面的关系",
-    "microtransaction/recurring 的计费事件语义与验证规则",
+    "IETF datatracker 直读 draft-ryan-httpauth-payment 的修订/状态/有效期（本批 Cloudflare 403 —— 后续浏览器渲染会话重试）",
+    "各 rail 分册（charge/session/subscription，多为 -00 修订）的字段级 wire 细节钉进消息面测试",
+    "MCP transport 草案（draft-payment-transport-mcp-00）语义",
   ],
 };
 
