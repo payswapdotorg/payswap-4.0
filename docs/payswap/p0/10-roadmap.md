@@ -8,6 +8,10 @@ before attempting every transactional feature across all providers. Live money
 movement stays disabled until the complete provider, beneficiary, authorization
 and reconciliation acceptance suite passes (operator-gated).
 
+## Approved P3–P9 product direction (2026-11-15)
+
+P3–P9 deliver one merged product: a payment-centric, multi-agent ZCode harness backed by the existing PaySwap financial core. Outcome-oriented agent discovery, mission coordination, delegated specialist work and external payment-protocol interoperability are added above—not beside—the PaySwap account, capability, eligibility, authorization, execution, evidence-ledger and reconciliation domains. There is no second runtime, provider registry, execution authority or ledger. Both the current product and PaySwap 4.0 are non-custodial orchestration products; custody, wallets, stored value and lending are out of scope. The binding architecture is [12-agent-payment-harness-architecture.md](12-agent-payment-harness-architecture.md), constrained by [11-architecture-addendum.md](11-architecture-addendum.md). This decision does not change P0–P2 or their recorded completion evidence.
+
 ## Live delivery status — single authoritative register
 
 This register is maintained **in this file only**. Update it in the same PR that proves a milestone gate. Issue trackers, PR descriptions, project boards, chat messages and dashboards may link here, but must not create competing status or acceptance records.
@@ -41,15 +45,15 @@ This register is maintained **in this file only**. Update it in the same PR that
   payswap-backups/evidence/live-acceptance/（e2e-live.log 155KB、harness2.log、
   live-conversational-evidence.json、at-rest stores）。行保持 in_progress——四类别
   对话数据流落地或 TL 按现证据裁决 complete，二者其一。 |
-| P3 — Paystack and PayPal | not_started | Starts after P2 is complete; provider-specific auth facts require dated official-source verification. |
-| P4 — Capability registry, eligibility and intent compiler | not_started | Starts after P3 is complete. |
-| P5 — Conversational New Task workflow | not_started | Starts after P4 is complete. |
-| P6 — Deterministic multi-provider route intelligence | not_started | Starts after P5 is complete. |
-| P7 — Execution, ledger and reconciliation | not_started | Starts after P6 is complete; live activation remains separately operator-gated. |
-| P8 — Financial surfaces and automations | not_started | Starts after P7 is complete; live activation remains separately operator-gated. |
-| P9 — Wider provider network and capability learning | not_started | Starts after P8 is complete. |
+| P3 — Paystack, PayPal and protocol contracts | not_started | Starts after P2 is complete. Adds Paystack/PayPal read-only provider conformance plus versioned AP2/x402/MPP contracts; no provider writes. |
+| P4 — Agent/provider discovery, eligibility and intent | not_started | Starts after P3. Adds distinct agent and provider catalogs, typed financial missions and bounded delegation-envelope contracts. |
+| P5 — Multi-agent financial missions in New Task | not_started | Starts after P4. Uses the existing ZCode agent runtime for specialist workflows; no agent receives financial authority. |
+| P6 — Protocol-aware deterministic routing | not_started | Starts after P5. Routes only through evidence-backed providers/rails; protocols remain boundary adapters. |
+| P7 — Delegated authorization, execution and reconciliation | not_started | Starts after P6. Adds host-derived closed grants under signed envelopes, the single execution authority and ledger; live activation remains separately operator-gated. |
+| P8 — Financial workspace, budgets and automations | not_started | Starts after P7. Class-A views and read-only automation first; autonomous actions remain mandate- and live-gate-constrained. |
+| P9 — Wider provider/protocol network and launch readiness | not_started | Starts after P8. Includes Ghana/corridor perimeter review, partner integrations and production conformance evidence. |
 
-**Last reconciled:** 2026-11-12. The TL must update this register from actual merged Git state and CI evidence; never infer completion from a report or an unmerged branch.
+**Last reconciled:** 2026-11-15 (architecture rebaseline only; no milestone status was advanced). The TL must update this register from actual merged Git state and CI evidence; never infer completion from a report or an unmerged branch.
 
 
 ## Wave plan
@@ -139,89 +143,47 @@ typed refusals where unconfigured; read-only ops (balances, payment objects,
 customers, disputes…) run conversationally; NO write operation exists in the tool
 surface yet; browser-verified connection/onboarding flow; battery green.
 
-### P3 — Paystack and PayPal on the same contract, their real auth models
-**Scope:** Paystack secret-key auth + recipient→transfer→reference→status
-lifecycle; PayPal client-credential vs merchant-onboarding vs account-consent
-distinction; verified recipients only.
-**Acceptance:** the P2 acceptance contract re-run per provider; **every deliverable
-04 fact that P3 encodes is re-verified against live official provider documentation
-with retrieval dates recorded** (the dated-evidence discipline of deliverable 05 §4
-applies to the auth models themselves); no invented OAuth, recipient codes, or
-email addresses — the typed refusals appear instead; battery green.
+### P3 — Provider expansion and protocol contracts
 
-### P4 — Capability registry, eligibility, and the financial intent compiler
-**Acceptance:** capability registry answers eligibility queries with real
-country/currency/method/amount/product/entitlement/purpose restrictions from
-evidence; the intent compiler turns natural-language financial asks into typed
-intents (with refusals, never guesses); property/engineering tests over both;
-battery green.
+**Scope:** extend the P2 provider contract to Paystack and PayPal, keeping both read-only until P7. Implement provider authentication, onboarding, recipient and read-back behavior only where current official provider evidence proves it. In parallel, freeze a versioned `PaymentProtocolAdapter` contract, distinct from the PSP provider-adapter contract. Establish AP2, x402 and Stripe/Tempo MPP fact sheets and conformance fixtures. Treat Visa Trusted Agent Protocol and Mastercard Agent Pay for Machines as research/partner-dependent targets until official specifications and access are verified.
 
-### P5 — Conversational financial operations in the original New Task interface
-**Acceptance:** the deliverable 07 acceptance look works end-to-end
-browser-verified — discover, plan, approve, execute (sandbox/test mode only),
-reconcile — all inside the unchanged New Task experience; the New Task zero-diff
-proof still green.
+**Acceptance:** P2's read-only account/capability contract passes for each provider; every encoded provider/protocol fact has an official URL, retrieval date, version and re-verification date; unknown auth, beneficiary, country, currency or product details refuse typed; no new provider write tool or protocol-triggered write exists; protocol adapters have no raw PSP credentials, route, authorization, execution or ledger-write access; protocol messages/receipts pass positive, malformed, replay, stale-version and signature/refusal tests; preservation and security batteries green.
 
-### P6 — Deterministic multi-provider route intelligence
-**Acceptance:** direct-route baseline always computed first; existing/conditional/
-opportunity routes are distinct typed results; conditional/opportunity NEVER
-labelled executable until requirements verified satisfied; the no-bypass battery
-(INV-30: decomposition never changes purpose classification/eligibility — carried
-from PaySwap 3.0) machine-asserted; shared leg-validation structurally binds
-planner to executor (deliverable 06); property tests green.
+### P4 — Agent/provider discovery, eligibility and financial intent
 
-### P7 — Execution authority, provider operations, and reconciliation
-**Scope:** the full authorization-tuple binding (principal, source account,
-verified recipient, amount, currency, purpose, full route+legs, max fees, FX
-conditions, provider operations, expiry; material changes re-authorize — the
-addendum §1.3 grant, single-use, host-minted only); the multi-leg saga with
-per-leg idempotency, partial-failure handling, recovery, reconciliation; webhook
-ingress (additive server route); unknown outcomes never auto-retried when
-duplication is possible; append-only ledger under the addendum §4 authority model
-(one authoritative host per deployment — under the **fenced lease**, addendum
-§4.6: a fencing generation persisted in the ledger, incremented on every
-acquisition, validated at the repository write boundary, **and an owner-checked
-release** — the upstream lock's pid + instance id + nonce ownership check
-(`channelRuntime.ts:220-232`) preserved with the fencing generation added, so a
-stale holder cannot delete a successor's lock — with the SQLite server
-topology requiring one **explicitly configured** authoritative instance per
-logical ledger/workspace; server topology moves authority to the server host;
-hosted multi-user requires the PostgreSQL-ledger + authenticated principals
-decision **at this wave's live-gate review**).
-**Acceptance:** saga/execution property tests; **negative E2E rows N10–N12 green**
-(tuple-deviation, single-use, expiry refusals — addendum §1.7); **ledger rows
-N23–N24 + N36–N38 + N42 green** (second host process against one SQLite ledger refuses
-within the boot budget under the fenced lease-based authority lock — typed
-`ledger_authority_unavailable`, no financial services; crash arm: no takeover
-before lease TTL, and chain verification runs before the first post-takeover
-write; replica write rejected at the repository; fencing arms — the stale
-holder's post-takeover write refuses typed `ledger_authority_lost` with the hash
-chain unaffected, simultaneous acquisition produces exactly one winner with the
-generation incremented exactly once, a write presenting a stale generation
-refuses inside the write transaction, and the stale holder's attempt to release
-or delete the successor's lock is a no-op under the owner/nonce/generation
-check — addendum §4.6); reconciliation closes the
-loop against provider
-read-back; the unknown-outcome law machine-asserted; ledger hash-chain
-verification test; **chain-verified restore** (addendum §4.4 — a restored ledger
-loads only after chain verification passes); battery green. **Live money movement
-remains operator-gated off, and hosted multi-user or horizontally scaled
-deployments refuse financial activation until the central PostgreSQL ledger
-and authenticated principals are in place** (addendum §4.6 — activation-time
-refusal, a hard precondition, not a recommendation).
+**Scope:** complete the evidence-backed provider capability registry and deterministic eligibility/policy engine; add the financial intent compiler and typed mission/task contracts; introduce a separate read-only Agent Catalog derived from installed ZCode agent/plugin/skill/workflow manifests and their trust state. Add typed `FinancialMission`, `AgentTask`, `FinancialArtifact` and human-signed authority-envelope schemas. Agent discovery is outcome-first, but an agent listing never grants execution, credentials or financial permissions.
 
-### P8 — UI Plugins, financial operations surfaces, and automations
-**Acceptance:** the financial workspace toggle and Class-A informational cards
-(route plans, evidence, workspace panel) on the sanctioned UI Plugin surfaces —
-the authorization card remains host-rendered in every wave (addendum §1.6.0);
-automations over read-only financial events; the complete
-provider/beneficiary/authorization/reconciliation acceptance suite drafted and
-dry-run in test mode — the gate P7+ must pass before live activation.
+**Acceptance:** provider capability and agent catalog are separate schemas, sources and read models; neither makes the other's records authoritative; catalog descriptors identify publisher/version, outcomes, input/output schemas, requested tools/scopes, credential posture and trust state; untrusted agents cannot execute; compiler drafts are deterministically validated; purpose/country/currency/method/amount/product/entitlement/beneficiary and provider restrictions return typed refusals; envelope constraints are canonical, versioned, expiring and revocable; property tests prove parent-child constraints can only narrow; aggregate budget/count semantics are deterministic; agents/models cannot mint grants; no provider writes.
 
-### P9 — Wider PSP network and provider capability learning
-**Acceptance:** the provider research tooling (dated evidence files) feeds the
-registry; new providers join via the deliverable 05 contract without financial-
-layer semantic changes; per-provider acceptance = the P3 contract.
+### P5 — Multi-agent financial missions in the original New Task experience
+
+**Scope:** add the payment-centric financial task interface and mission coordinator using the existing ZCode agent/task runtime. Users discover/select trusted agents by outcome and run specialist roles such as procurement, invoice extraction/matching, supplier verification, budget/policy, compliance evidence, payment discovery, route analysis and audit. The coordinator assigns typed tasks, validates outputs, records parent/child task lineage and presents a mission timeline. The financial interface is additive; normal ZCode New Task behavior and controls remain available.
+
+**Acceptance:** browser-verified missions traverse real ZCode agent execution paths, not a parallel harness; specialist tasks are principal-, workspace-, version- and tool-scoped; outputs are schema/provenance validated; no agent has direct PSP write access, provider secrets or a grant-minting path; inter-agent artifacts cannot alter identity, principal, authority or provider facts; the user can inspect evidence, see missing prerequisites and interrupt/revoke a mission; protected finance surfaces remain Class A informational or host-rendered Class B authorization; New Task preservation and desktop/remote gates green.
+
+### P6 — Protocol-aware deterministic route intelligence
+
+**Scope:** extend deterministic routing across connected providers, payment methods and supported rails. Add protocol translation at the edge for AP2 mandates/receipts, x402 payment challenges, MPP sessions and—only where documented partner specifications permit—agent identity/portal messages. Route planning, provider capability evaluation, FX and eligibility stay in existing PaySwap domains. Direct route remains the baseline; existing, conditional and opportunity routes stay distinct.
+
+**Acceptance:** every candidate route is evaluated against evidence-backed provider/account capabilities, legal corridor, purpose, beneficiary, currency, amount, fees, FX, deadline, availability and protocol requirements; unknown protocol fields fail closed; no protocol adapter can mark its own route eligible; conditional/opportunity routes are not executable until verified; shared leg validation structurally binds planner to executor; INV-30 decomposition/no-bypass property battery green; route results reproducible from evidence snapshots and explainable.
+
+### P7 — Delegated authorization, execution authority and reconciliation
+
+**Scope:** deliver the host-owned authority-envelope evaluator and child-delegation chain; preserve the exact transaction grant as the only authorization to submit a provider write. Direct mode requires the existing trusted human approval. Autonomous mode may derive a closed, single-use grant only through deterministic host evaluation of an unexpired human-signed envelope and every child constraint. Deliver multi-leg saga/idempotency, partial-failure recovery, webhook/event ingress, provider read-back, the one append-only financial evidence ledger, hash-chain/restore and existing single-writer/fenced authority topology. No agent, automation, protocol adapter or provider adapter becomes another executor. PaySwap remains non-custodial.
+
+**Acceptance:** authorization tuple includes authenticated human principal, delegated agent identity/version, mission/task, parent/child envelope chain, source account, verified recipient, amount/currency/purpose, full route/legs, fees, FX, provider operations, expiry and digest; direct and autonomous paths tested; out-of-scope, expired, revoked, replayed, over-budget, over-count, stale-evidence, changed-tuple, unverified-recipient and role-refused operations produce no provider write; child constraints provably never widen parent scope; concurrent aggregate-budget consumption is atomic; single-use grants and per-leg idempotency hold; unknown outcomes are never unsafely retried; reconciliation closes against provider/bank read-back; N10–N12 and N23–N24/N36–N38/N42 remain green; chain-verified restore passes; no customer-balance/custody ledger is introduced. Live money remains operator-gated off; hosted/horizontal activation remains refused until central PostgreSQL ledger and authenticated-principal topology requirements pass.
+
+### P8 — Financial workspace, budgets, evidence surfaces and automations
+
+**Scope:** deliver payment-centric workbench views for agent selection, mission progress, supplier/invoice evidence, budgets, mandates, route comparisons, approvals and reconciliation through existing New Task/UI Plugin seams. Add automation triggers for read-only events and bounded mandate-backed tasks with explicit owner, expiry, rate and budget constraints. Class-A information remains plugin-rendered; Class-B authorization remains host-rendered. Existing ZCode UI and controls remain preserved.
+
+**Acceptance:** complete browser/E2E journeys for setup, agent discovery, mission creation, mandate approval/revocation, route inspection, sandbox/test-mode execution and reconciliation; opt-out/disable/uninstall blocks future tasks and disposes protected rendered content; automations cannot create authority and can request host evaluation only under an active envelope; read-only events cannot be confused with executable permissions; full provider/beneficiary/authorization/reconciliation suite repeatable in test mode; live gate remains a separate operator action.
+
+### P9 — Wider provider/protocol network and production-readiness
+
+**Scope:** add providers/corridors one at a time through the common provider contract; add production protocol integrations only after source/version verification, partner access, conformance and legal review. Target B2B accounts payable, procurement/supplier payments, cross-border business payments and agent purchases of digital services. Evaluate Visa Trusted Agent Protocol for supplier-portal identity and Mastercard Agent Pay for Machines where specifications/access permit; neither is assumed to be a generic payment rail or public API. For Ghana, validate actual GHS, bank/mobile-money capabilities and licensed-partner model with current official evidence.
+
+**Acceptance:** each provider passes P3 contract and P7 security/reconciliation; each protocol passes versioned conformance, trust, replay, privacy and refusal suites; capability learning creates provenance/expiry-backed evidence, never inferred facts; partner/country constraints explicit; Ghana legal/regulatory counsel records actual perimeter analysis and required BoG/partner actions before launch; no custody, wallet, stored value, lending or settlement claim introduced; monitoring, incident response, revocation, audit export and support proven; release gates and live-money operator gate remain distinct.
 
 **Final platform-hardening submilestone (recorded 2026-11-12, ADR-15):**
 the Darwin peer-verification helper's production packaging — the darwin
