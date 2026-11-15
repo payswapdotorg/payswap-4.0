@@ -16,7 +16,7 @@
  *      `unavailable` —— unknown ≠ expired：读回失败永不假装成功，也永不假装
  *      auth 失败。
  * 3. **装配防线（先于任何网络触达）**：`providerId ≠ "stripe"` /
- *    `secretKind ≠ "api-key"` = 装配错误 → 抛出（accountService 把任何端口异常
+ *    `secrets` 键集 ≠ 恰 [api-key] = 装配错误 → 抛出（accountService 把任何端口异常
  *    映射为 `read_back_unavailable` typed 拒绝，状态不变 —— 安全且响亮）；秘密
  *    前缀推导的模式（shared 法则 `derivePayswapSecretKeyMode`）与记录 `mode`
  *    不一致 = 本地不一致 → `unavailable`，**不触网**（无 provider 证据不翻状态）。
@@ -89,21 +89,23 @@ export function createStripeAccountReadBackPort(
   const apiClient = dependencies.apiClient ?? createDefaultStripeApiClient(timeoutMs);
 
   return async (input: PayswapAccountReadBackInput): Promise<PayswapAccountReadBackOutcome> => {
-    // 装配防线 1：provider/secretKind 路由错配 = 装配错误（fail-closed 抛出，零网络
-    // 触达；accountService 映射 typed 拒绝，状态不变）。
+    // 装配防线 1：provider/秘密键集路由错配 = 装配错误（fail-closed 抛出，零网络
+    // 触达；accountService 映射 typed 拒绝，状态不变）。Stripe 规格恰 [api-key]。
     if (input.providerId !== "stripe") {
       throw new Error(
         `The Stripe read-back adapter received a request for provider '${input.providerId}'; check the host wiring.`,
       );
     }
-    if (input.secretKind !== "api-key") {
+    const secretKeys = Object.keys(input.secrets);
+    if (secretKeys.length !== 1 || secretKeys[0] !== "api-key") {
       throw new Error(
-        `The Stripe read-back adapter received secret kind '${input.secretKind}'; the Stripe contract declares exactly [api-key].`,
+        `The Stripe read-back adapter received secret kinds [${secretKeys.join(", ") || "none"}]; the Stripe contract declares exactly [api-key].`,
       );
     }
+    const secret = input.secrets["api-key"] as string;
     // 装配防线 2：秘密前缀推导的模式与记录 mode 不一致 = 本地不一致（不触网 ——
     // 无 provider 证据不翻状态；操作员 revoke 或重连处置）。
-    const derivedMode = derivePayswapSecretKeyMode(input.secret, PAYSWAP_STRIPE_AUTH_SPEC);
+    const derivedMode = derivePayswapSecretKeyMode(secret, PAYSWAP_STRIPE_AUTH_SPEC);
     if (derivedMode === null || derivedMode !== input.mode) {
       return {
         kind: "unavailable",
@@ -118,7 +120,7 @@ export function createStripeAccountReadBackPort(
     try {
       response = await apiClient.request(accountUrl, {
         method: "GET",
-        headers: { Authorization: `Bearer ${input.secret}` },
+        headers: { Authorization: `Bearer ${secret}` },
         timeoutMs,
       });
     } catch (error) {

@@ -12,10 +12,11 @@
  *    reader」）：本模块只消费 env（缺省 process.env）—— safeStorage 解包键由
  *    desktop main 经 hostProcessLocalEnv 交付；env 缺席时装配**照常完成**，拒绝
  *    发生在操作面（connect/load 的 Gate E2 typed 拒绝 —— fail-closed，不猜）。
- * 3. **adapter 装配**：真实 Stripe 读回 adapter + 只读数据 adapter（slice 3/4）
- *    接进账户服务（doc 06 §2.9 provider 运行时；P2 = [stripe]，P3 起 per-provider
- *    追加）。transport 经 `ApiClient`（缺省 = globalThis.fetch + AbortController
- *    超时执行 —— 两 adapter 同款缺省）。
+ * 3. **adapter 装配**：真实 provider 读回 adapter + 只读数据 adapter 接进账户
+ *    服务（doc 06 §2.9 provider 运行时）：P2 = [stripe]，P3 起 + [paypal]（各自
+ *    事实单验证后追加）；多 provider 经 providerId 路由表分发（哑分发，无
+ *    重试无缓存）。transport 经 `ApiClient`（缺省 = globalThis.fetch +
+ *    AbortController 超时执行 —— 各 adapter 同款缺省）。
  * 4. **IO 全注入**：env、store 路径、transport、时钟与 ID 铸造全部可注入 ——
  *    法则级测试无网络、无真实 home。缺省值即生产值。
  * 5. **reader 面零转换**：reader 直接返回服务的投影/detail（法则保证无秘密），
@@ -31,6 +32,12 @@ import type {
 import { createCredentialService } from "../credential/credentialService.js";
 import { createPayswapAccountService } from "./accounts/accountService.js";
 import { createPayswapConnectionRecordStore } from "./accounts/connectionRecordStore.js";
+import {
+  createPayswapProviderDataReadRouter,
+  createPayswapProviderReadBackRouter,
+} from "./providers/providerRouter.js";
+import { createPayPalAccountDataReadPort } from "./providers/paypal/readAccountData.js";
+import { createPayPalAccountReadBackPort } from "./providers/paypal/readBackAccount.js";
 import { createStripeAccountDataReadPort } from "./providers/stripe/readAccountData.js";
 import { createStripeAccountReadBackPort } from "./providers/stripe/readBackAccount.js";
 
@@ -70,16 +77,38 @@ export function createPayswapAccountRuntime(
   const connectionStore = createPayswapConnectionRecordStore({
     resolveStorePath: dependencies.resolveStorePath,
   });
-  const readBackAccount = createStripeAccountReadBackPort({
+  const stripeReadBack = createStripeAccountReadBackPort({
     apiClient: dependencies.apiClient,
     accountUrl: dependencies.stripeApiBase
       ? `${dependencies.stripeApiBase.replace(/\/+$/, "")}/v1/account`
       : undefined,
   });
-  const readAccountData = createStripeAccountDataReadPort({
+  const stripeReadData = createStripeAccountDataReadPort({
     apiClient: dependencies.apiClient,
     apiBase: dependencies.stripeApiBase,
   });
+  const payPalReadBack = createPayPalAccountReadBackPort({
+    apiClient: dependencies.apiClient,
+  });
+  const nowSource = dependencies.now;
+  const payPalReadData = createPayPalAccountDataReadPort({
+    apiClient: dependencies.apiClient,
+    now: nowSource ? () => new Date(nowSource()) : undefined,
+  });
+  // 多 provider 哑路由（法则 3）：providerId → adapter；未注册 provider = 装配
+  // 错误 → 抛出 → accountService typed 拒绝（状态不变）。
+  const readBackAccount = createPayswapProviderReadBackRouter(
+    new Map([
+      ["stripe", stripeReadBack],
+      ["paypal", payPalReadBack],
+    ]),
+  );
+  const readAccountData = createPayswapProviderDataReadRouter(
+    new Map([
+      ["stripe", stripeReadData],
+      ["paypal", payPalReadData],
+    ]),
+  );
   const accountService = createPayswapAccountService({
     credentialPort,
     connectionStore,

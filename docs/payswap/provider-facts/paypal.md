@@ -1,11 +1,15 @@
 # PayPal fact sheet (P3 — read-only provider conformance)
 
 > Retrieval batches: **2026-11-15 first pass** (TL ops environment, plain
-> HTTPS, no JS rendering) and **2026-11-15 second pass** (headless-browser JS
+> HTTPS, no JS rendering), **2026-11-15 second pass** (headless-browser JS
 > rendering of developer.paypal.com + live sandbox API probes with fake
-> credentials only — zero real secrets, zero writes). Upstream baseline:
-> `docs/payswap/p0/04-provider-auth-comparison.md` §3 (as of 2026-11, ⚠
-> RE-VERIFY flags preserved there; this sheet is the re-verification record).
+> credentials only — zero real secrets, zero writes) and **2026-11-15 third
+> pass (late UTC)** (headless-browser JS rendering + the official machine-
+> readable OpenAPI specs published at `developer.paypal.com/api/
+> <area>/v1/schema.json`, OpenAPI 3.2.0 — zero real secrets, zero writes).
+> Upstream baseline: `docs/payswap/p0/04-provider-auth-comparison.md` §3
+> (as of 2026-11, ⚠ RE-VERIFY flags preserved there; this sheet is the
+> re-verification record).
 >
 > Docs-reorganization fact (recorded 2026-11-15, second pass): the payouts
 > reference moved — `developer.paypal.com/api/payments/payouts/` now answers
@@ -13,7 +17,7 @@
 > (guide, "Last updated: September 10, 2026") and the OpenAPI reference pages
 > under `developer.paypal.com/api/payments.payouts-batch/v1/…`.
 
-## Verified (2026-11-15 — first pass re-confirmed, second pass extended)
+## Verified (2026-11-15 — first pass re-confirmed, second/third pass extended)
 
 | # | Fact | Source | Retrieval |
 |---|---|---|---|
@@ -34,8 +38,15 @@
 | P-15 | **Webhook delivery semantics**: listener on HTTPS port 443; "PayPal will retry each delivery up to **25 times over 3 days**" (at-least-once, unordered — dedupe by event id remains the consumer's job) | same page | 2026-11-15 |
 | P-16 | **Rate limiting**: "PayPal doesn't publish exact rate limits" (they vary); 429 status on exceed; Payouts API specifically: "we allow **400 POST requests per minute**"; mitigation guidance: use webhooks instead of polling, cache OAuth tokens | https://developer.paypal.com/api/rate-limiting + /api/payouts | 2026-11-15 |
 | P-17 | Client credentials model: client ID is public ("Safe to use in client-side code"), client secret is private ("Must be kept secure and used only server-side"); new accounts get a "Default Application" with ready-to-use credentials; apps are created per environment in the developer dashboard | https://developer.paypal.com/apps-scopes-and-credentials | 2026-11-15 |
+| P-18 | **Token response sample documents the full field set** ("Last updated: June 30, 2026"): `scope` (space-separated URIs) / `access_token` / `token_type: "Bearer"` / **`app_id`** (sample `APP-80W284485P519543T` — non-secret app identifier) / `expires_in` (seconds) / `nonce`. Consequence: the read-back's account evidence is `app_id` (same position as Stripe's `acct_*`) — no identity-read dependency for verification | https://developer.paypal.com/api/rest/authentication/ (Sample response) | 2026-11-15 (third pass) |
+| P-19 | **Official machine-readable OpenAPI specs are published** at `developer.paypal.com/api/transaction-search/v1/schema.json` and `developer.paypal.com/api/customer-disputes/v1/schema.json` (both OpenAPI 3.2.0); disputes pages split as `disputes-list` (GET /v1/customer/disputes) vs `disputes-get` (GET /v1/customer/disputes/{id}) | schema.json endpoints + /api/customer-disputes/v1 index | 2026-11-15 (third pass) |
+| P-20 | **Money schema** (official): `value` is a string — "An integer for currencies like `JPY` that are not typically fractional. A decimal fraction for currencies like `TND` that are subdivided into thousandths."; `currency_code` is the three-character ISO-4217 code. Consequence: amounts are provider-native **major-unit** strings (integer-or-decimal) — not minor-unit integers | transaction-search + customer-disputes schema.json `money` | 2026-11-15 (third pass) |
+| P-21 | **Balances response** (`balances_response`): `{balances: [{currency, primary, total_balance, available_balance, withheld_balance}], account_id, as_of_time, last_refresh_time}` — each `*_balance` is money{currency_code, value} | transaction-search schema.json | 2026-11-15 (third pass) |
+| P-22 | **Transactions response** (`search_response`): `{transaction_details: [{transaction_info, …}], account_number, start_date, end_date, last_refreshed_datetime, page, total_items, total_pages}`; `transaction_info` carries `paypal_account_id`, `transaction_id` (`^[a-zA-Z0-9_]*$`, 1–24), `transaction_initiation_date` / `transaction_updated_date` (date_time), `transaction_amount` / `fee_amount` (money), `transaction_status` (single-letter codes: D/P/V…), `transaction_subject`, `transaction_note`, … | transaction-search schema.json | 2026-11-15 (third pass) |
+| P-23 | **Disputes list response** (`dispute_search`): `{items: dispute_info[1..100] ("Sorted in latest to earliest creation time order"), links}`; `dispute_info` carries `dispute_id` (`^[A-Za-z0-9-]+$`), `create_time` / `update_time` (date_time), `reason` (10-value enum: MERCHANDISE_OR_SERVICE_NOT_RECEIVED / …_AS_DESCRIBED / UNAUTHORISED / CREDIT_NOT_PROCESSED / DUPLICATE_TRANSACTION / INCORRECT_AMOUNT / PAYMENT_BY_OTHER_MEANS / CANCELED_RECURRING_BILLING / PROBLEM_WITH_REMITTANCE / OTHER), `status` (**OPEN / WAITING_FOR_BUYER_RESPONSE / WAITING_FOR_SELLER_RESPONSE / UNDER_REVIEW / RESOLVED / OTHER**), `dispute_state`, `dispute_amount` (money) | customer-disputes schema.json | 2026-11-15 (third pass) |
+| P-24 | **date_time format** (official): "The date and time, in Internet date and time format (RFC3339 §5.6). Seconds are required while fractional seconds are optional" — minLength 20, maxLength 64 | transaction-search schema.json `date_time` | 2026-11-15 (third pass) |
 
-## Remains ⚠ RE-VERIFY before PayPal adapter code (doc 04 §3/§5 — narrowed, not empty)
+## Remains ⚠ RE-VERIFY (doc 04 §3/§5 — narrowed; the sandbox conformance run answers item 2)
 
 1. **Documented default token lifetime**: the docs publish the `expires_in`
    field and a sample value (31668 s ≈ 8.8 h) plus reuse-until-expiry
@@ -55,14 +66,27 @@
    from a reference page. The verified-recipient hard rule (doc 04 §3.3)
    keeps its ⚠ until that surface is pinned.
 
-## Consequence in source (fail-closed, by design — unchanged until the P3 conformance slice)
+## Consequence in source (updated 2026-11-15 third pass — the P3 conformance slice landed)
 
-PayPal remains **not registered** in the account-service authSpec set this
-pass: its acquisition shape is client-credentials (client-id + client-secret,
-two secrets, environment-declared mode) — the authSpec vocabulary extension
-(operator-supplied-secret is the only registered shape today) and the
-account-service multi-secret connect/read path land **behind this sheet** as
-the next P3 work package, together with the sandbox conformance run that
-answers ⚠ item 2. `connect` for `providerId: "paypal"` keeps producing the
-typed refusal `unsupported_provider` (zero at-rest writes) until that slice
-merges. No PayPal read adapter exists yet; nothing is invented.
+The P3 conformance slice is merged behind this sheet: the authSpec
+vocabulary now carries the **client-credentials** shape (client-id +
+client-secret, environment-declared mode, per-mode base URLs P-3, token
+path P-1 — `PAYSWAP_PAYPAL_AUTH_SPEC`, `packages/shared/src/payswap/
+account-connection.ts`); the account service connects PayPal with **two
+secrets at rest** (`payswap:psp:paypal:<id>:client-id` / `:client-secret`,
+multi-secret read path with fail-closed refusal on any missing key); the
+read-back adapter is the **token mint** (P-1/P-3/P-4; `app_id` = account
+evidence per P-18, `scope` list = capability evidence per P-2/P-6, neutral
+requirements projection); the data-read adapter covers the four closed
+categories from the verified read data plane (P-7/P-8/P-9; customers →
+typed `unsupported_operation` — no customer-list surface exists in the
+verified plane) with `amountFormat: "major-unit"` projection (P-20) and
+RFC3339→epoch conversion (P-24). No formatCheck is invented for PayPal
+secrets (no verified shape) — the mint is the authority. **No provider
+writes**; the no-write closed-category surface is unchanged.
+
+The **sandbox conformance run** (⚠ item 2) remains the open step: it needs a
+real sandbox app's client credentials (operator-supplied), runs
+`scripts/p3/paypal-sandbox-conformance.ts`, and records the dated evidence
+(mint + four-category live outcomes, observed value shapes, scope grants).
+Paystack stays unregistered (`unsupported_provider`) pending its docs site.

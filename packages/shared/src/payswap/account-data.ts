@@ -13,6 +13,13 @@
  * 2. **按类别的 redacted 数据 schema（strict）**：秘密零携带 + PII 零携带（客户
  *    面只保留 id/created/description —— email/name 不进投影；doc 05 §12.8
  *    redaction 纪律的结构化落地）。畸形 provider 载荷在此即拒（fail-closed）。
+ *    金额携带显式 **amountFormat 约定标记**（P3 起 —— 事实：Stripe 金额是
+ *    minor-unit 整数（doc 04）；PayPal money.value 是 provider-native 字符串
+ *    「整数（JPY 类无小数币）或小数分数（TND 类千分位币）」—— 官方 OpenAPI
+ *    schema（provider-facts/paypal.md 第三批检索 2026-11-15）；两个约定都验
+ *    证在案才可编码，标记使跨 provider 的金额永不歧义）。时间戳统一 epoch 秒
+ *    整数（PayPal 的 RFC3339 字符串由 adapter 做确定性投影换算 —— 格式事实
+ *    已验证：date_time = RFC3339，秒必选，20–64）。
  * 3. **能力证据 schema（doc 04 §1.2）**：`capabilities[]`（name + active/inactive/
  *    pending 三值状态）+ `requirements` 摘要（disabledReason / currentlyDueCount /
  *    pastDueCount）—— 全部来自 provider 读回，永不硬编码声明（evidence, never
@@ -73,14 +80,38 @@ export const PAYSWAP_WRITE_OPERATION_VERBS = [
 ] as const;
 
 // ---------------------------------------------------------------------------
+// 金额约定标记（P3 —— 跨 provider 金额的显式无歧义面）
+// ---------------------------------------------------------------------------
+
+/**
+ * 金额字符串的约定标记（闭集）：
+ * - `minor-unit-integer` —— Stripe native：整数字符串，计数货币的 minor 单位
+ *   （doc 04 §1 事实）；
+ * - `major-unit` —— PayPal native：官方 money schema 的 provider-native 字符串
+ *   ——「整数（JPY 类无小数币）或小数分数（TND 类千分位币）」，以货币主单位
+ *   计（provider-facts/paypal.md 第三批检索 2026-11-15，官方 OpenAPI schema
+ *   money.value 描述逐字在案）。
+ * 标记是 adapter 的强制输出：消费面永不猜测金额约定（跨 provider 比较/换算
+ * 是后续里程碑的事，这里先不歧义）。
+ */
+export const PAYSWAP_AMOUNT_FORMATS = ["minor-unit-integer", "major-unit"] as const;
+export type PayswapAmountFormat = (typeof PAYSWAP_AMOUNT_FORMATS)[number];
+
+export const payswapAmountFormatSchema = z.enum(PAYSWAP_AMOUNT_FORMATS);
+
+// ---------------------------------------------------------------------------
 // 按类别的 redacted 数据 schema（法则 2 —— strict + 秘密/PII 零携带）
 // ---------------------------------------------------------------------------
 
-/** 余额行（Stripe /v1/balance 的 redacted 投影：amount 为 minor-unit 整数字符串）。 */
+/**
+ * 余额行：{amount, currency, amountFormat}。amount 接受两种约定下的字符串形态
+ * （整数或带小数）；amountFormat 是唯一解释依据（法则 2 —— 永不歧义）。
+ */
 export const payswapBalanceEntrySchema = z
   .object({
-    amount: z.string().regex(/^-?\d+$/),
+    amount: z.string().regex(/^-?\d+(\.\d+)?$/),
     currency: z.string().min(3).max(8),
+    amountFormat: payswapAmountFormatSchema,
   })
   .strict();
 export type PayswapBalanceEntry = z.infer<typeof payswapBalanceEntrySchema>;
@@ -93,12 +124,17 @@ export const payswapBalanceDataSchema = z
   .strict();
 export type PayswapBalanceData = z.infer<typeof payswapBalanceDataSchema>;
 
-/** 支付对象行（Stripe Charge 的 redacted 投影；`succeeded ≠ money in the bank` 的原始证据，doc 04 §1.7）。 */
+/**
+ * 支付对象行（Stripe Charge / PayPal transaction_info 的 redacted 投影；
+ * `succeeded ≠ money in the bank` 的原始证据，doc 04 §1.7）。amount 携带
+ * amountFormat 约定标记（法则 2）。
+ */
 export const payswapPaymentObjectSchema = z
   .object({
     id: z.string().min(1),
-    amount: z.string().regex(/^-?\d+$/),
+    amount: z.string().regex(/^-?\d+(\.\d+)?$/),
     currency: z.string().min(3).max(8),
+    amountFormat: payswapAmountFormatSchema,
     status: z.string().min(1),
     created: z.number().int().nonnegative(),
     description: z.string().min(1).nullable(),
@@ -120,12 +156,16 @@ export const payswapCustomerSchema = z
   .strict();
 export type PayswapCustomer = z.infer<typeof payswapCustomerSchema>;
 
-/** 争议行（Stripe Dispute 的 redacted 投影）。 */
+/**
+ * 争议行（Stripe Dispute / PayPal dispute_info 的 redacted 投影）。amount 携带
+ * amountFormat 约定标记（法则 2）。
+ */
 export const payswapDisputeSchema = z
   .object({
     id: z.string().min(1),
-    amount: z.string().regex(/^-?\d+$/),
+    amount: z.string().regex(/^-?\d+(\.\d+)?$/),
     currency: z.string().min(3).max(8),
+    amountFormat: payswapAmountFormatSchema,
     status: z.string().min(1),
     reason: z.string().min(1).nullable(),
     created: z.number().int().nonnegative(),
@@ -175,12 +215,16 @@ export type PayswapReadonlyCategoryResult =
 // 数据读端口法则（adapter 函数面 —— 与 PayswapAccountReadBackPort 同款纪律）
 // ---------------------------------------------------------------------------
 
-/** 类别读输入（读回输入 + 闭集类别；秘密只经参数入，端口永不持久化/日志/投影它）。 */
+/**
+ * 类别读输入（读回输入同款多秘密面 + 闭集类别；秘密只经参数入，端口永不
+ * 持久化/日志/投影它）。秘密按 secretKind 键控：单秘密形态（Stripe）恰一
+ * 入口；client-credentials 形态（PayPal）两入口 —— adapter 装配防线校验键集。
+ */
 export interface PayswapAccountDataReadInput {
   readonly providerId: string;
   readonly mode: "test" | "live";
-  readonly secretKind: PayswapPspSecretKind;
-  readonly secret: string;
+  /** 连接的全部已存秘密（secretKind → 值；service 侧保证键集 = 记录的 secretKinds）。 */
+  readonly secrets: Readonly<Partial<Record<PayswapPspSecretKind, string>>>;
   readonly category: PayswapReadonlyCategory;
 }
 

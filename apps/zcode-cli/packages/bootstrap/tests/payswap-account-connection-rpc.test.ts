@@ -171,6 +171,86 @@ describe("payswap connection rpc — request closed set", () => {
     expect(payswapConnectionRpcRequestSchema.safeParse("list").success).toBe(false);
     expect(payswapConnectionRpcRequestSchema.safeParse(null).success).toBe(false);
   });
+
+  // P3 —— client-credentials 双形态（provider-facts/paypal.md）：connect 恰一
+  // 完整 acquisition 形态（superRefine 强制；形态裁决的深处归 accountService）。
+  it("accepts the complete client-credentials form (mode + clientId + clientSecret, P-3/P-17)", () => {
+    expect(
+      payswapConnectionRpcRequestSchema.safeParse({
+        op: "connect",
+        providerId: "paypal",
+        mode: "test",
+        clientId: "AYqNDTESTCLIENTIDPLACEHOLDER",
+        clientSecret: "EGnJTESTCLIENTSECRETPLACEHOLDER",
+      }).success,
+    ).toBe(true);
+    expect(
+      payswapConnectionRpcRequestSchema.safeParse({
+        op: "connect",
+        providerId: "paypal",
+        mode: "live",
+        clientId: "AYqNDTESTCLIENTIDPLACEHOLDER",
+        clientSecret: "EGnJTESTCLIENTSECRETPLACEHOLDER",
+        displayName: "PayPal (live)",
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects mixed forms, partial client-credentials forms, and secret-less connects", () => {
+    // 混形态：operatorSecret 与 client-credentials 字段并携。
+    expect(
+      payswapConnectionRpcRequestSchema.safeParse({
+        op: "connect",
+        providerId: "paypal",
+        operatorSecret: "s",
+        mode: "test",
+        clientId: "x",
+        clientSecret: "y",
+      }).success,
+    ).toBe(false);
+    // 残缺形态：缺 mode / 缺 clientSecret / 缺 clientId。
+    expect(
+      payswapConnectionRpcRequestSchema.safeParse({
+        op: "connect",
+        providerId: "paypal",
+        clientId: "x",
+        clientSecret: "y",
+      }).success,
+    ).toBe(false);
+    expect(
+      payswapConnectionRpcRequestSchema.safeParse({
+        op: "connect",
+        providerId: "paypal",
+        mode: "test",
+        clientId: "x",
+      }).success,
+    ).toBe(false);
+    expect(
+      payswapConnectionRpcRequestSchema.safeParse({
+        op: "connect",
+        providerId: "paypal",
+        mode: "test",
+        clientSecret: "y",
+      }).success,
+    ).toBe(false);
+    // 零形态：什么秘密都不携。
+    expect(
+      payswapConnectionRpcRequestSchema.safeParse({
+        op: "connect",
+        providerId: "stripe",
+      }).success,
+    ).toBe(false);
+    // 非法 mode 值。
+    expect(
+      payswapConnectionRpcRequestSchema.safeParse({
+        op: "connect",
+        providerId: "paypal",
+        mode: "sandbox",
+        clientId: "x",
+        clientSecret: "y",
+      }).success,
+    ).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------

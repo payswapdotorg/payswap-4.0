@@ -42,6 +42,22 @@ export {
   type PayswapStripeDataReadDependencies,
 } from "./providers/stripe/readAccountData.js";
 export {
+  createPayPalAccountReadBackPort,
+  type PayswapPayPalReadBackDependencies,
+} from "./providers/paypal/readBackAccount.js";
+export {
+  createPayPalAccountDataReadPort,
+  type PayswapPayPalDataReadDependencies,
+} from "./providers/paypal/readAccountData.js";
+export {
+  mintPayPalAccessToken,
+  type PayswapPayPalTokenMintResult,
+} from "./providers/paypal/oauth2.js";
+export {
+  createPayswapProviderDataReadRouter,
+  createPayswapProviderReadBackRouter,
+} from "./providers/providerRouter.js";
+export {
   createPayswapAccountRuntime,
   type PayswapAccountRuntime,
   type PayswapAccountRuntimeDependencies,

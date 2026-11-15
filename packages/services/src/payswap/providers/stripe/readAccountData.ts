@@ -23,9 +23,11 @@
  *    客户行只保留 id/created/description（email/name 等 PII 永不进数据面），
  *    争议/支付行不含 evidence URL/受款人明细，余额行只保留 amount/currency。
  *    provider 原始载荷在 strict 解析后即丢弃。
- * 4. **装配防线（先于任何网络触达）**：`providerId ≠ "stripe"` / `secretKind ≠
- *    "api-key"` / 未知类别 = 装配错误 → 抛出（服务侧映射 typed 拒绝）；秘密前缀
- *    推导的模式与记录 `mode` 不一致 = 本地不一致 → `unavailable`，**不触网**。
+ * 4. **装配防线（先于任何网络触达）**：`providerId ≠ "stripe"` / `secrets` 键集
+ *    ≠ 恰 [api-key] / 未知类别 = 装配错误 → 抛出（服务侧映射 typed 拒绝）；秘密
+ *    前缀推导的模式与记录 `mode` 不一致 = 本地不一致 → `unavailable`，**不触网**。
+ *    金额携带 amountFormat = "minor-unit-integer"（Stripe native —— doc 04 事实；
+ *    account-data 法则 2 的显式约定标记）。
  * 5. **零秘密外泄**：秘密只进 `Authorization` 头；detail/message 操作员可读且零
  *    凭据材料；本模块不日志、不持久化、不投影秘密。
  * 6. **IO 全注入**：transport 经 `ApiClient`（`@zcode/shared`）；缺省 =
@@ -108,24 +110,29 @@ function nullableString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null;
 }
 
-/** 余额 redaction：available/pending → {amount, currency}[]（白名单拷贝）。 */
+/** 余额 redaction：available/pending → {amount, currency, amountFormat}[]（白名单拷贝）。 */
 function redactBalance(body: unknown): PayswapBalanceData | null {
   const raw = body as { available?: unknown; pending?: unknown } | null;
-  const entry = (value: unknown): { amount: string; currency: string } | null => {
+  const entry = (
+    value: unknown,
+  ): { amount: string; currency: string; amountFormat: "minor-unit-integer" } | null => {
     if (typeof value !== "object" || value === null) return null;
     const amount = minorUnitString((value as { amount?: unknown }).amount);
     const currency = (value as { currency?: unknown }).currency;
     if (amount === null || typeof currency !== "string") return null;
-    return { amount, currency };
+    // Stripe native 金额约定：minor-unit 整数字符串（doc 04 §1）。
+    return { amount, currency, amountFormat: "minor-unit-integer" };
   };
   if (!Array.isArray(raw?.available) || !Array.isArray(raw?.pending)) return null;
-  const available: { amount: string; currency: string }[] = [];
+  const available: { amount: string; currency: string; amountFormat: "minor-unit-integer" }[] =
+    [];
   for (const value of raw.available) {
     const mapped = entry(value);
     if (mapped === null) return null;
     available.push(mapped);
   }
-  const pending: { amount: string; currency: string }[] = [];
+  const pending: { amount: string; currency: string; amountFormat: "minor-unit-integer" }[] =
+    [];
   for (const value of raw.pending) {
     const mapped = entry(value);
     if (mapped === null) return null;
@@ -155,6 +162,7 @@ function redactPaymentObjects(body: unknown): PayswapPaymentObject[] | null {
       id,
       amount,
       currency,
+      amountFormat: "minor-unit-integer",
       status,
       created,
       description: nullableString(row.description),
@@ -207,6 +215,7 @@ function redactDisputes(body: unknown): PayswapDispute[] | null {
       id,
       amount,
       currency,
+      amountFormat: "minor-unit-integer",
       status,
       reason: nullableString(row.reason),
       created,
@@ -229,18 +238,20 @@ export function createStripeAccountDataReadPort(
   const apiClient = dependencies.apiClient ?? createDefaultStripeApiClient(timeoutMs);
 
   return async (input: PayswapAccountDataReadInput): Promise<PayswapReadonlyCategoryResult> => {
-    // 装配防线 1：provider/secretKind/类别路由错配 = 装配错误（fail-closed 抛出，
-    // 零网络触达；accountService 映射 typed 拒绝）。
+    // 装配防线 1：provider/秘密键集/类别路由错配 = 装配错误（fail-closed 抛出，
+    // 零网络触达；accountService 映射 typed 拒绝）。Stripe 规格恰 [api-key]。
     if (input.providerId !== "stripe") {
       throw new Error(
         `The Stripe data-read adapter received a request for provider '${input.providerId}'; check the host wiring.`,
       );
     }
-    if (input.secretKind !== "api-key") {
+    const secretKeys = Object.keys(input.secrets);
+    if (secretKeys.length !== 1 || secretKeys[0] !== "api-key") {
       throw new Error(
-        `The Stripe data-read adapter received secret kind '${input.secretKind}'; the Stripe contract declares exactly [api-key].`,
+        `The Stripe data-read adapter received secret kinds [${secretKeys.join(", ") || "none"}]; the Stripe contract declares exactly [api-key].`,
       );
     }
+    const secret = input.secrets["api-key"] as string;
     const path = CATEGORY_PATHS[input.category];
     if (path === undefined) {
       throw new Error(
@@ -248,7 +259,7 @@ export function createStripeAccountDataReadPort(
       );
     }
     // 装配防线 2：秘密前缀推导的模式与记录 mode 不一致 = 本地不一致（不触网）。
-    const derivedMode = derivePayswapSecretKeyMode(input.secret, PAYSWAP_STRIPE_AUTH_SPEC);
+    const derivedMode = derivePayswapSecretKeyMode(secret, PAYSWAP_STRIPE_AUTH_SPEC);
     if (derivedMode === null || derivedMode !== input.mode) {
       return {
         status: "unavailable",
@@ -263,7 +274,7 @@ export function createStripeAccountDataReadPort(
     try {
       response = await apiClient.request(`${apiBase}${path}`, {
         method: "GET",
-        headers: { Authorization: `Bearer ${input.secret}` },
+        headers: { Authorization: `Bearer ${secret}` },
         timeoutMs,
       });
     } catch (error) {

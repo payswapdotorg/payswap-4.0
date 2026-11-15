@@ -85,8 +85,7 @@ function baseInput(overrides: Record<string, unknown> = {}) {
   return {
     providerId: "stripe",
     mode: "test" as const,
-    secretKind: "api-key" as const,
-    secret: TEST_SECRET,
+    secrets: { "api-key": TEST_SECRET } as Record<string, string>,
     ...overrides,
   };
 }
@@ -156,7 +155,7 @@ describe("payswap stripe read-back adapter (P2.2 slice 3) — outcome law", () =
   it("live-mode key reads back against the same endpoint (doc 04 §1.1: mode is key-prefix-distinguished, never a per-request switch)", async () => {
     const client = recordingApiClient(() => jsonResponse(200, { id: "acct_live_readback" }));
     const port = createStripeAccountReadBackPort({ apiClient: client });
-    const outcome = await port(baseInput({ mode: "live", secret: LIVE_SECRET }));
+    const outcome = await port(baseInput({ mode: "live", secrets: { "api-key": LIVE_SECRET } }));
     expect(outcome).toEqual({ kind: "verified", providerAccountId: "acct_live_readback" });
     expect(client.calls[0]?.input).toBe(STRIPE_ACCOUNT_URL);
   });
@@ -173,7 +172,7 @@ describe("payswap stripe read-back adapter (P2.2 slice 3) — assembly guards (b
   it("secretKind ≠ 'api-key' is a wiring bug: throws, zero transport calls", async () => {
     const client = recordingApiClient(() => jsonResponse(200, { id: PROVIDER_ACCOUNT_ID }));
     const port = createStripeAccountReadBackPort({ apiClient: client });
-    await expect(port(baseInput({ secretKind: "client-secret" }))).rejects.toThrow(/api-key/i);
+    await expect(port(baseInput({ secrets: { "client-secret": "x" } }))).rejects.toThrow(/api-key/i);
     expect(client.calls.length).toBe(0);
   });
 
@@ -181,7 +180,7 @@ describe("payswap stripe read-back adapter (P2.2 slice 3) — assembly guards (b
     const client = recordingApiClient(() => jsonResponse(200, { id: PROVIDER_ACCOUNT_ID }));
     const port = createStripeAccountReadBackPort({ apiClient: client });
     // 记录声明 test 而存下的秘密是 live 前缀 —— 本地不一致，fail-closed 不触网。
-    const outcome = await port(baseInput({ mode: "test", secret: LIVE_SECRET }));
+    const outcome = await port(baseInput({ mode: "test", secrets: { "api-key": LIVE_SECRET } }));
     expect(outcome.kind).toBe("unavailable");
     if (outcome.kind === "unavailable") {
       expect(outcome.detail.length).toBeGreaterThan(0);
