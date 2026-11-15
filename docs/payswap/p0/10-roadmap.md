@@ -52,7 +52,11 @@ This register is maintained **in this file only**. Update it in the same PR that
   遗失，如实登记）；打包侧 ESM 裁决入档（生产 `createRequire(import.meta.url)`
   为合法 ESM 形态非缺陷——修补住 harness bundle 后处理，不改生产源码）。
   四类别终局运行待账户邮箱激活后以该工具链执行（RESULT_HARNESS=0 即终局
-  证据）。 |
+  证据）。工具链加固（2026-11-15 架构师评审跟进）：harness 设计内 typed
+  拒绝不再短路桥形态 detail 步（直连/桥两形态拒绝边界都登记）；E2B 驱动器
+  增完整性判定层（期望工件齐备 + RESULT↔evidence 互证 + env 文件 0600
+  断言 + tar/base64 二进制安全取回——见 docs/payswap/p2/live-acceptance-evidence.md
+  §6）。 |
 | P3 — Paystack and PayPal | not_started | Starts after P2 is complete; provider-specific auth facts require dated official-source verification. |
 | P4 — Capability registry, eligibility and intent compiler | not_started | Starts after P3 is complete. |
 | P5 — Conversational New Task workflow | not_started | Starts after P4 is complete. |

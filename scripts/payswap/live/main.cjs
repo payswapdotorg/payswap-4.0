@@ -29,6 +29,11 @@
  * unconfigured」条款）；账户邮箱验证激活后 → `kind:"detail"` 四类别数据。
  * RESULT_HARNESS=0 当且仅当全部步骤 ok（即四类别数据落地）；拒绝边界 = 1。
  *
+ * 短路语义（2026-11-15 架构师评审跟进）：**异常短路**（任一步意外失败即止，
+ * 与登记证据的 abort-on-first-failure 语义一致）；**设计内 typed 拒绝不短
+ * 路** —— 步骤 9 拒绝时步骤 10（桥形态 detail）照常执行：拒绝边界必须同时
+ * 以直连与桥两种形态登记，桥形态的执行不得以直连形态成功为前提。
+ *
  * ESM/CJS 语义记录（架构师 2026-11-15 裁决的执行侧）：生产源码的
  * `createRequire(import.meta.url)`（services 包，"type":"module"）是合法 ESM
  * 形态，**不是生产缺陷** —— CJS bundle 化产生的 `import.meta` 空对象 shim 是
@@ -116,10 +121,12 @@ const evidence = {
 const STEP_REFUSED = Symbol("payswap.live.stepRefused");
 
 /**
- * 记录并执行一步；ok:false 时记录 failedAt 并短路返回（与登记证据的
- * abort-on-first-failure 语义一致）。回调可返回 `{ [STEP_REFUSED]: detail }`
- * 标记设计内拒绝（记录 ok:false + 结构化 detail，不按异常处理）。
- * @returns {Promise<boolean>} 该步是否 ok
+ * 记录并执行一步；意外失败（异常）时记录 failedAt，由调用方短路返回（与
+ * 登记证据的 abort-on-first-failure 语义一致）。回调可返回
+ * `{ [STEP_REFUSED]: detail }` 标记设计内拒绝（记录 ok:false + 结构化
+ * detail，不按异常处理 —— 调用方据 refused 决定是否继续后续步骤）。
+ * @returns {Promise<{ok: boolean, refused: boolean}>} 该步结局（refused=true
+ *   表示设计内 typed 拒绝：已登记，但不是意外失败）。
  */
 async function step(name, operation) {
   try {
@@ -128,11 +135,11 @@ async function step(name, operation) {
       evidence.steps.push({ name, ok: false, detail: detail[STEP_REFUSED] });
       evidence.failedAt = name;
       console.log(`[live-harness] refused ${name}`);
-      return false;
+      return { ok: false, refused: true };
     }
     evidence.steps.push({ name, ok: true, detail: detail === undefined ? {} : detail });
     console.log(`[live-harness] ok    ${name}`);
-    return true;
+    return { ok: true, refused: false };
   } catch (error) {
     // 错误消息消毒：真实键永不进证据/日志（字符串替换而非丢弃，保留可诊断性）。
     const message = String(error && error.message ? error.message : error);
@@ -140,7 +147,7 @@ async function step(name, operation) {
     evidence.steps.push({ name, ok: false, detail: { error: sanitized } });
     evidence.failedAt = name;
     console.error(`[live-harness] FAIL  ${name}: ${sanitized}`);
-    return false;
+    return { ok: false, refused: false };
   }
 }
 
@@ -234,7 +241,7 @@ async function main() {
         );
       }
       return { backendSelected };
-    }))
+    })).ok
   )
     return finish();
 
@@ -246,7 +253,7 @@ async function main() {
         throw new Error("warmup 后 PSP 键不可用（键仓两级 fail-closed 之一命中 —— 见上方 warn）");
       }
       return { keyAvailable: warm.keyAvailable };
-    }))
+    })).ok
   )
     return finish();
 
@@ -266,7 +273,7 @@ async function main() {
       }
       connectionId = result.connection.connectionId;
       return { connectionId, mode: result.connection.mode };
-    }))
+    })).ok
   )
     return finish();
 
@@ -278,7 +285,7 @@ async function main() {
       if (!connections.includes(connectionId)) throw new Error("connections store 不含 connectionId");
       assertNoLiveSecret(connections, "connections store");
       return {};
-    }))
+    })).ok
   )
     return finish();
 
@@ -289,7 +296,7 @@ async function main() {
       if (!credentials.includes(connectionId)) throw new Error("credentials store 不含 connectionId");
       assertNoLiveSecret(credentials, "credentials store");
       return {};
-    }))
+    })).ok
   )
     return finish();
 
@@ -304,7 +311,7 @@ async function main() {
         );
       }
       return { kind: result.kind, providerAccountId: result.providerAccountId };
-    }))
+    })).ok
   )
     return finish();
 
@@ -317,7 +324,7 @@ async function main() {
       bridgePort = minter();
       if (bridgePort === null) throw new Error("桥铸造返回 null（fail-safe 路径 —— 不应发生）");
       return {};
-    }))
+    })).ok
   )
     return finish();
 
@@ -334,56 +341,54 @@ async function main() {
         throw new Error(`桥 overview 未列出连接（count=${overview.length}；ids=${ids.join(",")}）`);
       }
       return { count: overview.length };
-    }))
+    })).ok
   )
     return finish();
 
   // 步骤 9：直连服务 getOverviewData（get_account_overview 的 detail 面）。
   // lawful 闭集：未激活账户 → typed read_back_unavailable（fail-closed，登记于
   // 证据为 ok:false + 结构化 refusal detail —— 与 2026-11-14 登记运行同形）；
-  // 激活后 → kind:"detail" 四类别数据（ok:true）。
-  if (
-    !(await step("direct service getOverviewData returns real detail", async () => {
-      const accountService = (await runtime.getRuntime()).accountService;
-      const detail = await accountService.getOverviewData({ connectionId });
-      if (detail.kind === "detail") {
-        const categories = {};
-        for (const [category, outcome] of Object.entries(detail.data)) {
-          categories[category] = outcome.status;
-        }
-        return { kind: "detail", categories };
+  // 激活后 → kind:"detail" 四类别数据（ok:true）。设计内拒绝**不短路**：步骤
+  // 10（桥形态）照常执行（2026-11-15 架构师评审跟进）。
+  const directDetail = await step("direct service getOverviewData returns real detail", async () => {
+    const accountService = (await runtime.getRuntime()).accountService;
+    const detail = await accountService.getOverviewData({ connectionId });
+    if (detail.kind === "detail") {
+      const categories = {};
+      for (const [category, outcome] of Object.entries(detail.data)) {
+        categories[category] = outcome.status;
       }
-      if (detail.kind === "refused") {
-        // 设计内拒绝：结构化登记（ok:false —— harness 在此边界上以退出码区分）。
-        return { [STEP_REFUSED]: { kind: "refused", refusal: detail.refusal } };
-      }
-      return { [STEP_REFUSED]: { kind: detail.kind } };
-    }))
-  )
-    return finish();
+      return { kind: "detail", categories };
+    }
+    if (detail.kind === "refused") {
+      // 设计内拒绝：结构化登记（ok:false —— harness 在此边界上以退出码区分）。
+      return { [STEP_REFUSED]: { kind: "refused", refusal: detail.refusal } };
+    }
+    return { [STEP_REFUSED]: { kind: detail.kind } };
+  });
+  if (!directDetail.ok && !directDetail.refused) return finish();
 
   // 步骤 10（重建新增）：对话面 detail 经真桥两跳形态 —— 与步骤 9 同源法则的
-  // 桥形态结局（「read-only ops run conversationally」条款的 detail 半）。
-  if (
-    !(await step("conversational detail via the bridge: get_account_overview returns real detail", async () => {
-      const adapted = adaptMessagePortMainToPayswapReaderBridgePort(bridgePort);
-      bridgePort.start();
-      const client = createPayswapReaderBridgeClient({ port: adapted });
-      const detail = await client.accountDetailReader(connectionId);
-      if (detail.kind === "detail") {
-        const categories = {};
-        for (const [category, outcome] of Object.entries(detail.data)) {
-          categories[category] = outcome.status;
-        }
-        return { kind: "detail", categories };
+  // 桥形态结局（「read-only ops run conversationally」条款的 detail 半）。无论
+  // 步骤 9 落在数据（激活后）还是设计内拒绝（未激活），本步都执行 —— 拒绝
+  // 边界必须同样以桥形态登记，不以直连形态成功为前提。
+  await step("conversational detail via the bridge: get_account_overview returns real detail", async () => {
+    const adapted = adaptMessagePortMainToPayswapReaderBridgePort(bridgePort);
+    bridgePort.start();
+    const client = createPayswapReaderBridgeClient({ port: adapted });
+    const detail = await client.accountDetailReader(connectionId);
+    if (detail.kind === "detail") {
+      const categories = {};
+      for (const [category, outcome] of Object.entries(detail.data)) {
+        categories[category] = outcome.status;
       }
-      if (detail.kind === "refused") {
-        return { [STEP_REFUSED]: { kind: "refused", refusal: detail.refusal } };
-      }
-      return { [STEP_REFUSED]: { kind: detail.kind } };
-    }))
-  )
-    return finish();
+      return { kind: "detail", categories };
+    }
+    if (detail.kind === "refused") {
+      return { [STEP_REFUSED]: { kind: "refused", refusal: detail.refusal } };
+    }
+    return { [STEP_REFUSED]: { kind: detail.kind } };
+  });
 
   return finish();
 }
