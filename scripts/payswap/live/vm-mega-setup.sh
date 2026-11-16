@@ -25,19 +25,72 @@ cd "$REPO_DIR"
 
 log() { printf '[vm-mega-setup] %s\n' "$*"; }
 
+# --- 0. VM 先决条件自供给（2026-11-16 实测：当前 E2B 基础模板 = Debian 12 +
+#      Node 20.9 + 无 bun/pnpm + 默认用户无 root 权限。仓控配方要求 Node 24 +
+#      bunx pnpm@10.33.2 —— 缺什么装什么，幂等，fail loud）。-------------------
+SUDO=""
+if [ "$(id -u)" != "0" ]; then
+  if sudo -n true 2>/dev/null; then SUDO="sudo"; else
+    printf '[vm-mega-setup] FATAL: 非 root 且 sudo 不可用 —— 无法安装系统依赖\n' >&2
+    exit 1
+  fi
+fi
+
+# alsa 库包名随发行版漂移（Ubuntu 24.04+/trixie = t64；Debian 12/Jammy = 原名）。
+ALSA_LIB="libasound2"
+if grep -qE '^VERSION_ID="(24|25|26)' /etc/os-release 2>/dev/null; then
+  ALSA_LIB="libasound2t64"
+fi
+
+NODE_MAJOR="$(node -p 'process.versions.node.split(".")[0]' 2>/dev/null || echo 0)"
+# root 情形下 apt 直接跑（SUDO 空展开）；NodeSource 管道需要显式 bash 形态 ——
+# 抽成函数避免空展开导致的语法破裂。
+root_elevate_bash() {
+  if [ "$(id -u)" = "0" ]; then bash -; else sudo -E bash -; fi
+}
+if [ "$NODE_MAJOR" -lt 22 ]; then
+  log "installing Node 24 via NodeSource (template node is $(node --version 2>/dev/null || echo absent))"
+  export DEBIAN_FRONTEND=noninteractive
+  $SUDO apt-get update -qq
+  $SUDO apt-get install -y -qq --no-install-recommends curl ca-certificates unzip >/dev/null
+  curl -fsSL https://deb.nodesource.com/setup_24.x | root_elevate_bash >/dev/null
+  $SUDO apt-get install -y -qq --no-install-recommends nodejs >/dev/null
+  log "node now $(node --version)"
+else
+  $SUDO apt-get update -qq || true
+  $SUDO apt-get install -y -qq --no-install-recommends curl ca-certificates unzip >/dev/null || true
+fi
+
+if ! command -v bunx >/dev/null 2>&1; then
+  log "installing bun system-wide (bunx needed by install/build steps and the E2E runner)"
+  curl -fsSL https://bun.sh/install | bash >/dev/null
+  $SUDO cp "$HOME/.bun/bin/bun" "$HOME/.bun/bin/bunx" /usr/local/bin/ 2>/dev/null \
+    || $SUDO install -m 0755 "$HOME/.bun/bin/bun" /usr/local/bin/bun
+  $SUDO install -m 0755 "$HOME/.bun/bin/bunx" /usr/local/bin/bunx 2>/dev/null || true
+  export PATH="$HOME/.bun/bin:$PATH"
+fi
+
+# Xvfb 常驻（E2E 运行器的 DISPLAY 缺省 :99 —— 原 recipe 由容器入口点启动；
+# VM 侧由 mega-setup 负责拉起。启动放在 apt 安装之后 —— xvfb 包先就位）。
+
 # --- 1. 系统依赖（Electron 运行库 + 真 Secret Service + 显示服务） -------------
 if command -v apt-get >/dev/null 2>&1; then
-  log "installing system dependencies (electron libs, dbus, gnome-keyring, xvfb)"
+  log "installing system dependencies (electron libs, dbus, gnome-keyring, xvfb; alsa=$ALSA_LIB)"
   export DEBIAN_FRONTEND=noninteractive
-  apt-get update -qq
-  apt-get install -y -qq --no-install-recommends \
+  $SUDO apt-get install -y -qq --no-install-recommends \
     dbus dbus-x11 gnome-keyring libsecret-1-0 \
     xvfb xauth \
     libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 \
-    libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 libasound2t64 \
+    libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libgbm1 "$ALSA_LIB" \
     libpango-1.0-0 libcairo2 libatspi2.0-0 >/dev/null
 else
   log "apt-get 不在场 —— 跳过系统依赖（假定镜像已备）"
+fi
+
+if ! pgrep -x Xvfb >/dev/null 2>&1; then
+  log "starting Xvfb on :99"
+  (Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &)
+  sleep 1
 fi
 
 # --- 2. 仓库依赖（frozen lockfile —— CI 同款确定性） --------------------------
