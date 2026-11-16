@@ -1557,10 +1557,20 @@ const enUS: Record<string, string> = {
   "payswap.connections.unavailable": "Payment connections are available in the desktop app.",
   "payswap.connections.providerLabel": "Provider",
   "payswap.connections.provider.stripe": "Stripe",
+  "payswap.connections.provider.paypal": "PayPal",
   "payswap.connections.secretLabel": "Secret key",
   "payswap.connections.secretPlaceholder": "sk_test_… or rk_test_… (restricted key preferred)",
   "payswap.connections.secretHint":
     "Restricted keys are preferred. The key is verified against the provider before the connection is trusted.",
+  "payswap.connections.modeLabel": "Environment",
+  "payswap.connections.clientIdLabel": "Client ID",
+  "payswap.connections.clientIdPlaceholder":
+    "Sandbox or live client ID from the PayPal developer dashboard",
+  "payswap.connections.clientSecretLabel": "Client secret",
+  "payswap.connections.clientSecretPlaceholder":
+    "Client secret from the PayPal developer dashboard",
+  "payswap.connections.clientSecretHint":
+    "The credentials are verified by the provider token mint before the connection is trusted.",
   "payswap.connections.displayNameLabel": "Display name (optional)",
   "payswap.connections.displayNamePlaceholder": "e.g. Main Stripe account",
   "payswap.connections.connect": "Connect",
