@@ -31,10 +31,15 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const REPO_ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..");
+// 2026-11-16 修复：本脚本住 scripts/payswap/live/（三层深）。原推导从**文件**
+// 路径只回退三层 —— 少一层，REPO_ROOT 落在 <repo>/scripts（E2B 沙箱实测：
+// harness-entry 与 bundle 全被写进 scripts/packages/desktop/.live-harness/，
+// 随后 esbuild 对绝对导入路径全部 Could not resolve）。从文件**所在目录**回退
+// 三层才是 repo 根。
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const DESKTOP_DIR = join(REPO_ROOT, "packages", "desktop");
 const OUT_DIR = join(DESKTOP_DIR, ".live-harness");
 const ENTRY_PATH = join(OUT_DIR, "harness-entry.mjs");
