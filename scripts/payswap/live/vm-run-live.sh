@@ -21,7 +21,15 @@
 
 set -euo pipefail
 
-REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+# 2026-11-16 修复：本脚本住 scripts/payswap/live/（三层深）—— 原推导只回退两层，
+# REPO_DIR 落在 <repo>/scripts；dbus-run-session 内相对 cwd 的 cd packages/desktop
+# 直接失败（E2E 臂实测）。mega-setup 此前靠 pnpm 向上找 workspace 根而侥幸可用。
+# package.json 在场自证 —— 推导错误 fail loud，不再静默错位。
+if [ ! -f "$REPO_DIR/package.json" ]; then
+  printf '[vm-run-live] FATAL: REPO_DIR 推导错误（无 package.json）: %s\n' "$REPO_DIR" >&2
+  exit 2
+fi
 ARTIFACT_DIR="${LIVE_ARTIFACT_DIR:-/workspace/artifacts/live-e2e}"
 cd "$REPO_DIR"
 
