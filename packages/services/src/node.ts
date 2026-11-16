@@ -177,6 +177,18 @@ export {
   createStripeAccountDataReadPort,
   type PayswapStripeDataReadDependencies,
 } from "#src/payswap/index.js";
+// PaySwap P3（doc 06 §2.9）：真实 PayPal 读回/只读数据 adapter（client-credentials
+// token mint + 证据字段消费；四类别闭集）+ provider 路由器（多 provider 哑分发）。
+export {
+  createPayPalAccountDataReadPort,
+  createPayPalAccountReadBackPort,
+  createPayswapProviderDataReadRouter,
+  createPayswapProviderReadBackRouter,
+  mintPayPalAccessToken,
+  type PayswapPayPalDataReadDependencies,
+  type PayswapPayPalReadBackDependencies,
+  type PayswapPayPalTokenMintResult,
+} from "#src/payswap/index.js";
 // PaySwap P2.2（生产装配半）：账户运行时 —— 单一账户服务实例 + broker 的两个
 // 绑定 reader 面（listConnections / getOverviewData）；凭据通道经 env 交付
 //（ZCODE_PAYSWAP_PSP_KEY —— Gate E2 的 desktop-writer → services-reader 契约）。

@@ -45,7 +45,9 @@ import {
   PAYSWAP_ACCOUNT_SECURE_STORAGE_REFUSAL_CODE,
   PAYSWAP_BROKER_OPS,
   PAYSWAP_READONLY_CATEGORIES,
+  PAYSWAP_PAYPAL_AUTH_SPEC,
   PAYSWAP_STRIPE_AUTH_SPEC,
+  resolvePayswapClientCredentialsBaseUrl,
   PAYSWAP_WRITE_OPERATION_VERBS,
   payswapAccountCapabilityEvidenceSchema,
   payswapAccountReadBackOutcomeSchema,
@@ -295,6 +297,45 @@ describe("payswap account connection — stripe auth spec facts", () => {
 });
 
 // ---------------------------------------------------------------------------
+// PayPal authSpec 事实（P3 —— provider-facts/paypal.md，第三批检索 2026-11-15）
+// ---------------------------------------------------------------------------
+
+describe("payswap account connection — paypal auth spec facts (P3)", () => {
+  it("client-credentials 形态 + environment-declared 模式 + 恰两 secretKinds + delete-local-only", () => {
+    expect(PAYSWAP_PAYPAL_AUTH_SPEC.providerId).toBe("paypal");
+    expect(PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.kind).toBe("client-credentials");
+    expect(PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.modeDistinguishable).toBe("environment-declared");
+    expect(PAYSWAP_PAYPAL_AUTH_SPEC.secretKinds).toEqual(["client-id", "client-secret"]);
+    expect(PAYSWAP_PAYPAL_AUTH_SPEC.revoke).toBe("delete-local-only");
+    // 占位符永不携带真实键材料（doc 04 §0）。
+    expect(PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.clientIdPlaceholder).toBe(
+      "CLIENT_ID_<placeholder>",
+    );
+    expect(PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.clientSecretPlaceholder).toBe(
+      "CLIENT_SECRET_<placeholder>",
+    );
+  });
+
+  it("wire 事实：per-mode base URL（P-3）+ token 路径（P-1）", () => {
+    expect(PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.baseUrls.test).toBe(
+      "https://api-m.sandbox.paypal.com",
+    );
+    expect(PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.baseUrls.live).toBe("https://api-m.paypal.com");
+    expect(PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.tokenPath).toBe("/v1/oauth2/token");
+    expect(resolvePayswapClientCredentialsBaseUrl(PAYSWAP_PAYPAL_AUTH_SPEC, "test")).toBe(
+      "https://api-m.sandbox.paypal.com",
+    );
+    expect(resolvePayswapClientCredentialsBaseUrl(PAYSWAP_PAYPAL_AUTH_SPEC, "live")).toBe(
+      "https://api-m.paypal.com",
+    );
+  });
+
+  it("无 formatCheck（PayPal 秘密形状无已验证事实 —— 不发明；权威是 token mint read-back，P-4）", () => {
+    expect("formatCheck" in PAYSWAP_PAYPAL_AUTH_SPEC.acquisition).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // 连接 ID 铸造 + typed refusal 单一事实源
 // ---------------------------------------------------------------------------
 
@@ -366,19 +407,37 @@ describe("payswap account data — ADR-P2-1 readonly category law", () => {
   it("redacted 数据 schema strict：余额/支付对象/客户/争议的合法形状通过，未知字段拒绝", () => {
     expect(
       payswapBalanceDataSchema.safeParse({
-        available: [{ amount: "1200", currency: "usd" }],
-        pending: [{ amount: "-50", currency: "eur" }],
+        available: [{ amount: "1200", currency: "usd", amountFormat: "minor-unit-integer" }],
+        pending: [{ amount: "-50", currency: "eur", amountFormat: "minor-unit-integer" }],
       }).success,
     ).toBe(true);
     expect(
-      payswapBalanceDataSchema.safeParse({ available: [{ amount: "12.5", currency: "usd" }], pending: [] })
+      payswapBalanceDataSchema.safeParse({
+        available: [{ amount: "12,5", currency: "usd", amountFormat: "minor-unit-integer" }],
+        pending: [],
+      }).success,
+    ).toBe(false); // amount 必须是整数或小数字符串（千分位逗号等畸形拒绝）
+    // P3 金额约定标记（account-data 法则 2）：amount 正则同时接受两种约定的
+    // 字符串形态，amountFormat 是唯一解释依据 —— 缺标记 = strict 拒绝；
+    // major-unit（PayPal native —— 官方 money schema）的小数字符串通过。
+    // Stripe native 行的「永远整数」由 adapter 纪律保证（minorUnitString），
+    // 在 services 侧 Stripe 电池证明，不在 schema 层重复。
+    expect(
+      payswapBalanceDataSchema.safeParse({ available: [{ amount: "1200", currency: "usd" }], pending: [] })
         .success,
-    ).toBe(false); // minor-unit 整数纪律
+    ).toBe(false);
+    expect(
+      payswapBalanceDataSchema.safeParse({
+        available: [{ amount: "12.50", currency: "usd", amountFormat: "major-unit" }],
+        pending: [],
+      }).success,
+    ).toBe(true);
     expect(
       payswapPaymentObjectSchema.safeParse({
         id: "ch_1",
         amount: "1000",
         currency: "usd",
+        amountFormat: "minor-unit-integer",
         status: "succeeded",
         created: 1731230000,
         description: null,
@@ -404,6 +463,7 @@ describe("payswap account data — ADR-P2-1 readonly category law", () => {
         id: "dp_1",
         amount: "500",
         currency: "usd",
+        amountFormat: "minor-unit-integer",
         status: "needs_response",
         reason: "fraudulent",
         created: 1731230000,
@@ -414,6 +474,7 @@ describe("payswap account data — ADR-P2-1 readonly category law", () => {
         id: "dp_1",
         amount: "500",
         currency: "usd",
+        amountFormat: "minor-unit-integer",
         status: "needs_response",
         reason: "fraudulent",
         created: 1731230000,
@@ -425,7 +486,10 @@ describe("payswap account data — ADR-P2-1 readonly category law", () => {
   it("四值类别结局 strict：ok/auth-failed/refused/unavailable 按 per-category schema 通过；未知 status 拒绝", () => {
     const okBalance = {
       status: "ok",
-      data: { available: [], pending: [{ amount: "1", currency: "usd" }] },
+      data: {
+        available: [],
+        pending: [{ amount: "1", currency: "usd", amountFormat: "minor-unit-integer" }],
+      },
     };
     expect(payswapReadonlyCategoryResultSchemas.balance.safeParse(okBalance).success).toBe(true);
     expect(

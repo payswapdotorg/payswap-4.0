@@ -95,7 +95,10 @@ function detailArm(): PayswapAccountOverviewDetail {
     data: {
       balance: {
         status: "ok",
-        data: { available: [{ amount: "700", currency: "usd" }], pending: [] },
+        data: {
+            available: [{ amount: "700", currency: "usd", amountFormat: "minor-unit-integer" }],
+            pending: [],
+          },
       },
       payment_objects: { status: "ok", data: [] },
       customers: { status: "ok", data: [] },

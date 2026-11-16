@@ -19,11 +19,14 @@
  *    段）；投影 schema 对秘密形载荷 schema 级拒绝 —— 渲染层/模型侧在类型面上
  *    拿不到秘密，这是投影面的法则证明。
  * 4. **authSpec**：per-provider 认证规格的唯一形态（doc 05 §5 `PayswapAuthSpec`
- *    的 P2 子集 —— operator-supplied-secret + key-prefix 模式区分；oauth /
- *    client-credentials 形态随 P3 的 provider 评估落地，不提前发明）。Stripe
- *    事实源自 doc 04（检索日期在案）：sk/rk × test/live，revoke =
- *    delete-local-only。formatCheck 是防御性检查；**最终权威是 provider
- *    read-back**（refreshEvidence），本模块永不声称格式通过即凭据有效。
+ *    —— 两种 acquisition 形态）：operator-supplied-secret + key-prefix 模式区分
+ *    （Stripe）；client-credentials 双秘密 + environment-declared 模式（PayPal，
+ *    P3 落地 —— 事实源自 provider-facts/paypal.md，检索日期在案）。Stripe 事实
+ *    源自 doc 04（检索日期在案）：sk/rk × test/live。两形态 revoke 均 =
+ *    delete-local-only。formatCheck（operator 形态）与非空检查（client-credentials
+ *    形态 —— PayPal 秘密无已验证形状事实，不发明 regex）都是防御性检查；
+ *    **最终权威是 provider read-back**（refreshEvidence），本模块永不声称格式
+ *    通过即凭据有效。
  * 5. **typed refusal**：账户服务的存储 fail-closed 拒绝码逐字复用 Gate E2 的
  *    `PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE`（addendum §5.2「typed error
  *    surfaced in the connection UI」）—— 单一事实源，连接 UI 按 code 分流。
@@ -47,7 +50,7 @@ import { PAYSWAP_PSP_CREDENTIAL_KEY_PREFIX, PAYSWAP_PSP_SECURE_STORAGE_UNAVAILAB
 // 秘密种类（doc 05 §5 secretKinds 的封闭枚举）
 // ---------------------------------------------------------------------------
 
-/** PSP 秘密种类的封闭枚举（doc 05 §5；P2 只用 api-key，其余随 P3 provider 落地）。 */
+/** PSP 秘密种类的封闭枚举（doc 05 §5；P2 用 api-key，P3 起 PayPal 用 client-id/client-secret）。 */
 export const PAYSWAP_PSP_SECRET_KINDS = [
   "api-key",
   "client-id",
@@ -141,7 +144,7 @@ export function projectPayswapConnectionStatus(
 }
 
 // ---------------------------------------------------------------------------
-// authSpec（doc 05 §5 的 P2 子集：operator-supplied-secret + key-prefix）
+// authSpec（doc 05 §5：operator-supplied-secret + key-prefix；P3 增 client-credentials）
 // ---------------------------------------------------------------------------
 
 /** key-prefix 模式区分的前缀表（证据源自 doc 04 的 per-provider 事实）。 */
@@ -167,10 +170,61 @@ export interface PayswapOperatorSecretAuthSpec {
 }
 
 /**
- * authSpec 的 P2 形态（operator-supplied-secret）。oauth-authorization-code 与
- * client-credentials 形态随 P3 的 provider 评估落地 —— 不提前发明 URL/scope 事实。
+ * client-credentials 形态（doc 05 §5；P3 落地 —— 事实源自 provider-facts/paypal.md
+ * 第三批检索 2026-11-15）：双秘密（client-id 公开 + client-secret 服务端私有，
+ * P-17）；模式不由秘密前缀推导而是 **operator 声明环境**（sandbox/test 与 live
+ * 是不同 app、不同 base URL —— P-3）；token 端点 POST /v1/oauth2/token + HTTP
+ * Basic（P-1）。秘密形状无已验证事实 → 防御性检查只有非空（不发明 regex）；
+ * 凭据有效性的最终权威是 provider read-back（token mint，P-4 的 401 包络）。
  */
-export type PayswapAuthSpec = PayswapOperatorSecretAuthSpec;
+export interface PayswapClientCredentialsAuthSpec {
+  readonly providerId: string;
+  readonly acquisition: {
+    readonly kind: "client-credentials";
+    /** client ID 输入面标签（P-17：client ID 是公开值）。 */
+    readonly clientIdLabel: string;
+    /** client secret 输入面标签（P-17：client secret 服务端私有）。 */
+    readonly clientSecretLabel: string;
+    /** 永远是占位符形态（doc 04 §0：never a real key）。 */
+    readonly clientIdPlaceholder: string;
+    /** 永远是占位符形态（doc 04 §0）。 */
+    readonly clientSecretPlaceholder: string;
+    /** 模式由 operator 声明环境（P-3：sandbox/live 是不同 app/环境 —— 秘密不携带前缀模式）。 */
+    readonly modeDistinguishable: "environment-declared";
+    /** per-mode API base URL（P-3：api-m.sandbox.paypal.com / api-m.paypal.com）。 */
+    readonly baseUrls: Readonly<{ readonly test: string; readonly live: string }>;
+    /** token 端点路径（P-1：POST /v1/oauth2/token，grant_type=client_credentials，HTTP Basic）。 */
+    readonly tokenPath: string;
+  };
+  readonly secretKinds: readonly PayswapPspSecretKind[];
+  readonly revoke: "delete-local-only" | "delete-and-provider-deauthorize";
+}
+
+/** authSpec 的封闭联合（doc 05 §5）：operator-supplied-secret（P2）| client-credentials（P3）。 */
+export type PayswapAuthSpec = PayswapOperatorSecretAuthSpec | PayswapClientCredentialsAuthSpec;
+
+/**
+ * acquisition 形态的类型守卫（判别式在嵌套属性 acquisition.kind 上 —— 直接
+ * 判别窄化不可用，守卫是法则消费面的窄化半）。两个方向都窄化：if 分支 =
+ * operator 形态，else 分支 = client-credentials 形态。
+ */
+export function isPayswapOperatorSecretAuthSpec(
+  spec: PayswapAuthSpec,
+): spec is PayswapOperatorSecretAuthSpec {
+  return spec.acquisition.kind === "operator-supplied-secret";
+}
+
+/**
+ * client-credentials 形态的 per-mode base URL 解析（P-3 事实的单一事实源消费面）。
+ * 未知模式（不可能值）→ 抛出（fail-closed 编程错误，不猜 URL）。
+ */
+export function resolvePayswapClientCredentialsBaseUrl(
+  spec: PayswapClientCredentialsAuthSpec,
+  mode: "test" | "live",
+): string {
+  const baseUrl = mode === "test" ? spec.acquisition.baseUrls.test : spec.acquisition.baseUrls.live;
+  return baseUrl.replace(/\/+$/, "");
+}
 
 /**
  * Stripe authSpec（doc 04 §1 的事实，检索日期在案）：operator-supplied secret
@@ -197,9 +251,39 @@ export const PAYSWAP_STRIPE_AUTH_SPEC: PayswapOperatorSecretAuthSpec = {
 };
 
 /**
- * 按前缀推导连接模式（key-prefix 型规格）。无匹配前缀 → null（fail-closed：
- * 宁可拒绝，不可猜）。推导只是记录元数据；凭据有效性的最终权威是 provider
- * read-back（后续切片）。
+ * PayPal authSpec（provider-facts/paypal.md，第三批检索 2026-11-15 在案）：
+ * client-credentials 双秘密（client-id 公开 + client-secret 服务端私有 —— P-17）；
+ * environment-declared 模式（sandbox=test / live 是不同 app、不同 base URL ——
+ * P-3）；token 端点 POST /v1/oauth2/token + HTTP Basic + grant_type=
+ * client_credentials（P-1）；revoke = delete-local-only（app 凭据的撤销在
+ * developer dashboard —— P-17「apps are created per environment in the
+ * developer dashboard」；本地删除即 PaySwap 侧的全部撤销面）。无 formatCheck：
+ * PayPal 秘密形状无已验证事实（不发明）；最终权威是 token mint read-back（P-4）。
+ */
+export const PAYSWAP_PAYPAL_AUTH_SPEC: PayswapClientCredentialsAuthSpec = {
+  providerId: "paypal",
+  acquisition: {
+    kind: "client-credentials",
+    clientIdLabel: "PayPal client ID (public)",
+    clientSecretLabel: "PayPal client secret (server-side only)",
+    clientIdPlaceholder: "CLIENT_ID_<placeholder>",
+    clientSecretPlaceholder: "CLIENT_SECRET_<placeholder>",
+    modeDistinguishable: "environment-declared",
+    baseUrls: {
+      test: "https://api-m.sandbox.paypal.com",
+      live: "https://api-m.paypal.com",
+    },
+    tokenPath: "/v1/oauth2/token",
+  },
+  secretKinds: ["client-id", "client-secret"],
+  revoke: "delete-local-only",
+};
+
+/**
+ * 按前缀推导连接模式（operator-supplied-secret 型规格）。无匹配前缀 → null
+ * （fail-closed：宁可拒绝，不可猜）。推导只是记录元数据；凭据有效性的
+ * 最终权威是 provider read-back。client-credentials 型规格不适用本函数
+ * （模式是 environment-declared —— P-3：sandbox/test 与 live 是不同 app）。
  */
 export function derivePayswapSecretKeyMode(
   secret: string,
@@ -215,13 +299,17 @@ export function derivePayswapSecretKeyMode(
 // unknown 结局纪律 + doc 06 §2.2 refreshEvidence；slice 2）
 // ---------------------------------------------------------------------------
 
-/** 读回端口的输入（host 进程内执行；秘密只经参数入）。 */
+/**
+ * 读回端口的输入（host 进程内执行；秘密只经参数入）。秘密按 secretKind 键控：
+ * 单秘密形态（Stripe）恰一入口；client-credentials 形态（PayPal）两入口
+ * （client-id + client-secret）—— adapter 的装配防线校验键集恰等于其规格
+ * 声明的 secretKinds。端口永不持久化/日志/投影秘密。
+ */
 export interface PayswapAccountReadBackInput {
   readonly providerId: string;
   readonly mode: "test" | "live";
-  readonly secretKind: PayswapPspSecretKind;
-  /** 连接秘密（host 进程内从凭据 store 读出；端口永不持久化/日志/投影它）。 */
-  readonly secret: string;
+  /** 连接的全部已存秘密（secretKind → 值；service 侧保证键集 = 记录的 secretKinds）。 */
+  readonly secrets: Readonly<Partial<Record<PayswapPspSecretKind, string>>>;
 }
 
 

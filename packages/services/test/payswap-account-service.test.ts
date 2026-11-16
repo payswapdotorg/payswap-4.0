@@ -37,6 +37,7 @@ import {
   payswapPspSecretCredentialKey,
   type PayswapAccountReadBackInput,
   type PayswapAccountReadBackOutcome,
+  type PayswapAccountCredentialPort,
   type PayswapAccountReadBackPort,
 } from "@zcode/shared/payswap";
 import {
@@ -429,9 +430,10 @@ describe("payswap account service (P2.2 slice 2) — refreshEvidence (provider r
 
     const result = await service.refreshEvidence({ connectionId });
 
-    // 端口收到恰一次法则形调用：五字段输入（providerId/mode/secretKind/secret）。
+    // 端口收到恰一次法则形调用：三字段多秘密输入（providerId/mode/secrets ——
+    // 键集 = 记录的 secretKinds）。
     expect(port.calls).toEqual([
-      { providerId: "stripe", mode: "test", secretKind: "api-key", secret: TEST_SECRET },
+      { providerId: "stripe", mode: "test", secrets: { "api-key": TEST_SECRET } },
     ]);
     expect(result).toEqual({
       kind: "verified",
@@ -669,5 +671,249 @@ describe("payswap account service (P2.2 slice 2) — refreshEvidence (provider r
       refusal: { code: "read_back_unavailable", message: expect.any(String) },
     });
     expect(await fixture.readRawConnections()).toBe(before);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// PaySwap P3 —— client-credentials 多秘密连接法则（provider-facts/paypal.md
+// P-1/P-3/P-17；authSpec 双形态裁决 + 多秘密落盘/补偿/读回）
+// ---------------------------------------------------------------------------
+
+describe("payswap account service (P3) — client-credentials connect (PayPal)", () => {
+  let fixture: AccountServiceFixture;
+
+  beforeEach(async () => {
+    fixture = await freshFixture();
+  });
+
+  const PAYPAL_INPUT = {
+    providerId: "paypal",
+    mode: "test" as const,
+    clientId: "AYqNDTESTCLIENTIDPLACEHOLDER0000000000000000000",
+    clientSecret: "EGnJTESTCLIENTSECRETPLACEHOLDER00000000000000",
+  };
+
+  it("连接成功：双秘密各落 PSP 键、记录 secretKinds = [client-id, client-secret]、投影无秘密、at-rest 双检查零明文", async () => {
+    const service = fixture.build({ [PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]: "b".repeat(64) });
+    const result = await service.connect({ ...PAYPAL_INPUT, displayName: "PayPal (sandbox)" });
+    expect(result.kind).toBe("connected");
+    if (result.kind !== "connected") return;
+    expect(result.connection.providerId).toBe("paypal");
+    expect(result.connection.mode).toBe("test");
+    expect(result.connection.status).toBe("connected");
+
+    const rawCredentials = await fixture.readRawCredentials();
+    expect(rawCredentials).not.toBeNull();
+    const keys = Object.keys(rawCredentials ?? {});
+    expect(keys.some((key) => key.endsWith(":client-id"))).toBe(true);
+    expect(keys.some((key) => key.endsWith(":client-secret"))).toBe(true);
+    const rawText = JSON.stringify(rawCredentials);
+    expect(rawText.includes(PAYPAL_INPUT.clientId)).toBe(false);
+    expect(rawText.includes(PAYPAL_INPUT.clientSecret)).toBe(false);
+
+    const rawConnections = await fixture.readRawConnections();
+    expect(rawConnections).not.toBeNull();
+    expect(rawConnections?.includes(PAYPAL_INPUT.clientId)).toBe(false);
+    expect(rawConnections?.includes(PAYPAL_INPUT.clientSecret)).toBe(false);
+    expect(rawConnections?.includes("client-secret")).toBe(true); // 种类名不是秘密
+  });
+
+  it("缺 mode / 缺 clientId / 缺 clientSecret → validation_failed，零落盘（无 PSP 键、无记录）", async () => {
+    const service = fixture.build({ [PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]: "b".repeat(64) });
+    const cases = [
+      { providerId: "paypal", clientId: "x", clientSecret: "y" },
+      { providerId: "paypal", mode: "test" as const, clientSecret: "y" },
+      { providerId: "paypal", mode: "test" as const, clientId: "x" },
+    ];
+    for (const input of cases) {
+      const result = await service.connect(input);
+      expect(result.kind, JSON.stringify(input)).toBe("refused");
+      if (result.kind !== "refused") return;
+      expect(result.refusal.code).toBe("validation_failed");
+    }
+    expect(await fixture.readRawCredentials()).toBeNull();
+    expect(await fixture.readRawConnections()).toBeNull();
+  });
+
+  it("跨形态字段：operatorSecret 给 paypal / client-credentials 字段给 stripe → validation_failed", async () => {
+    const service = fixture.build({ [PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]: "b".repeat(64) });
+    const wrongFormForPayPal = await service.connect({
+      providerId: "paypal",
+      operatorSecret: TEST_SECRET,
+    });
+    expect(wrongFormForPayPal.kind).toBe("refused");
+    if (wrongFormForPayPal.kind === "refused") {
+      expect(wrongFormForPayPal.refusal.code).toBe("validation_failed");
+    }
+    const wrongFormForStripe = await service.connect({
+      providerId: "stripe",
+      mode: "test",
+      clientId: "x",
+      clientSecret: "y",
+    });
+    expect(wrongFormForStripe.kind).toBe("refused");
+    if (wrongFormForStripe.kind === "refused") {
+      expect(wrongFormForStripe.refusal.code).toBe("validation_failed");
+    }
+    expect(await fixture.readRawCredentials()).toBeNull();
+    expect(await fixture.readRawConnections()).toBeNull();
+  });
+
+  it("空 clientId / 空 clientSecret → validation_failed（防御性检查只有非空 —— PayPal 秘密形状无已验证事实，不发明 regex）", async () => {
+    const service = fixture.build({ [PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]: "b".repeat(64) });
+    for (const input of [
+      { ...PAYPAL_INPUT, clientId: "   " },
+      { ...PAYPAL_INPUT, clientSecret: "" },
+    ]) {
+      const result = await service.connect(input);
+      expect(result.kind).toBe("refused");
+      if (result.kind !== "refused") return;
+      expect(result.refusal.code).toBe("validation_failed");
+    }
+  });
+
+  it("未注册 provider（paystack —— 事实单仍 Cloudflare 阻断）→ unsupported_provider（fail-closed 不变）", async () => {
+    const service = fixture.build({ [PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]: "b".repeat(64) });
+    const result = await service.connect({
+      providerId: "paystack",
+      mode: "test",
+      clientId: "pk_test_PLACEHOLDER",
+      clientSecret: "sk_test_PLACEHOLDER",
+    });
+    expect(result.kind).toBe("refused");
+    if (result.kind !== "refused") return;
+    expect(result.refusal.code).toBe("unsupported_provider");
+  });
+
+  it("多秘密补偿：第二把秘密写失败 → 已写的第一把被尽力删除，零孤儿密文、零记录", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "payswap-p3-paypal-compensate-"));
+    createdDirs.push(dir);
+    setDataBaseDir(dir);
+    const connectionsPath = join(dir, "payswap-connections.json");
+    const baseService = fixture.build({ [PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]: "b".repeat(64) });
+    expect(baseService).toBeTruthy(); // fixture 组装健全性（真实补偿测试用自建 port）
+
+    const credentialPort: PayswapAccountCredentialPort = {
+      load: async () => null,
+      save: async (key) => {
+        if (key.endsWith(":client-secret")) {
+          throw new Error("simulated second-secret write failure");
+        }
+      },
+      delete: async () => undefined,
+    };
+    const saved: string[] = [];
+    const deleted: string[] = [];
+    const trackingPort: PayswapAccountCredentialPort = {
+      load: credentialPort.load,
+      save: async (key, value) => {
+        saved.push(key);
+        await credentialPort.save(key, value);
+      },
+      delete: async (key) => {
+        deleted.push(key);
+      },
+    };
+    const connectionStore = createPayswapConnectionRecordStore({
+      resolveStorePath: () => connectionsPath,
+    });
+    const service = createPayswapAccountService({
+      credentialPort: trackingPort,
+      connectionStore,
+    });
+    // 非存储类 store 异常 = 响亮上抛（法则 3 的补偿半：先清理后上抛）。
+    await expect(service.connect(PAYPAL_INPUT)).rejects.toThrow(
+      /simulated second-secret write failure/,
+    );
+    // 第二把写失败 → 第一把（client-id）被补偿删除；记录永不落盘。
+    expect(saved.some((key) => key.endsWith(":client-id"))).toBe(true);
+    expect(deleted).toEqual(saved.filter((key) => key.endsWith(":client-id")));
+    expect(await readFile(connectionsPath, "utf-8").catch(() => "")).toBe("");
+  });
+});
+
+describe("payswap account service (P3) — client-credentials refreshEvidence / revoke (multi-secret)", () => {
+  it("refreshEvidence 读出全部已存秘密并整包传端口（键集 = 记录的 secretKinds）；verified 状态机不变", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "payswap-p3-paypal-refresh-"));
+    createdDirs.push(dir);
+    setDataBaseDir(dir);
+    const connectionsPath = join(dir, "payswap-connections.json");
+    const calls: unknown[] = [];
+    const readBackAccount: PayswapAccountReadBackPort = async (input) => {
+      calls.push(input);
+      return { kind: "verified", providerAccountId: "APP-80W284485P519543T" };
+    };
+    const service = createPayswapAccountService({
+      credentialPort: createCredentialService({
+        env: { [PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]: "b".repeat(64) },
+      }),
+      connectionStore: createPayswapConnectionRecordStore({
+        resolveStorePath: () => connectionsPath,
+      }),
+      readBackAccount,
+    });
+    const clientId = "AYqNDTESTCLIENTIDPLACEHOLDER0000000000000000000";
+    const clientSecret = "EGnJTESTCLIENTSECRETPLACEHOLDER00000000000000";
+    const connected = await service.connect({
+      providerId: "paypal",
+      mode: "test",
+      clientId,
+      clientSecret,
+    });
+    expect(connected.kind).toBe("connected");
+    if (connected.kind !== "connected") return;
+
+    const result = await service.refreshEvidence({ connectionId: connected.connection.connectionId });
+    expect(result.kind).toBe("verified");
+    expect(calls).toEqual([
+      { providerId: "paypal", mode: "test", secrets: { "client-id": clientId, "client-secret": clientSecret } },
+    ]);
+
+    // revoke：终态投影 + 双键删除（幂等）。
+    const revoked = await service.revoke({ connectionId: connected.connection.connectionId });
+    expect(revoked.kind).toBe("revoked");
+  });
+
+  it("任一秘密键缺失（本地不一致行）→ read_back_unavailable，状态不变（无 provider 证据不翻状态）", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "payswap-p3-paypal-missing-"));
+    createdDirs.push(dir);
+    setDataBaseDir(dir);
+    const connectionsPath = join(dir, "payswap-connections.json");
+    let portCalls = 0;
+    const readBackAccount: PayswapAccountReadBackPort = async () => {
+      portCalls += 1;
+      return { kind: "verified", providerAccountId: "APP-80W284485P519543T" };
+    };
+    const env = { [PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]: "b".repeat(64) };
+    const credentialService = createCredentialService({ env });
+    const connectionStore = createPayswapConnectionRecordStore({
+      resolveStorePath: () => connectionsPath,
+    });
+    const service = createPayswapAccountService({
+      credentialPort: credentialService,
+      connectionStore,
+      readBackAccount,
+    });
+    const clientId = "AYqNDTESTCLIENTIDPLACEHOLDER0000000000000000000";
+    const connected = await service.connect({
+      providerId: "paypal",
+      mode: "test",
+      clientId,
+      clientSecret: "EGnJTESTCLIENTSECRETPLACEHOLDER00000000000000",
+    });
+    expect(connected.kind).toBe("connected");
+    if (connected.kind !== "connected") return;
+    const connectionId = connected.connection.connectionId;
+
+    // 拆除 client-secret 键（模拟本地不一致）。
+    await createCredentialService({ env }).delete(
+      `payswap:psp:paypal:${connectionId}:client-secret`,
+    );
+
+    const result = await service.refreshEvidence({ connectionId });
+    expect(result.kind).toBe("refused");
+    if (result.kind !== "refused") return;
+    expect(result.refusal.code).toBe("read_back_unavailable");
+    expect(portCalls).toBe(0);
   });
 });

@@ -119,12 +119,16 @@ jobs:
           packages/services/test/payswap-stripe-read-back.test.ts
           packages/ui/test/payswap-connection-ui-presentation.test.ts
 
-      # PaySwap P3（架构师 2026-11-15 交接开工）：协议契约法则电池的 PR CI 注册
+      # PaySwap P3（架构师 2026-11-15 交接开工）：P3 法则电池的 PR CI 注册
       # （同 P2 模式 —— exact PR head 上可复现的绿；清单本身不是执行证据）。
-      - name: Payswap P3 protocol-contract law battery (root engineering project)
+      # 覆盖协议契约 + PayPal client-credentials adapter 双套件（data-read /
+      # read-back）：PR #40 的 PayPal 行为必须由本步真实执行证明，缺一即非绿。
+      - name: Payswap P3 law battery (protocol contract + PayPal adapters; root engineering project)
         run: >
           pnpm exec vitest run --project engineering
           packages/services/test/payswap-protocol-contract.test.ts
+          packages/services/test/payswap-paypal-data-read.test.ts
+          packages/services/test/payswap-paypal-read-back.test.ts
 
       # PaySwap P1.6：server 侧 operator-principal 生产边界套件（真实 createHttpServer +
       # 真实 HTTP/WS 升级握手 + 0600 原子持久化；packages/server/vitest.config.ts 装配

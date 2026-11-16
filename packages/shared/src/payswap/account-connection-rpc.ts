@@ -1,17 +1,21 @@
 /**
  * PaySwap P2.2 —— 连接 RPC 通道法则（ADR-P2-2 Decision 4：renderer 连接面落
  * desktop main —— approvalIpc 的 ipcMain.handle 模式；doc 06 §2.2「exposed over
- * an additive RPC channel」；doc 04 §1.1 operator-supplied-secret）。
+ * an additive RPC channel」；doc 04 §1.1 operator-supplied-secret；P3 起
+ * client-credentials 双秘密形态 —— provider-facts/paypal.md）。
  *
  * 法则（normative；违反即实现缺陷）：
  * 1. **请求闭集**（strict zod，discriminated on `op`）：恰四操作 ——
- *    `connect`（providerId + operatorSecret + 可选 displayName）/ `revoke` /
- *    `refresh`（connectionId）/ `list`（无参）。未知 op、多余字段、畸形值 =
- *    `malformed_request`。
- * 2. **operator 秘密的单向性**：`operatorSecret` 只出现在 connect **请求**里
- *    （renderer → main 是它的唯一必经边界 —— ADR-P2-2 Decision 4）；一切响应
- *    形状**结构上无秘密位**（per-op 结果 = 既有账户法则 schema：五行投影 /
- *    结果联合 —— redaction-by-construction，与 reader 桥同款纪律）。
+ *    `connect`（providerId + **恰一完整 acquisition 形态**：operatorSecret，
+ *    或 mode+clientId+clientSecret —— superRefine 强制，混合/残缺 =
+ *    `malformed_request`）/ `revoke` / `refresh`（connectionId）/ `list`
+ *    （无参）。未知 op、多余字段、畸形值 = `malformed_request`。
+ * 2. **operator 秘密的单向性**：operatorSecret / clientId / clientSecret 只出现
+ *    在 connect **请求**里（renderer → main 是它们的唯一必经边界 —— ADR-P2-2
+ *    Decision 4）；一切响应形状**结构上无秘密位**（per-op 结果 = 既有账户
+ *    法则 schema：五行投影 / 结果联合 —— redaction-by-construction，与 reader
+ *    桥同款纪律）。client ID 虽是公开值（P-17），它与 secret 成对入 connect、
+ *    永不出响应 —— 同一单向通道纪律。
  * 3. **三检先于载荷解析**：发送者三检复用 approval-origin 法则
  *    （`evaluatePayswapApprovalSender`，无 expectedWebContentsId 位 —— 连接面
  *    是应用 shell 自身的任意主框架）：主框架 + 受信 application origin（插件
@@ -67,11 +71,37 @@ export const payswapConnectionRpcRequestSchema = z.discriminatedUnion("op", [
     .object({
       op: z.literal("connect"),
       providerId: z.string().min(1),
-      /** operator 供应的秘密（doc 04 §1.1）—— 只进不出的唯一字段。 */
-      operatorSecret: z.string().min(1),
+      /** operator 供应的秘密（doc 04 §1.1 —— operator-supplied-secret 形态）—— 只进不出。 */
+      operatorSecret: z.string().min(1).optional(),
+      /** client-credentials 形态（P3）：operator 声明的环境模式（P-3）。 */
+      mode: z.enum(["test", "live"]).optional(),
+      /** client ID（公开值，P-17）—— client-credentials 形态 —— 只进不出。 */
+      clientId: z.string().min(1).optional(),
+      /** client secret（服务端私有，P-17）—— client-credentials 形态 —— 只进不出。 */
+      clientSecret: z.string().min(1).optional(),
       displayName: z.string().trim().min(1).max(120).optional(),
     })
-    .strict(),
+    .strict()
+    .superRefine((data, ctx) => {
+      const hasOperatorSecret = data.operatorSecret !== undefined;
+      const credentialFields = [data.mode, data.clientId, data.clientSecret];
+      const credentialFieldCount = credentialFields.filter((v) => v !== undefined).length;
+      if (hasOperatorSecret && credentialFieldCount > 0) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "connect carries both the operator-supplied-secret form and client-credentials fields; supply exactly one acquisition form.",
+        });
+        return;
+      }
+      if (!hasOperatorSecret && credentialFieldCount !== 3) {
+        ctx.addIssue({
+          code: "custom",
+          message:
+            "connect must carry either operatorSecret (operator-supplied-secret providers) or the complete client-credentials form (mode + clientId + clientSecret).",
+        });
+      }
+    }),
   z
     .object({
       op: z.literal("revoke"),
@@ -151,14 +181,19 @@ export const payswapConnectionRpcResponseSchema = z.discriminatedUnion("ok", [
 
 /**
  * 账户服务的窄面（`PayswapAccountService` 的四操作子集 —— 类型上即满足）。
+ * connect 的输入镜像账户服务的双形态输入（operator-supplied-secret 单秘密 /
+ * client-credentials mode+clientId+clientSecret —— 恰一完整形态的裁决归服务）。
  * resolver 语义 = slice 6 的 `getRuntime()`：每请求现解析（键可用性变化时
  * main 侧按需重建运行时 —— 单写者纪律在 RPC 面的投影）。
  */
 export interface PayswapConnectionRpcServiceFace {
   connect(input: {
     providerId: string;
-    operatorSecret: string;
     displayName?: string;
+    operatorSecret?: string;
+    mode?: "test" | "live";
+    clientId?: string;
+    clientSecret?: string;
   }): Promise<PayswapConnectResult>;
   revoke(input: { connectionId: string }): Promise<PayswapRevokeResult>;
   refreshEvidence(input: { connectionId: string }): Promise<PayswapRefreshResult>;
@@ -231,17 +266,18 @@ export function createPayswapDesktopConnectionHost(
         let result: unknown;
         switch (request.data.op) {
           case "connect": {
+            const { providerId, displayName, operatorSecret, mode, clientId, clientSecret } =
+              request.data;
+            // superRefine 已保证恰一完整 acquisition 形态（operatorSecret 或
+            // mode+clientId+clientSecret）；此处原样透传，形态裁决归 accountService。
             const input =
-              request.data.displayName !== undefined
-                ? {
-                    providerId: request.data.providerId,
-                    operatorSecret: request.data.operatorSecret,
-                    displayName: request.data.displayName,
-                  }
-                : {
-                    providerId: request.data.providerId,
-                    operatorSecret: request.data.operatorSecret,
-                  };
+              operatorSecret !== undefined
+                ? displayName !== undefined
+                  ? { providerId, operatorSecret, displayName }
+                  : { providerId, operatorSecret }
+                : displayName !== undefined
+                  ? { providerId, mode, clientId, clientSecret, displayName }
+                  : { providerId, mode, clientId, clientSecret };
             result = await service.connect(input);
             break;
           }

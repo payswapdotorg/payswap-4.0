@@ -76,8 +76,7 @@ function dataInput(overrides: Record<string, unknown> = {}) {
   return {
     providerId: "stripe",
     mode: "test" as const,
-    secretKind: "api-key" as const,
-    secret: TEST_SECRET,
+    secrets: { "api-key": TEST_SECRET } as Record<string, string>,
     category: "balance" as const,
     ...overrides,
   };
@@ -108,8 +107,8 @@ describe("payswap stripe data-read adapter (ADR-P2-1) — ok rows with redaction
     expect(result.status).toBe("ok");
     if (result.status === "ok") {
       expect(result.data).toEqual({
-        available: [{ amount: "1200", currency: "usd" }],
-        pending: [{ amount: "-50", currency: "eur" }],
+        available: [{ amount: "1200", currency: "usd", amountFormat: "minor-unit-integer" }],
+        pending: [{ amount: "-50", currency: "eur", amountFormat: "minor-unit-integer" }],
       });
     }
   });
@@ -142,6 +141,7 @@ describe("payswap stripe data-read adapter (ADR-P2-1) — ok rows with redaction
           id: "ch_1QxData",
           amount: "1000",
           currency: "usd",
+          amountFormat: "minor-unit-integer",
           status: "succeeded",
           created: 1731230000,
           description: "Invoice A",
@@ -207,6 +207,7 @@ describe("payswap stripe data-read adapter (ADR-P2-1) — ok rows with redaction
           id: "dp_1QxData",
           amount: "500",
           currency: "usd",
+          amountFormat: "minor-unit-integer",
           status: "needs_response",
           reason: "fraudulent",
           created: 1731230200,
@@ -301,7 +302,7 @@ describe("payswap stripe data-read adapter (ADR-P2-1) — assembly guards (befor
     const client = recordingApiClient(() => jsonResponse(200, {}));
     const port = createStripeAccountDataReadPort({ apiClient: client });
     await expect(port(dataInput({ providerId: "paystack" }))).rejects.toThrow(/paystack/i);
-    await expect(port(dataInput({ secretKind: "client-secret" }))).rejects.toThrow(/api-key/i);
+    await expect(port(dataInput({ secrets: { "client-secret": "x" } }))).rejects.toThrow(/api-key/i);
     await expect(
       port(dataInput({ category: "transfers" as never })),
     ).rejects.toThrow(/unknown read category/i);
@@ -312,7 +313,7 @@ describe("payswap stripe data-read adapter (ADR-P2-1) — assembly guards (befor
     const client = recordingApiClient(() => jsonResponse(200, {}));
     const port = createStripeAccountDataReadPort({ apiClient: client });
     const result = await port(
-      dataInput({ mode: "live", secret: `sk_test_${"e5f6g7h8".repeat(6)}` }),
+      dataInput({ mode: "live", secrets: { "api-key": `sk_test_${"e5f6g7h8".repeat(6)}` } }),
     );
     expect(result.status).toBe("unavailable");
     expect(client.calls.length).toBe(0);
@@ -326,8 +327,7 @@ describe("payswap stripe read-back adapter (ADR-P2-1) — capability evidence ca
     const outcome = await port({
       providerId: "stripe",
       mode: "test",
-      secretKind: "api-key",
-      secret: TEST_SECRET,
+      secrets: { "api-key": TEST_SECRET },
     });
     expect(outcome.kind).toBe("verified");
     if (outcome.kind === "verified") {
@@ -357,8 +357,7 @@ describe("payswap stripe read-back adapter (ADR-P2-1) — capability evidence ca
       const outcome = await port({
         providerId: "stripe",
         mode: "test",
-        secretKind: "api-key",
-        secret: TEST_SECRET,
+        secrets: { "api-key": TEST_SECRET },
       });
       expect(outcome.kind).toBe("verified");
       if (outcome.kind === "verified") {
@@ -436,7 +435,9 @@ describe("payswap account service getOverviewData (ADR-P2-1) — the orchestrati
         expect(detail.data[category].status).toBe("ok");
       }
       if (detail.data.balance.status === "ok") {
-        expect(detail.data.balance.data.available).toEqual([{ amount: "2500", currency: "usd" }]);
+        expect(detail.data.balance.data.available).toEqual([
+          { amount: "2500", currency: "usd", amountFormat: "minor-unit-integer" },
+        ]);
       }
     }
     const connectionsRaw = await readFile(assembly.connectionsPath, "utf8");
