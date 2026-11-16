@@ -290,12 +290,18 @@ async function main() {
   }
 
   const REPO = "https://github.com/payswapdotorg/payswap-4.0.git";
+  // 模板选择（可选）：PAYSWAP_E2B_TEMPLATE 指定既有模板 id/alias。2026-11-16
+  // 实测：E2B 当前默认模板仅 ~484MB RAM —— desktop 构建（3GB 堆）必然 OOM
+  // （exit 137）；验收 VM 必须是真实规格（≥4GB）。不设该 env = 维持默认模板
+  // 行为（小模板上 mega-setup 会因内存不足失败，fail loud）。
+  const template = process.env.PAYSWAP_E2B_TEMPLATE?.trim() || null;
   const arms = options.arm === "both" ? ["e2e", "harness"] : [options.arm];
   const verdicts = [];
 
   for (const arm of arms) {
     console.log(`[e2b-drive] === arm: ${arm}（新沙箱 —— 1h TTL，一臂一箱） ===`);
-    const sandbox = await Sandbox.create();
+    const sandbox = template ? await Sandbox.create(template) : await Sandbox.create();
+    if (template) console.log(`[e2b-drive] template: ${template}`);
     try {
       console.log(`[e2b-drive] sandbox ${sandbox.sandboxId} — cloning + mega-setup`);
       // E2B 基础模板的默认用户对 `/` 无写权限（/workspace 不存在且不可创建）——
