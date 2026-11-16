@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   chmodSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -13,42 +14,43 @@ import { dirname, join, relative } from "node:path";
 import process from "node:process";
 import { runCommand } from "./spawn-command.mjs";
 
-// Bugfix: Windows GNU tar（Git Bash）会把绝对路径里的盘符冒号（C:）当成远程主机名，
-// 反斜杠路径也会被 MSYS 参数转换破坏。tar 参数统一转正斜杠，归档路径优先改用
-// 相对 cwd 的形式避开盘符冒号；对 bsdtar 与 Linux/macOS CI 无影响。
-// 2026-11-16 追加：相对形式扩展到 `..` 前缀（同盘符、cwd 子树之外的归档 ——
-// bundled-npm 缓存的实战场形态）。归档路径按 tar 进程自身 cwd 解析，`..` 前缀
-// 与子树内相对路径同样安全（-C 只 chdir 成员输出，不参与 -f 的 rsh 主机名语法）；
-// 此前子树外形态退回 `C:/...` 绝对路径，GNU tar 直接失败（Cannot connect to C:）。
-// 跨盘符（relative 抛错）仍退回正斜杠绝对路径 —— bsdtar 可用；GNU tar 下 fail
-// loud（该形态暂无演示案例，不猜）。
+// Bugfix: Windows tar 的路径形态纪律（2026-11-16，P2 Windows 验收的 desktop
+// 构建中演示）。PATH 上的 tar 可能是两种实现，路径语法不兼容：
+// - MSYS GNU tar（Git Bash /usr/bin）：`-f C:/...` 的盘符冒号被当远程主机名
+//   （Cannot connect to C:），`-C C:/...` 的冒号被转义成 `C\:/...` 打不开；
+//   相对 `..` 路径在 MSYS 命名空间里解析（/tmp 只比根深一层），Windows 侧算出
+//   的相对层数会指错位置（`realpath ../../../../.zcode` → `/.zcode` 实证）。
+// - 系统 bsdtar（System32\tar.exe，Win10 1803+ 自带）：正斜杠绝对 Windows 路径
+//   对 -f 与 -C 都原生可用。
+// 纪律：win32 上优先固定调用系统 bsdtar（绝对路径，不受 PATH 影响），参数统一
+// 正斜杠绝对路径；System32 bsdtar 缺席时退回 PATH tar + 原有子树内相对形式
+// （GNU tar 下子树外/跨盘符 fail loud —— 不猜）。对 Linux/macOS CI 无影响。
 function toTarPosixPath(pathValue) {
   return pathValue.replaceAll("\\", "/");
 }
 
 function resolveTarArchiveArg(archivePath, cwd) {
   if (process.platform === "win32") {
-    const resolved = resolveTarWin32Arg(archivePath, cwd);
-    if (resolved !== null) return resolved;
+    try {
+      const relativeArchivePath = relative(cwd, archivePath);
+      if (relativeArchivePath && !relativeArchivePath.startsWith("..")) {
+        return toTarPosixPath(relativeArchivePath);
+      }
+    } catch {
+      // 跨盘符时 relative 会抛错，退回正斜杠绝对路径（系统 bsdtar 可用）。
+    }
   }
 
   return toTarPosixPath(archivePath);
 }
 
-/** Windows tar 参数的盘符冒号规避：同盘符（含 cwd 子树之外 —— `..` 前缀）一律
- * 相对 tar 进程 cwd 的正斜杠形式；跨盘符（relative 抛错）返回 null —— 调用方
- * 退回正斜杠绝对路径（bsdtar 可用；GNU tar 下 fail loud）。归档与 -C 目标共用
- * （MSYS tar 会把 `-C C:/...` 的盘符冒号转义成 `C\:/...` —— 同样打不开）。 */
-function resolveTarWin32Arg(pathValue, cwd) {
-  try {
-    const relativePath = toTarPosixPath(relative(cwd, pathValue));
-    if (relativePath && !relativePath.startsWith("/") && !/^[A-Za-z]:/.test(relativePath)) {
-      return relativePath;
-    }
-  } catch {
-    // 跨盘符：relative 抛错 —— 调用方退回绝对路径。
-  }
-  return null;
+/** win32 的 tar 可执行：优先系统 bsdtar（System32\tar.exe —— 原生理解 Windows
+ * 路径，不受 PATH 上 MSYS GNU tar 的影响）；缺席（Win10 1803 前的老系统）退回
+ * PATH tar —— 参数纪律回到子树内相对 + 绝对 fallback 的原有行为。 */
+function resolveTarCommand() {
+  if (process.platform !== "win32") return "tar";
+  const systemTar = join(process.env.SystemRoot ?? "C:\\Windows", "System32", "tar.exe");
+  return existsSync(systemTar) ? systemTar : "tar";
 }
 
 export function extractPrebuiltArchive({ archivePath, archiveExt, extractDir, cwd }) {
@@ -72,15 +74,8 @@ export function extractPrebuiltArchive({ archivePath, archiveExt, extractDir, cw
 
   const tarCwd = cwd ?? process.cwd();
   runCommand(
-    "tar",
-    [
-      "-xzf",
-      resolveTarArchiveArg(archivePath, tarCwd),
-      "-C",
-      process.platform === "win32"
-        ? (resolveTarWin32Arg(extractDir, tarCwd) ?? toTarPosixPath(extractDir))
-        : toTarPosixPath(extractDir),
-    ],
+    resolveTarCommand(),
+    ["-xzf", resolveTarArchiveArg(archivePath, tarCwd), "-C", toTarPosixPath(extractDir)],
     { cwd: tarCwd },
   );
 }

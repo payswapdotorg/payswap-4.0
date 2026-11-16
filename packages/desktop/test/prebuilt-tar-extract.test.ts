@@ -1,15 +1,16 @@
 /**
  * prebuilt-binary-extract 的 tar 解包回归 —— Windows 平台缺陷（2026-11-16，
- * P2 Windows 验收的 desktop 构建中演示）：GNU tar（Git Bash）把绝对路径里的
- * 盘符冒号（C:）当远程主机名。`resolveTarArchiveArg` 的相对路径优先策略此前
- * 只覆盖 cwd 子树内的归档 —— 同盘符但子树外（相对路径带 `..` 前缀）时退回
- * `C:/...` 绝对路径，GNU tar 直接失败（`tar (child): Cannot connect to C:
- * resolve failed`），bundled-npm stage（desktop 构建依赖）随之失败。
+ * P2 Windows 验收的 desktop 构建中演示）：PATH 上的 tar 可能是 MSYS GNU tar
+ * 或系统 bsdtar，路径语法不兼容。bundled-npm stage（desktop 构建依赖）以
+ * cwd = 临时 workDir、归档在 repo 缓存（cwd 子树外）的形态调用解包 —— GNU
+ * tar 下绝对 `C:/...` 归档被当远程主机名（Cannot connect to C:），相对 `..`
+ * 层数又在 MSYS 命名空间里指错位置（`realpath ../../../../x` → `/x` 实证），
+ * 构建随之失败。
  *
- * 法则：同一盘符上的归档永远用相对 cwd 的 tar 参数（`..` 前缀也安全 —— 归档
- * 路径按 tar 进程 cwd 解析，-C 只影响成员输出，不参与 -f 的 rsh 语法解析）；
- * 跨盘符才退回绝对路径（bsdtar 可用，GNU tar 下 fail loud）。对 Linux/macOS
- * CI（win32 分支不激活）与 bsdtar 无行为变化。
+ * 法则：win32 上 tar 可执行固定为系统 bsdtar（System32\\tar.exe —— 原生理解
+ * Windows 路径，不受 PATH 影响），正斜杠绝对路径对 -f 与 -C 都可用；缺席时
+ * 退回 PATH tar + 原有子树内相对形式（GNU tar 下子树外 fail loud，不猜）。
+ * 对 Linux/macOS CI（win32 分支不激活）无行为变化。
  */
 
 import { mkdtemp, readdir, rm, mkdir, writeFile } from "node:fs/promises";
