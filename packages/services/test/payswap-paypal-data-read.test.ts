@@ -12,7 +12,8 @@
  *    transaction_info 白名单（P-8 + search_response schema）；disputes
  *    dispute_info 白名单（P-9 + dispute_search schema）；金额一律
  *    `amountFormat: "major-unit"`（官方 money schema —— 整数或小数字符串）；
- *    RFC3339 → epoch 秒确定性换算。
+ *    RFC3339 §5.6 严格校验（秒必选 + 时区必选 + 真实日历日；parseable 但
+ *    非 RFC3339 的串、非法日历日 = 畸形）→ epoch 秒确定性换算。
  * 2. **redaction-by-construction**：payer email 等 PII 永不拷贝；非白名单字段
  *    永不拷贝。
  * 3. **customers → refused{unsupported_operation}**：PayPal 已验证读面无客户
@@ -247,6 +248,102 @@ describe("payswap paypal data-read adapter (P3) — ok rows with redaction-by-co
         { amount: "1000", currency: "JPY", amountFormat: "major-unit" },
       ]);
     }
+  });
+
+  it("RFC3339 §5.6 variants (fractional seconds, numeric offsets, leap day) → ok with deterministic epoch projection", async () => {
+    const variants: Array<{ date: string; created: number }> = [
+      { date: "2026-11-10T12:34:56.500Z", created: 1794314096 },
+      { date: "2026-11-10T12:34:56+00:00", created: 1794314096 },
+      { date: "2026-11-10T17:34:56+05:00", created: 1794314096 },
+      { date: "2024-02-29T12:00:00Z", created: 1709208000 },
+    ];
+    for (const { date, created } of variants) {
+      const client = recordingApiClient((input) =>
+        input.includes("/v1/oauth2/token")
+          ? tokenResponse()
+          : jsonResponse(200, transactionsBody({
+              transaction_details: [
+                {
+                  transaction_info: {
+                    transaction_id: "9XY12345AB",
+                    transaction_amount: { currency_code: "USD", value: "12.34" },
+                    transaction_status: "S",
+                    transaction_initiation_date: date,
+                  },
+                },
+              ],
+            })),
+      );
+      const port = createPayPalAccountDataReadPort({ apiClient: client, now: () => NOW });
+      const result = await port(dataInput({ category: "payment_objects" }));
+      expect(result.status, date).toBe("ok");
+      if (result.status === "ok") {
+        expect(result.data[0]?.created, date).toBe(created);
+      }
+    }
+  });
+
+  it("strict RFC3339 gate: parseable non-RFC3339 strings and invalid calendar dates → unavailable (never silently accepted)", async () => {
+    // Date.parse 在 V8 上能解析全部左侧串（含 2 月 30 日 → 3 月 2 日静默归一化）——
+    // 形状/日历校验必须先行拒绝（P-24；架构师评审 Finding 2）。
+    const parseableNonRfc3339 = [
+      { label: "date-only", value: "2026-11-10" },
+      { label: "no timezone", value: "2026-11-10T12:34:56" },
+      { label: "space separator", value: "2026-11-10 12:34:56" },
+      { label: "missing seconds", value: "2026-11-10T12:34Z" },
+      { label: "RFC 2822 prose date", value: "Mon, 10 Nov 2026 12:34:56 GMT" },
+      { label: "human prose date", value: "November 10, 2026" },
+    ];
+    const invalidCalendarDates = [
+      { label: "Feb 30", value: "2026-02-30T12:00:00Z" },
+      { label: "month 13", value: "2026-13-01T12:00:00Z" },
+      { label: "Apr 31", value: "2026-04-31T12:00:00Z" },
+      { label: "hour 25", value: "2026-11-10T25:00:00Z" },
+      { label: "Feb 29 in a non-leap year", value: "2026-02-29T12:00:00Z" },
+    ];
+    for (const { label, value } of [...parseableNonRfc3339, ...invalidCalendarDates]) {
+      const client = recordingApiClient((input) =>
+        input.includes("/v1/oauth2/token")
+          ? tokenResponse()
+          : jsonResponse(200, transactionsBody({
+              transaction_details: [
+                {
+                  transaction_info: {
+                    transaction_id: "X",
+                    transaction_amount: { currency_code: "USD", value: "1.00" },
+                    transaction_status: "S",
+                    transaction_initiation_date: value,
+                  },
+                },
+              ],
+            })),
+      );
+      const port = createPayPalAccountDataReadPort({ apiClient: client, now: () => NOW });
+      const result = await port(dataInput({ category: "payment_objects" }));
+      expect(result.status, label).toBe("unavailable");
+    }
+    // disputes 的 create_time 走同一解析器（P-9）—— 非法日历日同样全有或全无。
+    const disputesClient = recordingApiClient((input) =>
+      input.includes("/v1/oauth2/token")
+        ? tokenResponse()
+        : jsonResponse(200, disputesBody({
+            items: [
+              {
+                dispute_id: "PP-D-1",
+                status: "OPEN",
+                reason: "OTHER",
+                dispute_amount: { currency_code: "USD", value: "1.00" },
+                create_time: "2026-02-30T12:00:00Z",
+              },
+            ],
+          })),
+    );
+    const disputesPort = createPayPalAccountDataReadPort({
+      apiClient: disputesClient,
+      now: () => NOW,
+    });
+    const disputesResult = await disputesPort(dataInput({ category: "disputes" }));
+    expect(disputesResult.status).toBe("unavailable");
   });
 
   it("malformed rows (bad amount / bad date / missing container) → unavailable, never pretend success", async () => {

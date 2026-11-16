@@ -38,9 +38,13 @@
  *    `amountFormat: "major-unit"`（官方 money schema：value 是 provider-native
  *    字符串 ——「整数（JPY 类）或小数分数（TND 类）」，主单位计；第三批检索
  *    逐字在案 —— account-data 法则 2 的显式约定标记）。时间戳换算是确定性
- *    投影算术：官方 date_time = RFC3339（秒必选，20–64）→ epoch 秒整数
- *    （Date.parse；NaN = 畸形行 → 全有或全无 unavailable）。provider 原始
- *    载荷在 strict 解析后即丢弃。
+ *    投影算术：官方 date_time = RFC3339 §5.6（秒必选、小数可选、20–64）→
+ *    epoch 秒整数 —— 严格语法校验先行（完整日期 + `T` + `HH:mm:ss` +
+ *    `Z`/`±HH:MM` 时区 + 真实日历日；JS 会把 `2026-02-30` 之类非法日历
+ *    静默归一化，且能解析 date-only / 空格分隔 / 散文日期等非 RFC3339 串，
+ *    因此必须形状与日历双重拒绝），校验通过后才交给 Date.parse 做确定性
+ *    换算（NaN = 畸形行 → 全有或全无 unavailable）。provider 原始载荷在
+ *    strict 解析后即丢弃。
  * 4. **装配防线（先于任何网络触达）**：`providerId ≠ "paypal"` / `secrets`
  *    键集 ≠ 恰 [client-id, client-secret] / 未知类别 = 装配错误 → 抛出。
  * 5. **零秘密外泄**：secret 只进 Basic 头；token 只进 Bearer 头且只在本次
@@ -103,10 +107,42 @@ function majorUnitMoneyEntry(value: unknown): { amount: string; currency: string
   return { amount: money.value, currency: money.currency_code, amountFormat: "major-unit" };
 }
 
-/** RFC3339 字符串（官方 date_time：秒必选，20–64）→ epoch 秒整数；不可解析 = null。 */
+/**
+ * RFC3339 §5.6 严格校验（P-24：秒必选、小数可选、20–64、时区必选）→ epoch
+ * 秒整数；形状不符（含 Date.parse 可解析但非 RFC3339 的串）、非法日历日
+ * （JS 会静默归一化 2 月 30 日之类）或换算失败 = null（全有或全无
+ * unavailable，永不假装成功）。
+ */
+const RFC3339_DATE_TIME_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})[Tt](\d{2}):(\d{2}):(\d{2})(\.\d+)?([Zz]|[+-](\d{2}):(\d{2}))$/;
+
+/** 该年该月的真实天数（闰年正确；month 1–12）。 */
+function daysInMonth(year: number, month: number): number {
+  return new Date(Date.UTC(year, month, 0)).getUTCDate();
+}
+
 function rfc3339ToEpochSeconds(value: unknown): number | null {
-  if (typeof value !== "string" || value.length < 20) return null;
-  const parsed = Date.parse(value);
+  if (typeof value !== "string") return null;
+  if (value.length < 20 || value.length > 64) return null;
+  const match = RFC3339_DATE_TIME_PATTERN.exec(value);
+  if (match === null) return null;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (month < 1 || month > 12) return null;
+  if (day < 1 || day > daysInMonth(year, month)) return null;
+  if (hour > 23 || minute > 59 || second > 59) return null;
+  // 时区偏移分量与 time-hour/time-minute 同界（RFC3339 time-numoffset）。
+  if (match[9] !== undefined && (Number(match[9]) > 23 || Number(match[10]) > 59)) {
+    return null;
+  }
+  // 语法与日历校验通过的串才交给 Date.parse 做确定性换算（RFC3339 注记
+  // 允许小写 t/z；统一归一化为大写后再解析，避免引擎差异）。
+  const normalized = value.endsWith("z") ? `${value.slice(0, -1)}Z` : value;
+  const parsed = Date.parse(normalized);
   if (Number.isNaN(parsed)) return null;
   const epochSeconds = Math.floor(parsed / 1000);
   return Number.isSafeInteger(epochSeconds) && epochSeconds >= 0 ? epochSeconds : null;

@@ -81,7 +81,10 @@ requirements projection); the data-read adapter covers the four closed
 categories from the verified read data plane (P-7/P-8/P-9; customers →
 typed `unsupported_operation` — no customer-list surface exists in the
 verified plane) with `amountFormat: "major-unit"` projection (P-20) and
-RFC3339→epoch conversion (P-24). No formatCheck is invented for PayPal
+strict RFC3339 §5.6 validation → epoch conversion (P-24 — seconds and
+timezone required, real calendar days enforced; parseable non-RFC3339
+strings and invalid calendar dates are malformed, not silently accepted).
+No formatCheck is invented for PayPal
 secrets (no verified shape) — the mint is the authority. **No provider
 writes**; the no-write closed-category surface is unchanged.
 
