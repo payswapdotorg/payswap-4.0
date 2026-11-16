@@ -49,6 +49,11 @@ const PAYSWAP_PSP_KEY_STORE_FILE_NAME = "payswap-psp-safe-storage-key";
  *    预热 fail-safe（解包失败 → 空集 env）→ connect → typed 存储 refusal 呈现
  *    在 UI；at-rest 无新记录/新密文；既有记录仍可列表（readers 诚实，键故障
  *    不吞数据面）。
+ * 8. P3 PayPal client-credentials 表单臂：provider 切到 paypal → mode/clientId/
+ *    clientSecret 字段在场（operator-secret 字段不在场）→ 假凭据 connect（PayPal
+ *    无 formatCheck —— 铸造是权威，格式拒绝不适用）→ 闭集结局（存储 refusal 或
+ *    connected）；单发清空（clientId+clientSecret 提交后清空）；connected 腿断言
+ *    新行 provider=paypal + mode=test。
  *
  * 环境期望标记（P2 架构师评审 2026-11-14 第 4 项）：ZCODE_E2E_KEYRING 由 CI
  * 两腿分别置为 absent / gnome-libsecret（scripts/desktop-e2e-container-entrypoint.sh
@@ -62,6 +67,10 @@ const PAYSWAP_PSP_KEY_STORE_FILE_NAME = "payswap-psp-safe-storage-key";
  */
 
 const TID_SECTION = "payswap-connections-section";
+const TID_PROVIDER_SELECT = "payswap-connect-provider";
+const TID_MODE_SELECT = "payswap-connect-mode";
+const TID_CLIENT_ID_INPUT = "payswap-connect-client-id";
+const TID_CLIENT_SECRET_INPUT = "payswap-connect-client-secret";
 const TID_SECRET_INPUT = "payswap-connect-secret";
 const TID_DISPLAY_NAME_INPUT = "payswap-connect-display-name";
 const TID_SUBMIT = "payswap-connect-submit";
@@ -75,6 +84,9 @@ const STORAGE_REFUSAL_CODE = "PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE";
 /** 格式合法的假 test 密钥（formatCheck 通过；最终权威是 provider read-back）。 */
 const VALID_FORMAT_TEST_SECRET = `sk_test_${"e5f6a7b8".repeat(6)}`;
 const INVALID_FORMAT_SECRET = "not-a-stripe-key";
+/** PayPal 假 client-credentials（无 formatCheck —— 铸造是权威；只作表单/单发断言面）。 */
+const FAKE_PAYPAL_CLIENT_ID = "AT6-fake-e2e-sandbox-client-id";
+const FAKE_PAYPAL_CLIENT_SECRET = "ELMo-fake-e2e-client-secret";
 
 /**
  * 环境期望标记（见文件头「环境期望标记」段）：CI 两腿把它变成断言；本地缺省
@@ -154,6 +166,31 @@ async function submitConnect(secret: string, displayName?: string): Promise<void
     await $(sel(TID_DISPLAY_NAME_INPUT)).setValue(displayName);
   }
   await clickVisibleTestId(TID_SUBMIT, "没有找到连接提交按钮");
+}
+
+/**
+ * provider 切换（React 受控 select —— 走原生 value setter + change 事件，直接赋值
+ * 会被 React 的值追踪器吞掉）。
+ */
+async function selectConnectProvider(providerId: string): Promise<void> {
+  await $(sel(TID_PROVIDER_SELECT)).waitForDisplayed({ timeout: 10_000 });
+  const applied = (await browser.execute(
+    (targetProviderId: string) => {
+      const select = document.querySelector<HTMLSelectElement>(
+        `[data-testid="${TID_PROVIDER_SELECT}"]`,
+      );
+      if (!select) return false;
+      const setter = Object.getOwnPropertyDescriptor(
+        window.HTMLSelectElement.prototype,
+        "value",
+      )?.set;
+      setter?.call(select, targetProviderId);
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    },
+    providerId,
+  )) as boolean;
+  expect(applied).toBe(true);
 }
 
 interface NoticeState {
@@ -390,6 +427,96 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
     const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
     expect(connections).toContain(connectionId);
     expect(connections).toContain('"revoked"');
+  });
+
+  it("P3 PayPal client-credentials 表单臂：per-provider 字段 + 单发清空 + 闭集结局", async () => {
+    await openPayswapSettingsSection();
+    await selectConnectProvider("paypal");
+
+    // client-credentials 字段在场；operator-secret 字段不在场（per-provider 表单面）。
+    await $(sel(TID_MODE_SELECT)).waitForDisplayed({ timeout: 10_000 });
+    await $(sel(TID_CLIENT_ID_INPUT)).waitForDisplayed({ timeout: 10_000 });
+    await $(sel(TID_CLIENT_SECRET_INPUT)).waitForDisplayed({ timeout: 10_000 });
+    expect(await $(sel(TID_SECRET_INPUT)).isExisting()).toBe(false);
+
+    // mode 缺省 test（P-3 sandbox-first）；假凭据直填（无 formatCheck —— 铸造是权威）。
+    expect(await $(sel(TID_MODE_SELECT)).getValue()).toBe("test");
+    const idsBefore = await rowIds();
+    await $(sel(TID_CLIENT_ID_INPUT)).setValue(FAKE_PAYPAL_CLIENT_ID);
+    await $(sel(TID_CLIENT_SECRET_INPUT)).setValue(FAKE_PAYPAL_CLIENT_SECRET);
+    await clickVisibleTestId(TID_SUBMIT, "没有找到连接提交按钮");
+
+    const notice = await waitForNotice(
+      (candidate) =>
+        candidate.key === "payswap.connections.result.connected" ||
+        (candidate.key === "payswap.connections.refusal.secure_storage_unavailable" &&
+          candidate.code === STORAGE_REFUSAL_CODE),
+      "PayPal connect 应呈现闭集结局（存储 typed 拒绝或 connected）",
+    );
+
+    if (notice.code === STORAGE_REFUSAL_CODE) {
+      if (KEYRING_EXPECTATION === "gnome-libsecret") {
+        throw new Error(
+          "ZCODE_E2E_KEYRING=gnome-libsecret 腿期望存储可用（connected），但 PayPal connect 呈现 " +
+            STORAGE_REFUSAL_CODE +
+            " —— 存储可用腿不得静默退化",
+        );
+      }
+      if (storageUnavailableInEnv) {
+        // 与 Stripe 臂同律：拒绝先于记录写 —— 无 paypal 密文、无 paypal 记录。
+        const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
+        if (credentials !== null) {
+          expect(credentials).not.toContain("payswap:psp:paypal:");
+          expect(credentials).not.toContain(FAKE_PAYPAL_CLIENT_SECRET);
+        }
+        const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
+        if (connections !== null) {
+          expect(connections).not.toContain("paypal");
+        }
+      }
+      return;
+    }
+
+    if (KEYRING_EXPECTATION === "absent") {
+      throw new Error(
+        "ZCODE_E2E_KEYRING=absent 腿期望 fallback-only 拒绝，但 PayPal connect 成功 —— absent 腿里存储不该在场",
+      );
+    }
+
+    expect(notice.tone).toBe("positive");
+    // 单发清空（同单向通道纪律）：clientId+clientSecret 提交后清空，永不复显。
+    expect(await $(sel(TID_CLIENT_ID_INPUT)).getValue()).toBe("");
+    expect(await $(sel(TID_CLIENT_SECRET_INPUT)).getValue()).toBe("");
+
+    // 新行出现（id 数 +1 —— 不以 mode 判行：Stripe 行同为 test 会假阳性）。
+    const newId = await browser.waitUntil(
+      async () => {
+        const ids = await rowIds();
+        return ids.length === idsBefore.length + 1
+          ? (ids.find((id) => !idsBefore.includes(id)) ?? false)
+          : false;
+      },
+      { timeout: 15_000, timeoutMsg: "PayPal connected 后列表应新增一行" },
+    );
+    expect(typeof newId).toBe("string");
+    const row = $(`[data-testid="${TID_ROW}"][data-connection-id="${newId}"]`);
+    await row.waitForDisplayed({ timeout: 10_000 });
+    expect(await row.getAttribute("data-connection-status")).toBe("connected");
+    expect(
+      await (await row.$('[data-testid="payswap-connection-mode"]'))?.getAttribute("data-mode"),
+    ).toBe("test");
+    expect(await (await row.$("td:nth-child(2)"))?.getText()).toBe("paypal");
+
+    // at-rest：paypal 双秘密是密文（记录无明文；凭据 store 含 connectionId 无明文）。
+    const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
+    expect(connections).not.toBeNull();
+    expect(connections).not.toContain(FAKE_PAYPAL_CLIENT_ID);
+    expect(connections).not.toContain(FAKE_PAYPAL_CLIENT_SECRET);
+    const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
+    expect(credentials).not.toBeNull();
+    expect(credentials).toContain("payswap:psp:paypal:");
+    expect(credentials).not.toContain(FAKE_PAYPAL_CLIENT_ID);
+    expect(credentials).not.toContain(FAKE_PAYPAL_CLIENT_SECRET);
   });
 
   it("Gate E2 行（存储可用环境）：损坏键 + 真实重启 → typed 存储 refusal 呈现；既有记录仍可列表", async function () {

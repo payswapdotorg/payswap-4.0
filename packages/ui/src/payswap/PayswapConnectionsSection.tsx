@@ -43,8 +43,22 @@ import {
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 import { StatusDot, type StatusDotTone } from "@/settings/StatusDot.js";
 
-/** P2 的 provider 集（Stripe read-only vertical —— doc 04 §1 事实；P3 扩展）。 */
-const PAYSWAP_P2_PROVIDERS = [{ providerId: "stripe", labelKey: "payswap.connections.provider.stripe" }] as const;
+/**
+ * P2/P3 的 provider 集与各自 acquisition 形态（doc 04 §1.1 + provider-facts）：
+ * stripe = P2 operator-supplied-secret（单秘密）；paypal = P3 client-credentials
+ * （mode + clientId + clientSecret —— 恰一完整形态，superRefine 强制）。
+ */
+const PAYSWAP_CONNECT_PROVIDERS = [
+  { providerId: "stripe", labelKey: "payswap.connections.provider.stripe", acquisition: "operator-secret" },
+  { providerId: "paypal", labelKey: "payswap.connections.provider.paypal", acquisition: "client-credentials" },
+] as const;
+
+function acquisitionOf(providerId: string): "operator-secret" | "client-credentials" {
+  return (
+    PAYSWAP_CONNECT_PROVIDERS.find((provider) => provider.providerId === providerId)?.acquisition ??
+    "operator-secret"
+  );
+}
 
 const STATUS_TONE_TO_DOT: Record<"positive" | "warning" | "muted", StatusDotTone> = {
   positive: "green",
@@ -80,8 +94,11 @@ export function PayswapConnectionsSection(): React.ReactNode {
   const { intl } = useZCodeIntl();
   const rpc = platform?.payswapConnectionRpc;
 
-  const [providerId, setProviderId] = useState<string>(PAYSWAP_P2_PROVIDERS[0].providerId);
+  const [providerId, setProviderId] = useState<string>(PAYSWAP_CONNECT_PROVIDERS[0].providerId);
   const [operatorSecret, setOperatorSecret] = useState("");
+  const [mode, setMode] = useState<"test" | "live">("test");
+  const [clientId, setClientId] = useState("");
+  const [clientSecret, setClientSecret] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [notice, setNotice] = useState<PayswapConnectionNotice | null>(null);
@@ -116,17 +133,40 @@ export function PayswapConnectionsSection(): React.ReactNode {
 
   const handleConnect = useCallback(async () => {
     if (!rpc || connecting) return;
+    const isClientCredentials = acquisitionOf(providerId) === "client-credentials";
+    const trimmedClientId = clientId.trim();
+    const trimmedClientSecret = clientSecret.trim();
     const secret = operatorSecret.trim();
-    if (!secret) return;
+    if (isClientCredentials ? !trimmedClientId || !trimmedClientSecret : !secret) return;
     setConnecting(true);
-    // 法则 3：秘密单发 —— 提交即清空（不复显、不回填）。
+    // 法则 3：秘密单发 —— 提交即清空（client-credentials 形态的 clientId+clientSecret
+    // 与 operator-secret 形态的 operatorSecret 同律；mode 是环境声明、非秘密，保留）。
     setOperatorSecret("");
+    setClientId("");
+    setClientSecret("");
     try {
-      const response = await rpc(
-        displayName.trim()
-          ? { op: "connect", providerId, operatorSecret: secret, displayName: displayName.trim() }
-          : { op: "connect", providerId, operatorSecret: secret },
-      );
+      const trimmedDisplayName = displayName.trim();
+      const request = isClientCredentials
+        ? trimmedDisplayName
+          ? {
+              op: "connect" as const,
+              providerId,
+              mode,
+              clientId: trimmedClientId,
+              clientSecret: trimmedClientSecret,
+              displayName: trimmedDisplayName,
+            }
+          : {
+              op: "connect" as const,
+              providerId,
+              mode,
+              clientId: trimmedClientId,
+              clientSecret: trimmedClientSecret,
+            }
+        : trimmedDisplayName
+          ? { op: "connect" as const, providerId, operatorSecret: secret, displayName: trimmedDisplayName }
+          : { op: "connect" as const, providerId, operatorSecret: secret };
+      const response = await rpc(request);
       if (!mountedRef.current) return;
       setNotice(presentPayswapConnectResponse(response));
       await refreshList();
@@ -138,7 +178,7 @@ export function PayswapConnectionsSection(): React.ReactNode {
     } finally {
       if (mountedRef.current) setConnecting(false);
     }
-  }, [rpc, connecting, operatorSecret, displayName, providerId, refreshList]);
+  }, [rpc, connecting, providerId, mode, operatorSecret, clientId, clientSecret, displayName, refreshList]);
 
   const handleRowAction = useCallback(
     async (connectionId: string, action: "refresh" | "revoke") => {
@@ -196,7 +236,7 @@ export function PayswapConnectionsSection(): React.ReactNode {
                 value={providerId}
                 onChange={(event) => setProviderId(event.target.value)}
               >
-                {PAYSWAP_P2_PROVIDERS.map((provider) => (
+                {PAYSWAP_CONNECT_PROVIDERS.map((provider) => (
                   <option key={provider.providerId} value={provider.providerId}>
                     {intl.formatMessage({ id: provider.labelKey })}
                   </option>
@@ -204,26 +244,81 @@ export function PayswapConnectionsSection(): React.ReactNode {
               </select>
             }
           />
-          <SettingsRow
-            label={intl.formatMessage({ id: "payswap.connections.secretLabel" })}
-            description={intl.formatMessage({ id: "payswap.connections.secretHint" })}
-            controlLayout="wide"
-            control={
-              <Input
-                id="payswap-connect-secret"
-                data-testid="payswap-connect-secret"
-                type="password"
-                autoComplete="new-password"
-                spellCheck={false}
-                placeholder={intl.formatMessage({ id: "payswap.connections.secretPlaceholder" })}
-                value={operatorSecret}
-                onChange={(event) => setOperatorSecret(event.target.value)}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") void handleConnect();
-                }}
+          {acquisitionOf(providerId) === "client-credentials" ? (
+            <>
+              <SettingsRow
+                label={intl.formatMessage({ id: "payswap.connections.modeLabel" })}
+                control={
+                  <select
+                    data-testid="payswap-connect-mode"
+                    aria-label={intl.formatMessage({ id: "payswap.connections.modeLabel" })}
+                    className="h-9 min-w-0 flex-1 rounded-md border border-border bg-panel px-3 text-ui-sm text-foreground"
+                    value={mode}
+                    onChange={(event) => setMode(event.target.value === "live" ? "live" : "test")}
+                  >
+                    <option value="test">{intl.formatMessage({ id: "payswap.connections.mode.test" })}</option>
+                    <option value="live">{intl.formatMessage({ id: "payswap.connections.mode.live" })}</option>
+                  </select>
+                }
               />
-            }
-          />
+              <SettingsRow
+                label={intl.formatMessage({ id: "payswap.connections.clientIdLabel" })}
+                controlLayout="wide"
+                control={
+                  <Input
+                    id="payswap-connect-client-id"
+                    data-testid="payswap-connect-client-id"
+                    type="text"
+                    spellCheck={false}
+                    placeholder={intl.formatMessage({ id: "payswap.connections.clientIdPlaceholder" })}
+                    value={clientId}
+                    onChange={(event) => setClientId(event.target.value)}
+                  />
+                }
+              />
+              <SettingsRow
+                label={intl.formatMessage({ id: "payswap.connections.clientSecretLabel" })}
+                description={intl.formatMessage({ id: "payswap.connections.clientSecretHint" })}
+                controlLayout="wide"
+                control={
+                  <Input
+                    id="payswap-connect-client-secret"
+                    data-testid="payswap-connect-client-secret"
+                    type="password"
+                    autoComplete="new-password"
+                    spellCheck={false}
+                    placeholder={intl.formatMessage({ id: "payswap.connections.clientSecretPlaceholder" })}
+                    value={clientSecret}
+                    onChange={(event) => setClientSecret(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") void handleConnect();
+                    }}
+                  />
+                }
+              />
+            </>
+          ) : (
+            <SettingsRow
+              label={intl.formatMessage({ id: "payswap.connections.secretLabel" })}
+              description={intl.formatMessage({ id: "payswap.connections.secretHint" })}
+              controlLayout="wide"
+              control={
+                <Input
+                  id="payswap-connect-secret"
+                  data-testid="payswap-connect-secret"
+                  type="password"
+                  autoComplete="new-password"
+                  spellCheck={false}
+                  placeholder={intl.formatMessage({ id: "payswap.connections.secretPlaceholder" })}
+                  value={operatorSecret}
+                  onChange={(event) => setOperatorSecret(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") void handleConnect();
+                  }}
+                />
+              }
+            />
+          )}
           <SettingsRow
             label={intl.formatMessage({ id: "payswap.connections.displayNameLabel" })}
             controlLayout="wide"
@@ -243,7 +338,12 @@ export function PayswapConnectionsSection(): React.ReactNode {
             <Button
               type="button"
               data-testid="payswap-connect-submit"
-              disabled={connecting || operatorSecret.trim().length === 0}
+              disabled={
+                connecting ||
+                (acquisitionOf(providerId) === "client-credentials"
+                  ? clientId.trim().length === 0 || clientSecret.trim().length === 0
+                  : operatorSecret.trim().length === 0)
+              }
               onClick={() => void handleConnect()}
             >
               {intl.formatMessage({
