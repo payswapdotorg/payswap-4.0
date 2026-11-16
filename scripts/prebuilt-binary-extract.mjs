@@ -16,23 +16,39 @@ import { runCommand } from "./spawn-command.mjs";
 // Bugfix: Windows GNU tar（Git Bash）会把绝对路径里的盘符冒号（C:）当成远程主机名，
 // 反斜杠路径也会被 MSYS 参数转换破坏。tar 参数统一转正斜杠，归档路径优先改用
 // 相对 cwd 的形式避开盘符冒号；对 bsdtar 与 Linux/macOS CI 无影响。
+// 2026-11-16 追加：相对形式扩展到 `..` 前缀（同盘符、cwd 子树之外的归档 ——
+// bundled-npm 缓存的实战场形态）。归档路径按 tar 进程自身 cwd 解析，`..` 前缀
+// 与子树内相对路径同样安全（-C 只 chdir 成员输出，不参与 -f 的 rsh 主机名语法）；
+// 此前子树外形态退回 `C:/...` 绝对路径，GNU tar 直接失败（Cannot connect to C:）。
+// 跨盘符（relative 抛错）仍退回正斜杠绝对路径 —— bsdtar 可用；GNU tar 下 fail
+// loud（该形态暂无演示案例，不猜）。
 function toTarPosixPath(pathValue) {
   return pathValue.replaceAll("\\", "/");
 }
 
 function resolveTarArchiveArg(archivePath, cwd) {
   if (process.platform === "win32") {
-    try {
-      const relativeArchivePath = relative(cwd, archivePath);
-      if (relativeArchivePath && !relativeArchivePath.startsWith("..")) {
-        return toTarPosixPath(relativeArchivePath);
-      }
-    } catch {
-      // 跨盘符时 relative 会抛错，退回正斜杠绝对路径（bsdtar 可用）。
-    }
+    const resolved = resolveTarWin32Arg(archivePath, cwd);
+    if (resolved !== null) return resolved;
   }
 
   return toTarPosixPath(archivePath);
+}
+
+/** Windows tar 参数的盘符冒号规避：同盘符（含 cwd 子树之外 —— `..` 前缀）一律
+ * 相对 tar 进程 cwd 的正斜杠形式；跨盘符（relative 抛错）返回 null —— 调用方
+ * 退回正斜杠绝对路径（bsdtar 可用；GNU tar 下 fail loud）。归档与 -C 目标共用
+ * （MSYS tar 会把 `-C C:/...` 的盘符冒号转义成 `C\:/...` —— 同样打不开）。 */
+function resolveTarWin32Arg(pathValue, cwd) {
+  try {
+    const relativePath = toTarPosixPath(relative(cwd, pathValue));
+    if (relativePath && !relativePath.startsWith("/") && !/^[A-Za-z]:/.test(relativePath)) {
+      return relativePath;
+    }
+  } catch {
+    // 跨盘符：relative 抛错 —— 调用方退回绝对路径。
+  }
+  return null;
 }
 
 export function extractPrebuiltArchive({ archivePath, archiveExt, extractDir, cwd }) {
@@ -57,7 +73,14 @@ export function extractPrebuiltArchive({ archivePath, archiveExt, extractDir, cw
   const tarCwd = cwd ?? process.cwd();
   runCommand(
     "tar",
-    ["-xzf", resolveTarArchiveArg(archivePath, tarCwd), "-C", toTarPosixPath(extractDir)],
+    [
+      "-xzf",
+      resolveTarArchiveArg(archivePath, tarCwd),
+      "-C",
+      process.platform === "win32"
+        ? (resolveTarWin32Arg(extractDir, tarCwd) ?? toTarPosixPath(extractDir))
+        : toTarPosixPath(extractDir),
+    ],
     { cwd: tarCwd },
   );
 }

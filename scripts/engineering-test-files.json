@@ -113,6 +113,7 @@
   "packages/desktop/test/pluginE2EAdmissionScripts.test.ts",
   "packages/desktop/test/pluginMarketStartupCredentials.test.ts",
   "packages/desktop/test/powershell-command.test.ts",
+  "packages/desktop/test/prebuilt-tar-extract.test.ts",
   "packages/desktop/test/prepare-native-search-tools.test.ts",
   "packages/desktop/test/projectPointerDrag.test.ts",
   "packages/desktop/test/providerPrefix.test.ts",
