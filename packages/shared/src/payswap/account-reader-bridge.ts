@@ -211,8 +211,16 @@ export class PayswapReaderBridgeError extends Error {
   }
 }
 
-/** 每呼叫有界时限缺省（ms）—— 覆盖验证读 + 四类别读（各 10 s adapter 时限）+ 余量。 */
+/** 每呼叫有界时限缺省（ms）—— overview 面：单次 listConnections 投影（无 provider
+ * 读）+ 余量；含一次验证读语义的 face 实现也远在其内。 */
 export const PAYSWAP_READER_BRIDGE_DEFAULT_TIMEOUT_MS = 15_000;
+
+/** detail 面的缩放缺省（ms）—— 覆盖 getOverviewData 的文档化顺序最坏情形：
+ * 验证读（≤10 s adapter 时限）+ 四类别读（各 ≤10 s，顺序执行）+ 余量。
+ * 15 s 的全-op 预算在该最坏情形下算术上不成立（5 × 10 s = 50 s），会误杀
+ * 慢而合法的 detail 流（迟到响应被丢弃，调用方只见 timeout）。显式
+ * timeoutMs 覆盖仍对两 op 全局生效。 */
+export const PAYSWAP_READER_BRIDGE_DEFAULT_DETAIL_TIMEOUT_MS = 60_000;
 
 // ---------------------------------------------------------------------------
 // stub（host 进程侧：broker 协调器的两个 reader 面 —— ADR-P2-2 Decision 3）
@@ -220,7 +228,9 @@ export const PAYSWAP_READER_BRIDGE_DEFAULT_TIMEOUT_MS = 15_000;
 
 export interface PayswapReaderBridgeClientOptions {
   port: PayswapReaderBridgePort;
-  /** 每呼叫时限（ms；缺省 PAYSWAP_READER_BRIDGE_DEFAULT_TIMEOUT_MS）。 */
+  /** 每呼叫时限（ms；缺省按 op 缩放 —— overview =
+   * PAYSWAP_READER_BRIDGE_DEFAULT_TIMEOUT_MS，detail =
+   * PAYSWAP_READER_BRIDGE_DEFAULT_DETAIL_TIMEOUT_MS；显式设置对两 op 全局覆盖）。 */
   timeoutMs?: number;
   /** callId 铸造（缺省 randomUUID；测试注入）。 */
   mintCallId?: () => string;
@@ -245,7 +255,6 @@ interface PendingCall {
 export function createPayswapReaderBridgeClient(
   options: PayswapReaderBridgeClientOptions,
 ): PayswapReaderBridgeClient {
-  const timeoutMs = options.timeoutMs ?? PAYSWAP_READER_BRIDGE_DEFAULT_TIMEOUT_MS;
   const mintCallId = options.mintCallId ?? randomUUID;
   const pending = new Map<string, PendingCall>();
   let disposed = false;
@@ -284,6 +293,13 @@ export function createPayswapReaderBridgeClient(
       return Promise.reject(new PayswapReaderBridgeError("port_closed", "bridge client disposed"));
     }
     const callId = mintCallId();
+    // 显式 timeoutMs 对两 op 全局覆盖；缺省按 op 缩放（detail 面的文档化顺序
+    // 最坏情形装不进 overview 的单读预算 —— 见常量注释）。
+    const budgetMs =
+      options.timeoutMs ??
+      (op === "detail"
+        ? PAYSWAP_READER_BRIDGE_DEFAULT_DETAIL_TIMEOUT_MS
+        : PAYSWAP_READER_BRIDGE_DEFAULT_TIMEOUT_MS);
     const request: PayswapReaderBridgeRequest =
       op === "overview"
         ? { kind: PAYSWAP_READER_BRIDGE_REQUEST_KIND, callId, op }
@@ -291,8 +307,8 @@ export function createPayswapReaderBridgeClient(
     const promise = new Promise<T>((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(callId);
-        reject(new PayswapReaderBridgeError("timeout", `bridge call ${op} timed out after ${timeoutMs}ms`));
-      }, timeoutMs);
+        reject(new PayswapReaderBridgeError("timeout", `bridge call ${op} timed out after ${budgetMs}ms`));
+      }, budgetMs);
       pending.set(callId, {
         op,
         timer,
