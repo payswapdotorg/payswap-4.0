@@ -53,13 +53,20 @@
    guidance, but no authoritative default-lifetime figure. The adapter must
    read `expires_in` per token response and refresh on 401 rather than encode
    any fixed lifetime.
-2. **Own-account grantability of the read scopes (P-5)**: the scope URIs are
-   verified from the reference pages, but whether a given own-account sandbox
-   app is actually granted `reporting/search/read`, `reporting/balances/read`
-   and `disputes/read-buyer` (vs needing partner onboarding) is a **live
-   sandbox question**, not a docs fact — it must be answered by the P3
-   sandbox conformance run with a real sandbox app, not by encoding an
-   assumption.
+2. **Own-account grantability of the read scopes (P-5)** — **ANSWERED by the
+   2026-11-16 sandbox conformance run** (evidence:
+   `docs/payswap/p3/evidence/sandbox-conformance/`): the own-account
+   "Default Application" mint succeeds (200, `app_id` present) and its
+   grant list is 15 scopes with **no `reporting` scope at all** → balances
+   (`GET /v1/reporting/balances`) and transactions
+   (`GET /v1/reporting/transactions`) answer **403 NOT_AUTHORIZED** on a
+   fresh mint, while disputes (`disputes/read-seller` granted) answers
+   **200**. Enabling the app's "Transaction search" feature did not change
+   the grant list within the immediate re-run (propagation may lag — the
+   evidence register records run-at timestamps; a later run may supersede).
+   Consequence: reporting read categories stay `insufficient_permission`
+   typed refusals for this app configuration; disputes is the one live-read
+   category with a working own-account grant.
 3. **Recipient-verification surfaces**: payouts docs mention "Integrate
    Assisted Account Creation to collect recipient payer IDs and email
    addresses" — the API detail surface behind that copy is not yet verified
@@ -88,8 +95,12 @@ No formatCheck is invented for PayPal
 secrets (no verified shape) — the mint is the authority. **No provider
 writes**; the no-write closed-category surface is unchanged.
 
-The **sandbox conformance run** (⚠ item 2) remains the open step: it needs a
-real sandbox app's client credentials (operator-supplied), runs
-`scripts/p3/paypal-sandbox-conformance.ts`, and records the dated evidence
-(mint + four-category live outcomes, observed value shapes, scope grants).
-Paystack stays unregistered (`unsupported_provider`) pending its docs site.
+The **sandbox conformance run** (⚠ item 2) was executed 2026-11-16 with a real
+sandbox app's client credentials (operator-supplied, env-only): mint
+VERIFIED (200, `app_id` present, 15 scopes granted — **no reporting scope**),
+balances/transactions REFUSED `insufficient_permission` (403 NOT_AUTHORIZED
+on a fresh mint), disputes OK (200, 0 rows — sandbox has no disputes),
+customers typed `unsupported_operation` (no wire). Dated sanitized reports
+are registered in `docs/payswap/p3/evidence/sandbox-conformance/` (SHA-256
+in its MANIFEST). Paystack stays unregistered (`unsupported_provider`)
+pending its docs site.
