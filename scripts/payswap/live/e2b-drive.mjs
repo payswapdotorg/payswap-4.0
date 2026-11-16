@@ -298,6 +298,19 @@ async function main() {
     const sandbox = await Sandbox.create();
     try {
       console.log(`[e2b-drive] sandbox ${sandbox.sandboxId} — cloning + mega-setup`);
+      // E2B 基础模板的默认用户对 `/` 无写权限（/workspace 不存在且不可创建）——
+      // 工具链（clone 目标 + vm-*.sh 的 LIVE_ARTIFACT_DIR 缺省）都以 /workspace
+      // 为根；先以 sudo 供给目录并移交属主，再 clone（fail loud：exitCode 检查）。
+      const provision = await sandbox.commands.run(
+        `sudo mkdir -p /workspace /workspace/artifacts && sudo chown -R "$(whoami)" /workspace`,
+        { timeoutMs: 60_000 },
+      );
+      if (provision.exitCode !== 0) {
+        throw new Error(
+          `/workspace provisioning failed (exit=${provision.exitCode}` +
+            `; stderr=${String(provision.stderr || "").slice(0, 300)})`,
+        );
+      }
       await sandbox.commands.run(
         `git clone --depth 1 ${REPO} /workspace/payswap`,
         { timeoutMs: 10 * 60_000 },
