@@ -211,6 +211,46 @@ describe("payswap account reader bridge (ADR-P2-2 slice 6) — the law", () => {
     expect(await client2.accountDetailReader("revoked")).toEqual(revoked);
   });
 
+  it("category-401 short-circuit payload round-trips ok:true with all four category keys — a not-attempted unavailable placeholder is a VALUE, never reader_error (law 2/4)", async () => {
+    // getOverviewData 的类别级 401 短路载荷（balance ok + charges auth-failed +
+    // customers/disputes 的诚实 not-attempted unavailable 占位）必须原样过桥：
+    // 恒四键、恒闭集结局 —— 服务端 law-4 校验放行，客户端拿到数据而非
+    // reader_error（缺键载荷才是 reader_error —— 服务回归恒四键法则）。
+    const shortCircuited: PayswapAccountOverviewDetail = {
+      kind: "detail",
+      connection: PROJECTION_A,
+      evidence: {
+        capabilities: [{ name: "card_payments", status: "active" }],
+        requirements: { disabledReason: null, currentlyDueCount: 0, pastDueCount: 0 },
+      },
+      data: {
+        balance: {
+          status: "ok",
+          data: { available: [{ amount: "700", currency: "usd" }], pending: [] },
+        },
+        payment_objects: { status: "auth-failed", detail: "Stripe answered HTTP 401 on the charges read" },
+        customers: {
+          status: "unavailable",
+          detail: "not attempted: an earlier category read was rejected with HTTP 401 (stripe)",
+        },
+        disputes: {
+          status: "unavailable",
+          detail: "not attempted: an earlier category read was rejected with HTTP 401 (stripe)",
+        },
+      },
+    };
+    const { client } = assemble({
+      detail: () => Promise.resolve(shortCircuited),
+    });
+    const detail = await client.accountDetailReader(PROJECTION_A.connectionId);
+    expect(detail).toEqual(shortCircuited);
+    if (detail.kind === "detail") {
+      expect(Object.keys(detail.data).sort()).toEqual(["balance", "customers", "disputes", "payment_objects"]);
+      expect(detail.data.payment_objects.status).toBe("auth-failed");
+      expect(detail.data.customers.status).toBe("unavailable");
+    }
+  });
+
   it("reader throw relays as PayswapReaderBridgeError reader_error with the operator-readable message (law 1/3)", async () => {
     const { client } = assemble({
       overview: () => Promise.reject(new Error("store io failure")),
@@ -307,7 +347,7 @@ describe("payswap account reader bridge (ADR-P2-2 slice 6) — the law", () => {
     }
   });
 
-  it("scaled per-op deadline: overview keeps the single-read budget — it times out at 15s, not the scaled detail budget (law 6)", async () => {
+  it("scaled per-op deadline: overview keeps the single-read budget — it times out at 15s, not the scaled detail budget (law 6; regression pin for the unchanged 15s overview budget — not RED coverage)", async () => {
     vi.useFakeTimers();
     try {
       const [, clientPort] = createPairedPorts();

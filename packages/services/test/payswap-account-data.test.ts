@@ -28,6 +28,7 @@ import { join } from "node:path";
 import type { ApiClient, ApiRequestInit } from "@zcode/shared";
 import {
   PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY,
+  payswapAccountOverviewDetailSchema,
   payswapAccountReadBackOutcomeSchema,
 } from "@zcode/shared/payswap";
 import {
@@ -549,7 +550,17 @@ describe("payswap account service getOverviewData (ADR-P2-1) — the orchestrati
     if (detail.kind === "detail") {
       expect(detail.data.payment_objects.status).toBe("auth-failed");
       expect(detail.data.balance.status).toBe("ok");
+      // 未发起的类别 = 诚实 unavailable 占位 —— 载荷恒带全部四键（桥 per-op
+      // 法则 schema 的键闭集；缺键会被服务端 fail-closed 判 reader_error）。
+      expect(detail.data.customers.status).toBe("unavailable");
+      if (detail.data.customers.status === "unavailable") {
+        expect(detail.data.customers.detail).toContain("not attempted");
+      }
+      expect(detail.data.disputes.status).toBe("unavailable");
     }
+    // 载荷必须原样过共享 detail 法则 schema（键闭集 + 逐类别结局闭集）。
+    const schemaCheck = payswapAccountOverviewDetailSchema.safeParse(detail);
+    expect(schemaCheck.success).toBe(true);
     const urls = assembly.client.calls.map((call) => call.input);
     // balance 在 charges 之前读（闭集序）；charges 401 后 customers/disputes
     // 不得再被发起（被拒秘密不重发 —— 律法文本的顺序读短路）。

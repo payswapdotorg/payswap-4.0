@@ -494,9 +494,20 @@ export function createPayswapAccountService(
         await connectionStore.upsert(restored);
         currentRecord = restored;
       }
-      // 四类别只读数据（全部现读；端口缺席 = 诚实 unavailable，不猜）。
+      // 四类别只读数据（全部现读；端口缺席 = 诚实 unavailable，不猜）。类别级
+      // 401 短路剩余类别（law：readAccountData 头注 §2 —— 被拒秘密不重发），
+      // 未发起的类别填诚实 unavailable 占位 —— detail 载荷必须恒带全部四键
+      // （桥 per-op 法则 schema .strict() 的键闭集）。
       const data: Record<string, PayswapReadonlyCategoryResult> = {};
+      let categoryReadRejected401 = false;
       for (const category of PAYSWAP_READONLY_CATEGORIES) {
+        if (categoryReadRejected401) {
+          data[category] = {
+            status: "unavailable",
+            detail: `not attempted: an earlier category read was rejected with HTTP 401 (${record.providerId})`,
+          };
+          continue;
+        }
         if (readAccountData === undefined) {
           data[category] = {
             status: "unavailable",
@@ -530,11 +541,8 @@ export function createPayswapAccountService(
           };
         }
         data[category] = result;
-        // law（readAccountData 头注 §2）：401 后的类别不再读 —— provider 已拒绝
-        // 该凭据，继续读只会重复发送被拒秘密。类别级 auth-failed 短路剩余类别
-        // （已读结局保留原样；状态处置走下一次验证读，与验证读 401 同法）。
         if (result.status === "auth-failed") {
-          break;
+          categoryReadRejected401 = true;
         }
       }
       return {
