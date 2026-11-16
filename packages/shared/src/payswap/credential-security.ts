@@ -21,12 +21,13 @@
  * - **优先级**：desktop 上 safeStorage 键与 secret 同时在位时取 safe_storage
  *   （§5.2 表的 desktop 行是 OS 钥匙串；secret 是 server 行的要求 —— 按 host 取
  *   平台适当的那一个）。
- * - **交付通道（desktop）**：safeStorage 只存在于 Electron main；host 进程
- *   （utilityProcess，凭据服务的家）经 host env 键 `ZCODE_PAYSWAP_PSP_KEY`
- *   收到 main 解包后的随机键（hostProcessLocalEnv 通道 —— BIGMODEL_OAuth_APP_SECRET
- *   同款纪律：只交付 host，不进 renderer、不进 agent 子进程）。desktop main 的
- *   键仓实现住 desktop-payswap（pspCredentialKeyStore.ts）；services 侧凭本模块
- *   的 env 键常量读取。两侧引用同一常量 —— 永不漂移。
+ * - **交付通道（desktop，ADR-P2-2 Decision 2 定稿）**：凭据服务与账户运行时
+ *   装配在同一 desktop main 进程内（accountRuntimeWiring）—— safeStorage 解包
+ *   键经进程内 env 视图（warmupPayswapPspRuntimeEnv 的 warmup 产物）交付给
+ *   createCredentialService，不进 process.env、不进 hostProcessLocalEnv、不进
+ *   renderer、不进 agent 子进程。desktop main 的键仓实现住 desktop-payswap
+ *   （pspCredentialKeyStore.ts）；services 侧凭本模块的 env 键常量读取。两侧
+ *   引用同一常量 —— 永不漂移。
  * - **两类 typed 失败不重叠**：存储不可用（`PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE`
  *   —— 既无 safeStorage 键也无 secret，fail-closed 拒绝）与键仓解包失败
  *   （`PAYSWAP_PSP_KEY_UNWRAP_FAILED` —— OS 钥匙串更换/迁移后包裹键解不开；

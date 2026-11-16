@@ -530,6 +530,12 @@ export function createPayswapAccountService(
           };
         }
         data[category] = result;
+        // law（readAccountData 头注 §2）：401 后的类别不再读 —— provider 已拒绝
+        // 该凭据，继续读只会重复发送被拒秘密。类别级 auth-failed 短路剩余类别
+        // （已读结局保留原样；状态处置走下一次验证读，与验证读 401 同法）。
+        if (result.status === "auth-failed") {
+          break;
+        }
       }
       return {
         kind: "detail",

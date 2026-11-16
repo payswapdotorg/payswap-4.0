@@ -19,7 +19,7 @@
  * 无真实 MessagePort。
  */
 
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   createPayswapReaderBridgeClient,
   payswapAccountOverviewDetailSchema,
@@ -271,6 +271,66 @@ describe("payswap account reader bridge (ADR-P2-2 slice 6) — the law", () => {
     const [, clientPort] = createPairedPorts(); // 服务端永不 subscribe —— 无人应答
     const client = createPayswapReaderBridgeClient({ port: clientPort, timeoutMs: 25 });
     await expectBridgeError(client.accountOverviewReader(), "timeout");
+  });
+
+  it("scaled per-op deadline: the detail budget covers the documented sequential worst case — still pending at the 15s overview budget, timed out at the 60s detail budget (law 6)", async () => {
+    // getOverviewData 的顺序最坏情形 = 验证读 + 四类别读（各 ≤10s adapter 时限）
+    // = 最高 50s —— 15s 全-op 预算在算术上就装不下。detail 的缺省预算按文档化
+    // 最坏情形缩放到 60s；overview（单读）保持 15s。服务端永不 subscribe ——
+    // 无应答，纯时限行为。
+    vi.useFakeTimers();
+    try {
+      const [, clientPort] = createPairedPorts();
+      const client = createPayswapReaderBridgeClient({ port: clientPort });
+      let settled = false;
+      let outcome: unknown = null;
+      void client.accountDetailReader(UNKNOWN_CONNECTION_ID).then(
+        () => {
+          settled = true;
+          outcome = "resolved";
+        },
+        (error: unknown) => {
+          settled = true;
+          outcome = error;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(settled).toBe(false); // 15s（overview 预算）处 detail 不得被误杀
+      await vi.advanceTimersByTimeAsync(44_999); // 累计 59_999ms —— 仍在途
+      expect(settled).toBe(false);
+      await vi.advanceTimersByTimeAsync(1); // 累计 60_000ms —— 恰在预算边界到期
+      expect(settled).toBe(true);
+      expect(outcome).toBeInstanceOf(PayswapReaderBridgeError);
+      expect((outcome as PayswapReaderBridgeError).code).toBe("timeout");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("scaled per-op deadline: overview keeps the single-read budget — it times out at 15s, not the scaled detail budget (law 6)", async () => {
+    vi.useFakeTimers();
+    try {
+      const [, clientPort] = createPairedPorts();
+      const client = createPayswapReaderBridgeClient({ port: clientPort });
+      let settled = false;
+      let outcome: unknown = null;
+      void client.accountOverviewReader().then(
+        () => {
+          settled = true;
+          outcome = "resolved";
+        },
+        (error: unknown) => {
+          settled = true;
+          outcome = error;
+        },
+      );
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(settled).toBe(true);
+      expect(outcome).toBeInstanceOf(PayswapReaderBridgeError);
+      expect((outcome as PayswapReaderBridgeError).code).toBe("timeout");
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("dispose: pending calls reject with port_closed; post-dispose calls reject immediately (law 6)", async () => {

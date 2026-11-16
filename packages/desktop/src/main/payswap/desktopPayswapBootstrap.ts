@@ -166,7 +166,7 @@ export interface PayswapDesktopConnectionsInstallation {
  *
  * 键文件路径 pin（ADR-P2-2 附录 C）：`getAppConfigDir()`（services paths ——
  * `setDataBaseDir` 钉过的 CLI 数据根）+ `payswap-psp-safe-storage-key` —— 与
- * 连接记录 store（`~/.zcode/v2/payswap-connections.json`）、凭据 store 同一解析
+ * 连接记录 store（getAppConfigDir() 下 payswap-connections.json）、凭据 store 同一解析
  * 基准，桌面装配不另设路径（单一事实源）。
  *
  * 无 boot 副作用：安装不触键 store、不装配 runtime（首请求/app-ready 预热才触达）。
