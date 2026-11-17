@@ -41,6 +41,22 @@ fi
 
 mkdir -p "$ARTIFACT_DIR"
 
+# Xvfb 显示服务（2026-11-16 修复）：mega-setup 拉起的 Xvfb 不跨 E2B 命令存活
+# （命令结束即进程组回收 —— 沙箱实测：Electron 报 Missing X server）。本臂的
+# harness 是裸 Electron main 进程，无 WDIO 代管显示 —— 运行器自行确保 :99 在
+# 场（幂等；与命令同生命周期，跑完即随命令回收）。
+if ! pgrep -x Xvfb >/dev/null 2>&1; then
+  (Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &)
+  for _ in $(seq 1 30); do
+    [ -e /tmp/.X11-unix/X99 ] && break
+    sleep 0.5
+  done
+fi
+if [ ! -e /tmp/.X11-unix/X99 ]; then
+  printf '[vm-harness-only] FATAL: Xvfb :99 未就绪 —— 显示服务腿配置失败（fail loud）\n' >&2
+  exit 1
+fi
+
 # 1. 编译真实 law 模块（tsup CJS bundle + createRequire shim 修补）。
 log "building the harness bundle from source"
 node scripts/payswap/live/build-live-harness.mjs
