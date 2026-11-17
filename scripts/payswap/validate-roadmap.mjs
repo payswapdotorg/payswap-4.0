@@ -5,7 +5,9 @@ import { fileURLToPath } from "node:url";
 
 const DEFAULT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const CANONICAL_RELATIVE = "docs/payswap/p0/10-roadmap.md";
-const REQUIRED_MILESTONES = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"];
+// P2 is decomposed (2026-11-17 TL ruling): P2-Linux and P2-Windows are two
+// independently closable milestones sharing one engineering law; both must exist.
+const REQUIRED_MILESTONES = ["P1", "P2-Linux", "P2-Windows", "P3", "P4", "P5", "P6", "P7", "P8", "P9"];
 const VALID_STATUSES = "not_started|in_progress|blocked|gate_passed|complete";
 
 function markdownFiles(directory) {
