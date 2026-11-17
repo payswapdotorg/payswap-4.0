@@ -57,7 +57,7 @@ const LEG_SESSION = path.join(__dirname, "leg-session.sh");
 const CHROMEDRIVER_PREFLIGHT = path.join(REPO_ROOT, "packages", "desktop", "scripts", "chromedriver-preflight.mjs");
 const WDIO_DRIVER_CACHE = path.join(REPO_ROOT, ".cache", "wdio-browser-drivers");
 const MANUAL_EVIDENCE = require("../windows/manual-evidence.cjs");
-const { MANUAL_CHECKLIST_ITEMS, validateManualEvidence, renderManualChecklist } = MANUAL_EVIDENCE;
+const { validateManualEvidence, renderManualChecklist } = MANUAL_EVIDENCE;
 const RUNNER_REDACTION = require("../windows/runner-redaction.cjs");
 const { REDACTION, longestSecretPrefixSuffix, RedactingLog, leakScan, sanitizeLeaks } = RUNNER_REDACTION;
 const { computeExitCode, applyLeakVerdicts, validatePreflightJson, parseResultHarness } = require("../acceptance-verdicts.cjs");
@@ -139,7 +139,7 @@ function parseArgs(argv) {
  *  Linux 上 pnpm 是 node 脚本 —— 直接 spawn 即可（win32 .cmd shim 问题不存在）。 */
 function execStep(log, command, args, options = {}) {
   return new Promise((resolve) => {
-    const env = { ...process.env, ...(options.env || {}) };
+    const env = { ...process.env, ...options.env };
     const child = cp.spawn(command, args, {
       cwd: options.cwd || REPO_ROOT,
       env,
