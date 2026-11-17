@@ -18,6 +18,10 @@ import {
   ZCODE_PROCESS_DIAGNOSTIC_STACK_MAX_CHARS,
 } from "@zcode/shared/process-diagnostic";
 import {
+  PAYSWAP_BROKER_HELPER_PATH_ENV_KEY,
+  PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY,
+} from "@zcode/shared/payswap";
+import {
   ZCODE_AGENT_RUNTIME,
   ZCODE_AGENT_PROVIDER,
   ZCODE_RUNTIME_ENV_KEY,
@@ -1187,6 +1191,22 @@ export class ZCodeAgentProcessManager {
         [ZCODE_RUNTIME_ENV_KEY]: runtimeEnv,
         ...spawnEnv,
         ...effectiveCommand.env,
+        // D13.9 helper 供给键（host-only 运维面：二进制位置 + 期望 SHA-256，非秘密）在
+        // host→agent 边界定向转发：桌面 main 把 digest 验证过的两键注入 host env
+        // （brokerPeerHelperSupply），而 sanitizeZCodeRuntimeEnv 按双表纪律剔除一切
+        // PAYSWAP_BROKER_* —— agent（app-server）恰是 boot 消费者（lazy boot 的 relay
+        // 解析需要两键），其 CLI 入口 sanitize 会再剔除并 capture-before-strip 快照，
+        // 键面恰好终止于 boot 消费进程，绝不进孙进程 env。键不在场（remote 形态等）
+        // → 空透传，行为不变。2026-11-17 native-Windows live 实测：无此转发，
+        // dev 桌面链 win32 永远 degraded_refusing（插件桥 instance_mismatch 的根因）。
+        ...(process.env[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]?.trim() &&
+        process.env[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]?.trim()
+          ? {
+              [PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]: process.env[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]!,
+              [PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]:
+                process.env[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]!,
+            }
+          : {}),
         // 生成文件根目录由执行端 Host 唯一决定，保证 Agent 写入与 Host 读取授权一致。
         [GEN_UI_OUTPUT_ROOT_ENV]: join(getAppConfigDir(), GEN_UI_OUTPUT_DIRECTORY),
         // 身份/隔离语义使用 workspaceIdentity；cwd 继续使用 workspacePath。

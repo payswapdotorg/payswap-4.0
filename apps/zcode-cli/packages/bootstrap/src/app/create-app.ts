@@ -107,6 +107,7 @@ import {
 import { resolveBuiltInNodeReplMcpServers } from "./built-in-node-repl.js";
 import { wrapBrowserControlPortWithPayswapBrowserAdmission } from "./payswap-browser-admission.js";
 import {
+  PAYSWAP_BROKER_HOST_SESSION_IDLE_TIMEOUT_MS,
   createPayswapBrokerCoordinator,
   createSingleSessionScopeResolver,
   type PayswapBrokerCoordinator,
@@ -361,6 +362,9 @@ export async function createZCodeApp(options: ZCodeAppOptions): Promise<ZCodeApp
         env: options.env,
         workingDirectory,
         sessionScopeResolver: createSingleSessionScopeResolver(sessionId, payswapWorkspaceKey),
+        // 长会话宿主：broker 存活期 = 进程存活期（idle-close 的 instanceId 轮换会让
+        // MCP 子进程的铸造时元组过期 —— 见 PAYSWAP_BROKER_HOST_SESSION_IDLE_TIMEOUT_MS）。
+        idleTimeoutMs: PAYSWAP_BROKER_HOST_SESSION_IDLE_TIMEOUT_MS,
       }));
     configuredMcpServers = await payswapBroker.injectBrokerCredentials(
       configuredMcpServers,
