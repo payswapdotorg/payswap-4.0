@@ -51,7 +51,11 @@ recipe）：
 ```powershell
 # 预检（含真 Electron DPAPI 探针 + 五分类可执行裁决）
 node scripts\payswap\preflight-env.cjs
-# 五分类验收（构建 / 安全存储 / 桌面 E2E / stripe-live / 对话级）—— 见 handoff
+# 五分类验收（构建 / 安全存储 / 桌面 E2E / stripe-live / 对话级）—— 见 handoff。
+# **首选终局验收命令：完整五阶段单次 run、零假设** —— 分阶段重跑是调试形态，
+# 其先行阶段依赖在同一 run 内强制（secure-storage←build；desktop-e2e←build；
+# stripe-live←build+secure-storage；conversation-acceptance←stripe-live），
+# --assume-stage-passed 只作显式承认且使 run 退出码 2（永不绿）。
 node scripts\payswap\windows\run-p2-acceptance.cjs
 # 或仅对话面 harness（stripe-live 阶段的内嵌步骤，亦可单独直跑）：
 node scripts\payswap\live\build-live-harness.mjs

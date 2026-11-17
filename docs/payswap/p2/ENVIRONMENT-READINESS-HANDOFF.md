@@ -53,19 +53,26 @@ node scripts\payswap\preflight-env.cjs
 #    全绿后再继续；红项按 hint 修（装 pnpm / 装 electron 后重跑等）。
 
 # 2) 五分类验收 runner（按序全跑；工件落 artifacts\p2-acceptance\<时间戳>\）
+#    **首选终局验收命令：完整五阶段单次 run、零假设** —— 这是唯一能把退出码
+#    打到 0 的形态。分阶段重跑是调试手段，不是验收形态。
 node scripts\payswap\windows\run-p2-acceptance.cjs
 
-#    —— 或分阶段（每阶段可单独重跑；阶段依赖见 --help）——
-node scripts\payswap\windows\run-p2-acceptance.cjs --stage windows-build
-node scripts\payswap\windows\run-p2-acceptance.cjs --stage windows-secure-storage
-node scripts\payswap\windows\run-p2-acceptance.cjs --stage windows-desktop-e2e
+#    —— 分阶段重跑（调试用；阶段依赖在同一 run 内强制）——
+#    依赖表：secure-storage←build；desktop-e2e←build；
+#            stripe-live←build+secure-storage；conversation-acceptance←stripe-live。
+#    单独重跑时，先行阶段要么同次 --stage 且 PASS，要么 --assume-stage-passed
+#    显式承认 —— 而 assumption 使 run 退出码 2（永不绿）。假设永远不能把 run
+#    洗成绿色；先行阶段没真正跑过就不存在 PASS。
+node scripts\payswap\windows\run-p2-acceptance.cjs --stage windows-build --stage windows-secure-storage
 
-# 3) stripe-live 前先加载键（§1 的 env 文件），然后：
-node scripts\payswap\windows\run-p2-acceptance.cjs --stage stripe-live
+# 3) stripe-live 前先加载键（§1 的 env 文件），然后（含其全部先行阶段的完整 run）：
+node scripts\payswap\windows\run-p2-acceptance.cjs --stage windows-build --stage windows-secure-storage --stage stripe-live
 
 # 4) conversation-acceptance：runner 会先吐出交互清单 —— 真人真应用走完 13 步，
-#    填成 manual-new-task-evidence.md 后回执校验：
-node scripts\payswap\windows\run-p2-acceptance.cjs --stage conversation-acceptance `
+#    填成 manual-new-task-evidence.md 后回执校验（回执校验是严格的：13/13 步
+#    各自非空 Observed + Result: PASS + 完整 attestation；FAIL/BLOCKED/SKIP/
+#    缺步/重步/未知值一律不过）：
+node scripts\payswap\windows\run-p2-acceptance.cjs --stage stripe-live `
   --assume-stage-passed stripe-live `
   --manual-evidence C:\work\payswap\artifacts\p2-acceptance\<时间戳>\conversation-acceptance\manual-new-task-evidence.md
 ```

@@ -127,27 +127,80 @@ function quoteForWindowsShell(token) {
   return token;
 }
 
+/** secret 在 pending 尾部的最长「真前缀」后缀长度（0..secret.length-1）——
+ *  跨 chunk 分裂的凭据前半会停在这里，直到后续 chunk 补全或 flush 兜底置换。 */
+function longestSecretPrefixSuffix(text, secret) {
+  const max = Math.min(secret.length - 1, text.length);
+  for (let len = max; len >= 1; len -= 1) {
+    if (secret.startsWith(text.slice(text.length - len))) return len;
+  }
+  return 0;
+}
+
 class RedactingLog {
-  constructor(filePath, secret) {
+  constructor(filePath, secret, options = {}) {
     this.filePath = filePath;
-    this.secret = secret || null;
+    this.secret = secret && secret.length > 0 ? secret : null;
     this.chunks = [];
     this.scrubbed = 0;
+    this.echo = options.echo !== false;
+    this.pending = ""; // 未定稿的原文尾部（可能携带分裂凭据的前缀，永不落盘/回显）
   }
+  /** 流式置换：完整命中即刻置换；尾部最长 secret.length-1 字符扣留待续。
+   *  任何时刻 emitted+pending 的拼接与原文流一致，但 emitted 永不含完整键值 ——
+   *  单 chunk、双 chunk、逐字节分裂、stderr 混流均覆盖。 */
   append(text) {
     if (!text) return;
-    let safe = text;
+    this.pending += text;
+    let emitLen;
     if (this.secret) {
-      const before = safe;
-      safe = safe.split(this.secret).join(REDACTION);
-      if (safe !== before) this.scrubbed += 1;
+      const last = this.pending.lastIndexOf(this.secret);
+      if (last >= 0) {
+        const afterStart = last + this.secret.length;
+        const rest = this.pending.slice(afterStart);
+        emitLen = afterStart + rest.length - longestSecretPrefixSuffix(rest, this.secret);
+        this.scrubbed += 1;
+      } else {
+        emitLen = this.pending.length - longestSecretPrefixSuffix(this.pending, this.secret);
+      }
+    } else {
+      emitLen = this.pending.length;
     }
-    this.chunks.push(safe);
-    process.stdout.write(safe);
+    const emitRaw = this.pending.slice(0, emitLen);
+    this.pending = this.pending.slice(emitLen);
+    const emitSafe = this.secret ? emitRaw.split(this.secret).join(REDACTION) : emitRaw;
+    if (emitSafe) {
+      this.chunks.push(emitSafe);
+      if (this.echo) process.stdout.write(emitSafe);
+    }
   }
+  /** flush：扣留尾部兜底置换（此处必然无后续 chunk，可全量产出），再落盘。 */
   async flush() {
+    let emitSafe;
+    if (this.secret) {
+      const last = this.pending.lastIndexOf(this.secret);
+      if (last >= 0) {
+        this.scrubbed += 1;
+        emitSafe = this.pending.slice(0, last) + REDACTION + this.pending.slice(last + this.secret.length);
+      } else {
+        emitSafe = this.pending;
+      }
+      this.pending = "";
+    } else {
+      emitSafe = this.pending;
+      this.pending = "";
+    }
+    if (emitSafe) {
+      this.chunks.push(emitSafe);
+      if (this.echo) process.stdout.write(emitSafe);
+    }
     await fsp.mkdir(path.dirname(this.filePath), { recursive: true });
-    await fsp.writeFile(this.filePath, this.chunks.join(""), "utf8");
+    const body = this.chunks.join("");
+    if (this.secret && body.includes(this.secret)) {
+      // 纵深防御：理论上不可达 —— 命中即说明置换不变量被破坏，绝不写原文。
+      throw new Error(`redaction invariant violated for ${this.filePath}`);
+    }
+    await fsp.writeFile(this.filePath, body, "utf8");
   }
 }
 
@@ -222,30 +275,86 @@ async function leakScan(dir, secret) {
   return hits;
 }
 
-async function runPreflight() {
-  return new Promise((resolve) => {
-    let out = "";
-    const child = cp.spawn(process.execPath, [PREFLIGHT, "--json", "--require-live-key"], {
+/** 污染工件就地消毒（命中字节置换为 REDACTION 标记）；返回已消毒文件列表。
+ *  manifest 与 summary 只允许在消毒后复扫干净的艺术品上产生。 */
+async function sanitizeLeaks(dir, secret) {
+  if (!secret) return [];
+  const sanitized = [];
+  async function walk(current) {
+    for (const entry of await fsp.readdir(current, { withFileTypes: true })) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) await walk(full);
+      else {
+        const buf = await fsp.readFile(full);
+        const needle = Buffer.from(secret, "utf8");
+        if (buf.includes(needle)) {
+          await fsp.writeFile(full, buf.toString("utf8").split(secret).join(REDACTION), "utf8");
+          sanitized.push(path.relative(dir, full));
+        }
+      }
+    }
+  }
+  await walk(dir);
+  return sanitized;
+}
+
+/** preflight JSON 形状校验（纯函数）—— 形状不对 = 整个 run fail-closed。 */
+function validatePreflightJson(parsed, expectedPlatform) {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, reason: "preflight output is not a JSON object" };
+  }
+  if (parsed.platform !== expectedPlatform) {
+    return { ok: false, reason: `preflight platform '${parsed.platform}' != runner platform '${expectedPlatform}'` };
+  }
+  if (!Array.isArray(parsed.stages) || parsed.stages.length === 0) {
+    return { ok: false, reason: "preflight JSON has no stages array — stage records cannot be positively established" };
+  }
+  for (const stage of parsed.stages) {
+    if (!stage || typeof stage.id !== "string" || typeof stage.executable !== "boolean") {
+      return { ok: false, reason: "preflight stage record malformed (id/executable missing)" };
+    }
+  }
+  return { ok: true };
+}
+
+/** 子进程 preflight（--json）：launch 失败 / 无 JSON / 平台不符 = {ok:false}。
+ *  preflight 自身按 fail-level 检查退 1 但仍产出合法 JSON —— 那是合法的「能力
+ *  裁决」（阶段按 executable=false 得到诚实 SKIP），不算 malformed。 */
+async function runPreflight(options = {}) {
+  const script = options.script || PREFLIGHT;
+  const expectedPlatform = options.platform || process.platform;
+  const out = await new Promise((resolve) => {
+    let buf = "";
+    const child = cp.spawn(process.execPath, [script, "--json", "--require-live-key"], {
       cwd: REPO_ROOT,
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true,
     });
     child.stdout.on("data", (d) => {
-      out += d.toString("utf8");
+      buf += d.toString("utf8");
     });
     child.stderr.on("data", (d) => {
-      out += d.toString("utf8");
+      buf += d.toString("utf8");
     });
-    child.on("error", () => resolve(null));
-    child.on("close", () => {
-      try {
-        const start = out.indexOf("{");
-        resolve(JSON.parse(out.slice(start)));
-      } catch {
-        resolve(null);
-      }
-    });
+    child.on("error", (error) => resolve({ code: -1, buf, spawnError: String(error.message || error) }));
+    child.on("close", (code) => resolve({ code: code === null ? -1 : code, buf }));
   });
+  if (out.spawnError) {
+    return { ok: false, reason: `preflight process failed to launch: ${out.spawnError}` };
+  }
+  const start = out.buf.indexOf("{");
+  if (start < 0) {
+    return { ok: false, reason: `preflight produced no JSON (exit=${out.code})` };
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(out.buf.slice(start));
+  } catch {
+    return { ok: false, reason: `preflight JSON unparsable (exit=${out.code})` };
+  }
+  const shape = validatePreflightJson(parsed, expectedPlatform);
+  if (!shape.ok) return shape;
+  return { ok: true, preflight: parsed, exitCode: out.code };
 }
 
 // ---------------------------------------------------------------------------
@@ -295,15 +404,66 @@ function renderManualChecklist() {
   return lines.join("\n");
 }
 
-function validateManualEvidence(text) {
+const CREDENTIAL_PATTERNS = [/rk_test_/, /rk_live_/, /sk_test_/, /sk_live_/, /whsec_/];
+
+/** 人工回执严格校验（defect B 关闭）：报告存在 ≠ 验收成功。
+ *  - 恰好 13 个步骤标题（Step 1..13），无缺、无重、无未知编号；
+ *  - 每步有非空 Observed 且 Result 恰为 PASS（FAIL/BLOCKED/SKIP/空/未知值一律不过）；
+ *  - attestation 四要素齐备（operator、date/time、Windows 版本号、40 hex commit SHA）；
+ *  - 任何凭据材料形态命中即拒。 */
+function validateManualEvidence(text, secret) {
   const problems = [];
-  if (!/\-\s*Result:\s*\S/.test(text)) problems.push("no step has a filled 'Result:' line");
-  if (!/Operator:\s*\S/.test(text)) problems.push("Attestation 'Operator:' is empty");
-  if (!/App commit SHA:\s*\S/.test(text)) problems.push("Attestation 'App commit SHA:' is empty");
-  const answered = (text.match(/\-\s*Result:\s*\S/g) || []).length;
-  if (answered < MANUAL_CHECKLIST_ITEMS.length) {
-    problems.push(`only ${answered}/${MANUAL_CHECKLIST_ITEMS.length} steps have a Result (every step must be answered)`);
+  const stepHeadingRe = /^##\s*Step\s*(\d+)\./gm;
+  const headings = [];
+  let m;
+  while ((m = stepHeadingRe.exec(text)) !== null) {
+    headings.push({ n: Number.parseInt(m[1], 10), index: m.index });
   }
+  const unknown = headings.filter((h) => h.n < 1 || h.n > MANUAL_CHECKLIST_ITEMS.length);
+  if (unknown.length > 0) problems.push(`unknown step number(s) present: ${unknown.map((h) => h.n).join(", ")}`);
+  for (let n = 1; n <= MANUAL_CHECKLIST_ITEMS.length; n += 1) {
+    const found = headings.filter((h) => h.n === n);
+    if (found.length === 0) {
+      problems.push(`missing step heading: Step ${n}`);
+      continue;
+    }
+    if (found.length > 1) {
+      problems.push(`duplicate step heading: Step ${n} appears ${found.length} times`);
+      continue;
+    }
+    const start = found[0].index;
+    const nextHeading = text.indexOf("\n## ", start + 1);
+    const section = nextHeading >= 0 ? text.slice(start, nextHeading) : text.slice(start);
+    // 注意 [ \t]*：\s* 会跨行吞掉换行后下一行的首个非空白，令空 Observed 误判为有值。
+    if (!/-\s*Observed:[ \t]*\S/.test(section)) {
+      problems.push(`Step ${n}: 'Observed:' is empty — every step needs its own observation`);
+    }
+    const resultMatches = section.match(/-\s*Result:[^\n]*/g) || [];
+    if (resultMatches.length === 0) {
+      problems.push(`Step ${n}: no 'Result:' line`);
+    } else {
+      for (const line of resultMatches) {
+        const value = (line.match(/-\s*Result:[ \t]*(\S+)/) || [])[1];
+        if (value !== "PASS") {
+          problems.push(`Step ${n}: Result is '${value || "(empty)"}' — only 'Result: PASS' is accepted (FAIL/BLOCKED/SKIP never passes)`);
+        }
+      }
+    }
+  }
+  if (!/Operator:\s*\S/.test(text)) problems.push("Attestation 'Operator:' is empty");
+  if (!/(Date\/time|Date\/time \(local\)):\s*\S/.test(text)) problems.push("Attestation 'Date/time' is empty");
+  const platformLine = text.match(/Platform[^:\n]*:\s*(\S[^\n]*)/);
+  if (!platformLine || !/10\.0\.\d+/.test(platformLine[1])) {
+    problems.push("Attestation 'Platform' must contain the exact Windows version/build (10.0.<build> from winver)");
+  }
+  const shaLine = text.match(/App commit SHA:\s*(\S+)/);
+  if (!shaLine || !/^[0-9a-f]{40}$/.test(shaLine[1])) {
+    problems.push("Attestation 'App commit SHA' must be the exact 40-hex commit SHA of the tested application");
+  }
+  for (const pattern of CREDENTIAL_PATTERNS) {
+    if (pattern.test(text)) problems.push(`credential material detected in evidence (pattern ${pattern}) — sanitize and re-run`);
+  }
+  if (secret && text.includes(secret)) problems.push("evidence contains the live key itself");
   return problems;
 }
 
@@ -521,20 +681,19 @@ async function stageConversationAcceptance(context) {
     };
   }
   const text = await fsp.readFile(evidencePath, "utf8");
-  const problems = validateManualEvidence(text);
-  const leaks = context.secret && text.includes(context.secret) ? ["manual evidence contains the live key"] : [];
-  if (problems.length > 0 || leaks.length > 0) {
+  const problems = validateManualEvidence(text, context.secret);
+  if (problems.length > 0) {
     return {
       verdict: "FAIL",
       steps: [],
       logPath: evidencePath,
-      note: `manual evidence validation failed: ${[...problems, ...leaks].join("; ")}`,
+      note: `manual evidence validation failed: ${problems.join("; ")}`,
     };
   }
-  const answered = (text.match(/\-\s*Result:\s*\S/g) || []).length;
+  const passed = (text.match(/-\s*Result:\s*PASS\b/g) || []).length;
   return {
     verdict: "PASS",
-    steps: [{ name: "manual New Task evidence validated", code: 0, answered }],
+    steps: [{ name: "manual New Task evidence validated (13/13 PASS + full attestation)", code: 0, answered: passed }],
     logPath: evidencePath,
     note: "operator-attested interactive evidence (manual, not automated) — recorded as such in the summary",
   };
@@ -583,11 +742,22 @@ async function main() {
   await fsp.mkdir(artifactsDir, { recursive: true });
 
   const secret = (process.env.ZCODE_E2E_STRIPE_LIVE_KEY || "").trim() || null;
-  const preflight = await runPreflight();
-  if (preflight) {
+  // fail-closed preflight（defect C 关闭）：launch 失败 / JSON 缺失或畸形 / 平台不符
+  // ⇒ preflightResult.ok=false ⇒ 所有选定阶段判 FAIL，run 退出码 1，绝不执行任何阶段。
+  const preflightResult = await runPreflight();
+  let preflight = null;
+  let preflightStages = {};
+  if (preflightResult.ok) {
+    preflight = preflightResult.preflight;
     await fsp.writeFile(path.join(artifactsDir, "preflight.json"), JSON.stringify(preflight, null, 2), "utf8");
+    preflightStages = Object.fromEntries(preflight.stages.map((s) => [s.id, s]));
+  } else {
+    await fsp.writeFile(
+      path.join(artifactsDir, "preflight-error.txt"),
+      `preflight unusable — no stage may execute (fail-closed):\n${preflightResult.reason}\n`,
+      "utf8",
+    );
   }
-  const preflightStages = preflight ? Object.fromEntries((preflight.stages || []).map((s) => [s.id, s])) : {};
 
   function resolveElectronCli() {
     const candidates = [
@@ -612,21 +782,34 @@ async function main() {
   console.log(`[runner] P2 acceptance — platform=${process.platform} — ${new Date().toISOString()}`);
   console.log(`[runner] artifacts: ${path.relative(REPO_ROOT, artifactsDir)}`);
   console.log(`[runner] stages selected: ${options.stages.join(", ")}`);
+  if (!preflightResult.ok) {
+    console.log(`[runner] PREFLIGHT UNUSABLE (fail-closed): ${preflightResult.reason}`);
+    console.log("[runner] no stage will execute — nothing may run on an absent/invalid preflight result");
+  }
   if (options.dryRun) console.log("[runner] DRY-RUN: preflight + plan only, nothing executes");
 
   for (const stageId of STAGE_ORDER) {
     if (!options.stages.includes(stageId)) continue;
 
-    // 能力门（preflight 裁决；缺能力 = SKIP，绝不静默转绿）。
-    const pre = preflightStages[stageId];
-    if (pre && !pre.executable) {
-      console.log(`\n[${stageId}] SKIP — preflight gate: ${pre.reasons.join("; ")}`);
-      results[stageId] = { verdict: "SKIP", steps: [], skipReason: pre.reasons.join("; ") };
+    // fail-closed 门 1：preflight 不可用 ⇒ FAIL，绝不执行（缺席的结果永远不是执行许可）。
+    if (!preflightResult.ok) {
+      console.log(`\n[${stageId}] FAIL — preflight unusable: ${preflightResult.reason}`);
+      results[stageId] = { verdict: "FAIL", steps: [], note: `preflight unusable (fail-closed): ${preflightResult.reason}` };
       continue;
     }
-    if (!pre && process.platform !== "win32") {
-      console.log(`\n[${stageId}] SKIP — stage is a native-Windows acceptance stage (platform=${process.platform})`);
-      results[stageId] = { verdict: "SKIP", steps: [], skipReason: `not native Windows (platform=${process.platform})` };
+
+    // fail-closed 门 2：选定阶段必须拥有 preflight 阶段记录（无记录 = FAIL，不是放行）。
+    const pre = preflightStages[stageId];
+    if (!pre) {
+      console.log(`\n[${stageId}] FAIL — no preflight stage record for '${stageId}' (fail-closed)`);
+      results[stageId] = { verdict: "FAIL", steps: [], note: "no preflight stage record — capability never positively established" };
+      continue;
+    }
+
+    // 能力门（preflight 裁决；缺能力 = SKIP，绝不静默转绿）。
+    if (!pre.executable) {
+      console.log(`\n[${stageId}] SKIP — preflight gate: ${pre.reasons.join("; ")}`);
+      results[stageId] = { verdict: "SKIP", steps: [], skipReason: pre.reasons.join("; ") };
       continue;
     }
 
@@ -689,6 +872,23 @@ async function main() {
     secretPresent: Boolean(secret),
     stages: {},
   };
+  // 工件定稿次序（defect A 关闭）：泄漏扫描 → 裁决污染 results（唯一权威状态）
+  // → 就地消毒 → 复扫确认 → 渲染 summary（自 results）→ 写 manifest（只哈希消毒后工件）。
+  const leaks = await leakScan(artifactsDir, secret);
+  const sanitized = leaks.length > 0 ? await sanitizeLeaks(artifactsDir, secret) : [];
+  let rescanHits = leaks;
+  if (sanitized.length > 0) {
+    rescanHits = await leakScan(artifactsDir, secret);
+    if (rescanHits.length > 0) {
+      // 消毒后仍命中（如二进制内嵌等不可置换形态）——删除污染文件，绝不让原文进入证据链。
+      for (const rel of rescanHits) {
+        await fsp.rm(path.join(artifactsDir, rel), { force: true });
+      }
+      rescanHits = await leakScan(artifactsDir, secret);
+    }
+  }
+  applyLeakVerdicts(results, leaks);
+  summary.leakScan = { performed: Boolean(secret), hits: leaks, sanitized, rescanClean: rescanHits.length === 0 };
   for (const [stageId, outcome] of Object.entries(results)) {
     summary.stages[stageId] = {
       verdict: outcome.verdict,
@@ -696,16 +896,6 @@ async function main() {
       note: outcome.note || outcome.skipReason || null,
       logPath: outcome.logPath ? path.relative(REPO_ROOT, outcome.logPath) : null,
     };
-  }
-  const leaks = await leakScan(artifactsDir, secret);
-  summary.leakScan = { performed: Boolean(secret), hits: leaks };
-  if (leaks.length > 0) {
-    for (const stageId of Object.keys(summary.stages)) {
-      if (summary.stages[stageId].verdict === "PASS") {
-        summary.stages[stageId].verdict = "FAIL";
-        summary.stages[stageId].note = `credential leak detected in artifact(s): ${leaks.join(", ")}`;
-      }
-    }
   }
   await fsp.writeFile(path.join(artifactsDir, "summary.json"), JSON.stringify(summary, null, 2), "utf8");
 
@@ -720,18 +910,18 @@ async function main() {
   await walk(artifactsDir);
   await fsp.writeFile(path.join(artifactsDir, "MANIFEST-sha256.txt"), manifest.sort().join("\n") + "\n", "utf8");
 
-  // 汇总表（退出码语义：SKIP/MANUAL-PENDING/assumption 永不让 run 变绿）。
-  const verdictRank = { PASS: 0, BOUNDARY: 1, FAIL: 1, SKIP: 2, "MANUAL-PENDING": 2 };
+  // 汇总表 + 退出码同源于 results（泄漏裁决已在其上生效 —— 泄漏绝不可能退出 0）。
+  const exitCode = computeExitCode(options.stages, results, assumed);
   let worst = 0;
   console.log("\n================ P2 acceptance summary ================");
   for (const stageId of options.stages) {
     const verdict = results[stageId] ? results[stageId].verdict : "NOT-RUN";
     console.log(`${stageId.padEnd(26)} ${verdict}`);
-    worst = Math.max(worst, verdictRank[verdict] ?? 1);
   }
-  if (assumed.size > 0) worst = Math.max(worst, 2);
   console.log("=======================================================");
-  const exitCode = worst === 0 ? 0 : worst === 1 ? 1 : 2;
+  if (leaks.length > 0) {
+    console.log(`[runner] LEAK HANDLING: ${leaks.length} artifact(s) contaminated; sanitized: ${sanitized.join(", ") || "(none)"}; rescan clean=${rescanHits.length === 0}`);
+  }
   if (exitCode === 0) {
     console.log("ALL SELECTED STAGES PASS — attach artifacts/summary.json + MANIFEST-sha256.txt to the evidence register.");
   } else if (exitCode === 1) {
@@ -744,7 +934,50 @@ async function main() {
   process.exit(exitCode);
 }
 
-main().catch((error) => {
-  console.error("[runner] fatal:", error && error.stack ? error.stack : error);
-  process.exit(1);
-});
+/** 退出码唯一权威：由 results + 假设集合推导（纯函数；泄漏裁决先行生效）。
+ *  0 = 全 PASS；1 = FAIL/BOUNDARY（含泄漏）；2 = SKIP/MANUAL-PENDING/assumption。 */
+function computeExitCode(selectedStages, results, assumed) {
+  const verdictRank = { PASS: 0, BOUNDARY: 1, FAIL: 1, SKIP: 2, "MANUAL-PENDING": 2 };
+  let worst = 0;
+  for (const stageId of selectedStages) {
+    const verdict = results[stageId] ? results[stageId].verdict : "NOT-RUN";
+    worst = Math.max(worst, verdictRank[verdict] ?? 1);
+  }
+  if (assumed && assumed.size > 0) worst = Math.max(worst, 2);
+  return worst === 0 ? 0 : worst === 1 ? 1 : 2;
+}
+
+/** 泄漏裁决（纯函数）：命中即污染整个 run —— 所有 PASS 翻 FAIL，退出码必非 0。
+ *  只改 results（唯一权威状态），summary 与退出码都从它派生。 */
+function applyLeakVerdicts(results, leaks) {
+  if (!leaks || leaks.length === 0) return results;
+  const note = `credential leak detected in artifact(s): ${leaks.join(", ")}`;
+  for (const stageId of Object.keys(results)) {
+    if (results[stageId].verdict === "PASS") {
+      results[stageId].verdict = "FAIL";
+      results[stageId].note = note;
+    }
+  }
+  return results;
+}
+
+if (require.main === module) {
+  main().catch((error) => {
+    console.error("[runner] fatal:", error && error.stack ? error.stack : error);
+    process.exit(1);
+  });
+}
+
+module.exports = {
+  RedactingLog,
+  longestSecretPrefixSuffix,
+  validateManualEvidence,
+  validatePreflightJson,
+  runPreflight,
+  leakScan,
+  sanitizeLeaks,
+  applyLeakVerdicts,
+  computeExitCode,
+  MANUAL_CHECKLIST_ITEMS,
+  CREDENTIAL_PATTERNS,
+};

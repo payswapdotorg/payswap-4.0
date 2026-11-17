@@ -30,5 +30,7 @@ jobs:
         run: node --test scripts/payswap/validate-roadmap.test.mjs
       - name: Test the live safeStorage platform gate (win32 path never calls the Linux-only API)
         run: node --test scripts/payswap/live/safe-storage-backend-gate.test.mjs
+      - name: Test the P2 acceptance runner fail-closed regression matrix (redaction carry-over, strict manual evidence, preflight gate, leak verdicts)
+        run: node --test scripts/payswap/windows/run-p2-acceptance.test.mjs
       - name: Enforce a single canonical PaySwap roadmap
         run: node scripts/payswap/validate-roadmap.mjs
