@@ -205,3 +205,67 @@ fail-loud 修补验证（原件为根目录结构化编译 + 手工 sed）；(c)
   激活后 `stripe-live` 分类复跑即本登记面的终局运行。
 - P2 里程碑状态：**不变**（roadmap P2 行保持 `in_progress` —— 环境就绪 ≠ P2
   完成）。
+
+
+## 8. P2-Linux 腿 —— TL Linux 沙箱五分类验收运行（2026-11-17，Linux 补充证据）
+
+> 本节登记 **P2-Linux 里程碑分解后**的 Linux 腿验收执行：环境、命令、结局与
+> 如实边界。状态裁决仍在 roadmap 的 P2-Linux 行（唯一权威）。
+
+### 8.1 运行环境与基线
+
+- 环境：TL Linux 沙箱（Debian 13 trixie 容器，内核 5.10.134，x86_64，headless；
+  2 vCPU / 4GiB cgroup / 0 swap）。**真 Linux 桌面腿** = Xvfb :99（runner 命令
+  生命周期内自持）+ dbus-run-session + gnome-keyring 48 Secret Service（
+  `org.freedesktop.secrets` 会话总线在场自证，缺席即 FATAL）+ Electron
+  `--password-store=gnome-libsecret`；栈来自 debs 前缀解包
+  （`PAYSWAP_LINUX_LEG_STACK`，leg-stack.cjs 统一解析）。
+- 工具：Node 24.22.3、pnpm 10.33.2、git 2.47.3、Electron 44.7.0（repo 钉版）、
+  chromedriver 152.0.7977.82（Electron↔Chromium 152.0.7977.130 的兼容回退版，
+  `chromedriver-preflight.mjs` 解析 + `CHROMEDRIVER_PATH` 注入）。
+- 基线：分支 `p2/acceptance-runner-fail-closed` @ `a6b94740d1961f3890be38dba011af86fc879428`（含 E2B 侧
+  修复合并 `57669794`、构建开关 `1bd675dd`、Linux 执行面与里程碑拆分提交）。
+- 命令：`PAYSWAP_LINUX_LEG_STACK=<prefix> node scripts/payswap/linux/run-p2-acceptance.cjs`
+  （单次完整 run、零假设 —— 唯一能把退出码打到 0 的形态）。
+
+### 8.2 结局（词汇闭集：PASS/FAIL/BOUNDARY/SKIP/MANUAL-PENDING）
+
+| 阶段 | 结局 | 证据要点 |
+|---|---|---|
+| linux-build | **PASS** | frozen install（exit 0）+ e2e-report build:node + `@zcode/desktop...` 全链构建 + E2E store-bridge renderer（编译标记断言过）。内存受限形态（`ZCODE_DESKTOP_BUILD_SOURCEMAPS=off`；完整生产 sourcemap 面在该 4GiB cgroup 实测 OOM —— SIGKILL at anon-rss 3347MB，sourcemap 合并为 native 内存，堆上限无效；开关登记于 vite.config.ts 与提交 `1bd675dd`） |
+| linux-secure-storage | **PASS** | 显示腿内真 Electron 探针：`backendSelected=gnome_libsecret`、`isEncryptionAvailable=true`、`roundTrip=ok`；P2 法则电池 13 套件 **129/129**（CI 同款调用面）；harness 平台门回归 **12/12**（Linux 后端名闭集钉死） |
+| linux-desktop-e2e | **PASS** | `payswap-connection-ui` spec **7/7、首过率 100%**（真窗口/真 ipcMain/真 store 文件；四个存储臂在真 gnome_libsecret 后端上执行：connected + at-rest 密文、refresh 闭集、revoke 删除、损坏键真实重启 → typed 存储 refusal） |
+| stripe-live | **SKIP** | `ZCODE_E2E_STRIPE_LIVE_KEY` 缺席（本环境无键；聊天转录非合格秘密通道 —— 键须在验收机本地经 0600 env 文件供给）。preflight 裁决 GATED，runner 诚实 SKIP |
+| conversation-acceptance | **SKIP** | 依赖 stripe-live（对话面需已连接的真账户） |
+
+**run 退出码 = 2**（SKIP 永不转绿；`--allow-skip` 只记录承认）。**不是 P2-Linux
+终局证据** —— 终局 = 五分类全 PASS（stripe-live 携 `RESULT_E2E=0`、
+`RESULT_HARNESS=0`）+ 13 步回执严格校验。剩余两阶段被两个操作者控制步门控
+（键供给 + 账户 onboarding 身份段 —— 精确动作与复跑命令见
+[LINUX-P2-CLOSURE-HANDOFF.md](LINUX-P2-CLOSURE-HANDOFF.md)）。
+
+### 8.3 消毒工件（SHA-256 基准；secretPresent=false —— 本 run 无键材料）
+
+工件目录 `artifacts/p2-acceptance-linux/2026-11-17T18-00-57-381Z/`：
+
+- `summary.json` —— SHA-256 `4914af6eeaae859276cd1c61f010a1c511b4e2a597eaeff0bddd7ed189831408`
+- `MANIFEST-sha256.txt` —— SHA-256 `5aa32b8bc1aa098aca9fb31122ac1cd99edc37351df51c62c712fdcba652cdac`（8 文件清单；
+  复核一致）
+- `preflight.json` —— SHA-256 `92d8cf836b7850d190411b73c27d8c8372b05df701886ae4822b14d2150684eb`
+- `linux-build/linux-build.log` —— SHA-256 `1f9f2ec5bf9f92a5c71b45c53d19d72e424d52a051b3888f426fcf27f8631f1d`
+- `linux-secure-storage/linux-secure-storage.log` —— SHA-256 `76c9aa7f92b40ec8e78f2901dfa3ee18fd8f9b2b093542d040bd9e60eaba3e05`
+- `linux-secure-storage/probe.log` —— SHA-256 `6f3ab1c5d8dfdd64df577ae7f0fc74c32d851ded35040eb19a040bbf7ecf7a24`
+- `linux-desktop-e2e/linux-desktop-e2e.log` —— SHA-256 `81ce3040946531c61bb603ffc61a21710ededd1f36e0c1d1117d7432715d43d5`
+- `linux-desktop-e2e/wdio-connection-ui.log` —— SHA-256 `b18dc0e9b3170f527bbf1eec803752fa2ca49027f9532134da10d8649078d878`
+- `linux-desktop-e2e/chromedriver-preflight.log` —— SHA-256 `cd4285b1ad154306aadbc993cd510789f47529fad5dbcf7a7eeb0e69d21eaa98`
+
+### 8.4 如实边界（本节证据不构成的事项）
+
+- 真实 Stripe 调用：**未执行**（无键）。§1 的 2026-11-14 E2B 双复现
+  （live spec 3/3 + harness 步骤 1–8）仍是本腿的既有 live 证据；激活/键边界
+  见 §1.3 与 LINUX-P2-CLOSURE-HANDOFF.md §1。
+- 交互式 New Task 13 步回执：**未执行**（依赖真键真账户）。
+- P2-Linux 里程碑状态：**不变**（roadmap P2-Linux 行 `in_progress`；本节是
+  可独立执行半边的执行证据，非关闭登记）。
+- Windows 腿：本节无任何 Windows 证明（见 P2-Windows 行与
+  ENVIRONMENT-READINESS-HANDOFF.md）。
