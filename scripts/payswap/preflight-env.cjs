@@ -12,10 +12,14 @@
  *   electron / safe-storage-probe / stripe-network / stripe-live-key /
  *   stripe-auth-probe
  *
- * 五类验收阶段的可执行裁决（A/B/C 五分类 —— 见 run-p2-acceptance.cjs 与
+ * 五类验收阶段的可执行裁决（A/B/C 五分类 —— 见 run-p2-acceptance.cjs〔两腿〕与
  * docs/payswap/p2/ENVIRONMENT-READINESS-HANDOFF.md）：
  *   windows-build | windows-secure-storage | windows-desktop-e2e |
  *   stripe-live | conversation-acceptance
+ *   linux-build | linux-secure-storage | linux-desktop-e2e
+ *   （P2 里程碑分解 2026-11-17：Linux 腿五分类由
+ *   scripts/payswap/linux/run-p2-acceptance.cjs 执行；stripe-live 与
+ *   conversation-acceptance 为两腿共用的阶段 id —— 平台各自派生裁决）
  *
  * 用法：
  *   node scripts/payswap/preflight-env.cjs                 # 人类可读表
@@ -46,6 +50,9 @@ const PROBE_SCRIPT = path.join(REPO_ROOT, "scripts", "payswap", "electron-safe-s
 const PROBE_MARKER = "PAYSWAP_SAFE_STORAGE_PROBE";
 const LINUX_SECURE_BACKENDS = new Set(["gnome_libsecret", "kwallet", "kwallet5", "kwallet6"]);
 const STRIPE_BALANCE_URL = "https://api.stripe.com/v1/balance";
+// Linux 腿栈（Xvfb / D-Bus / gnome-keyring）解析 —— preflight 能力裁决与
+// linux runner 执行面共用同一解析（leg-stack.cjs 头注释的防漂移条款）。
+const LEG_STACK = require("./linux/leg-stack.cjs");
 
 const args = process.argv.slice(2);
 const WANT_JSON = args.includes("--json");
@@ -345,6 +352,40 @@ function checkDesktopSession(platform) {
   return false;
 }
 
+/** Linux 腿栈能力面（P2-Linux 五分类的能力依据）：Xvfb / dbus-run-session /
+ *  gnome-keyring-daemon 三件套可解析（系统 PATH 或 PAYSWAP_LINUX_LEG_STACK
+ *  前缀 —— leg-stack.cjs 的统一解析）。腿栈缺失 = Linux 显示腿无法自证搭建，
+ *  linux-secure-storage / linux-desktop-e2e 不可执行（真窗口/真钥匙串无从谈起）。 */
+function checkLinuxLegStack(platform) {
+  if (platform !== "linux") {
+    record("linux-leg-stack", "Linux display-leg stack (Xvfb/D-Bus/gnome-keyring)", "skip", `not checked on ${platform}`);
+    return false;
+  }
+  const probe = LEG_STACK.probeLegStack();
+  if (probe.error) {
+    record("linux-leg-stack", "Linux display-leg stack (Xvfb/D-Bus/gnome-keyring)", "fail", probe.error, "fix PAYSWAP_LINUX_LEG_STACK (prefix must contain usr/bin etc.) or unset it to use the system stack");
+    return false;
+  }
+  const missing = probe.commands.filter((c) => !c.ok).map((c) => c.command);
+  if (missing.length > 0) {
+    record(
+      "linux-leg-stack",
+      "Linux display-leg stack (Xvfb/D-Bus/gnome-keyring)",
+      "fail",
+      `missing commands: ${missing.join(", ")} (resolved via ${probe.prefix ? `prefix ${probe.prefix}` : "system PATH"})`,
+      "install xvfb + dbus + gnome-keyring (e.g. apt-get install -y xvfb dbus gnome-keyring libsecret-1-0), or point PAYSWAP_LINUX_LEG_STACK at a prefix install (usr/bin + usr/lib + schemas)",
+    );
+    return false;
+  }
+  record(
+    "linux-leg-stack",
+    "Linux display-leg stack (Xvfb/D-Bus/gnome-keyring)",
+    "pass",
+    `Xvfb + dbus-run-session + gnome-keyring-daemon resolvable (${probe.prefix ? `prefix ${probe.prefix}` : "system PATH"})`,
+  );
+  return true;
+}
+
 function resolveElectron() {
   for (const candidate of ELECTRON_CANDIDATES) {
     const pkgPath = path.join(candidate, "package.json");
@@ -560,7 +601,7 @@ async function checkStripeAuthProbe(keyShape, networkOk) {
   );
 }
 
-function deriveStages(platform, checksById, interactiveSession) {
+function deriveStages(platform, checksById, interactiveSession, linuxLegStackOk) {
   const ok = (id) => checksById[id] && checksById[id].status === "pass";
   const toolchain = ok("node") && (checksById.pnpm && checksById.pnpm.status !== "fail") && ok("git");
   const electronOk = ok("electron");
@@ -570,6 +611,8 @@ function deriveStages(platform, checksById, interactiveSession) {
   const authOk = ok("stripe-auth-probe");
   const isWin = platform === "win32";
   const stages = [];
+
+  const isLinux = platform === "linux";
 
   stages.push({
     id: "windows-build",
@@ -605,16 +648,57 @@ function deriveStages(platform, checksById, interactiveSession) {
           ...(interactiveSession ? [] : ["no interactive desktop session (SESSIONNAME)"]),
         ],
   });
-  const liveExecutable = toolchain && electronOk && keyOk && networkOk && (authOk || !LIVE_KEY ? authOk : false);
+  // P2-Linux 五分类（里程碑分解 2026-11-17；执行面 scripts/payswap/linux/）。
+  // 能力依据：toolchain / electron / 腿栈（显示腿自证搭建的能力面 —— 探针在
+  // runner 的显示腿内执行，preflight 不重复探测）。stripe-live /
+  // conversation-acceptance 两腿共用 id、各自派生。
   stages.push({
-    id: "stripe-live",
-    applicable: isWin || platform === "linux",
-    executable: (isWin || platform === "linux") && liveExecutable,
-    reasons: !(isWin || platform === "linux")
-      ? [`platform ${platform} is outside the live recipes (win32 runner / linux vm recipes)`]
+    id: "linux-build",
+    applicable: isLinux,
+    executable: isLinux && toolchain,
+    reasons: !isLinux
+      ? [`platform is ${platform} — the linux-build stage proves the Linux desktop toolchain`]
+      : toolchain
+        ? []
+        : ["node/pnpm/git prerequisites not all green (see checks above)"],
+  });
+  stages.push({
+    id: "linux-secure-storage",
+    applicable: isLinux,
+    executable: isLinux && toolchain && electronOk && linuxLegStackOk,
+    reasons: !isLinux
+      ? [`platform is ${platform} — gnome_libsecret proof is a linux-only stage`]
+      : [
+          ...(toolchain ? [] : ["toolchain prerequisites not green"]),
+          ...(electronOk ? [] : ["electron not installed (pnpm install --frozen-lockfile)"]),
+          ...(linuxLegStackOk ? [] : ["display-leg stack not resolvable (Xvfb / dbus-run-session / gnome-keyring-daemon — see linux-leg-stack check)"]),
+        ],
+  });
+  stages.push({
+    id: "linux-desktop-e2e",
+    applicable: isLinux,
+    executable: isLinux && toolchain && electronOk && linuxLegStackOk,
+    reasons: !isLinux
+      ? [`platform is ${platform} — desktop E2E needs the Linux display leg`]
       : [
           ...(toolchain ? [] : ["toolchain prerequisites not green"]),
           ...(electronOk ? [] : ["electron not installed"]),
+          ...(linuxLegStackOk ? [] : ["display-leg stack not resolvable (Xvfb / dbus-run-session / gnome-keyring-daemon)"]),
+        ],
+  });
+
+  const liveExecutable = toolchain && electronOk && keyOk && networkOk && (authOk || !LIVE_KEY ? authOk : false);
+  const liveLegOk = isWin || linuxLegStackOk;
+  stages.push({
+    id: "stripe-live",
+    applicable: isWin || isLinux,
+    executable: (isWin || isLinux) && liveExecutable && liveLegOk,
+    reasons: !(isWin || isLinux)
+      ? [`platform ${platform} is outside the live recipes (win32 runner / linux leg runner)`]
+      : [
+          ...(toolchain ? [] : ["toolchain prerequisites not green"]),
+          ...(electronOk ? [] : ["electron not installed"]),
+          ...(!isLinux || linuxLegStackOk ? [] : ["linux display-leg stack not resolvable (the live specs need the leg)"]),
           ...(keyOk ? [] : ["restricted test key (rk_test_*) not verified present"]),
           ...(networkOk ? [] : ["api.stripe.com unreachable"]),
           ...(authOk ? [] : ["authorized read-back probe not green"]),
@@ -622,13 +706,14 @@ function deriveStages(platform, checksById, interactiveSession) {
   });
   stages.push({
     id: "conversation-acceptance",
-    applicable: isWin,
-    executable: isWin && liveExecutable && interactiveSession,
-    reasons: !isWin
-      ? [`platform is ${platform} — the New Task conversational acceptance runs on the native Windows desktop app`]
+    applicable: isWin || isLinux,
+    executable: (isWin || isLinux) && liveExecutable && liveLegOk && (isLinux || interactiveSession),
+    reasons: !(isWin || isLinux)
+      ? [`platform is ${platform} — the New Task conversational acceptance runs on a real desktop app (windows runner / linux leg runner)`]
       : [
           ...(liveExecutable ? [] : ["stripe-live prerequisites not green (the conversational face needs a connected, activated account)"]),
-          ...(interactiveSession ? [] : ["no interactive desktop session"]),
+          ...(liveLegOk ? [] : ["linux display-leg stack not resolvable (the interactive walkthrough needs the real app on a display)"]),
+          ...(isWin && !interactiveSession ? ["no interactive desktop session"] : []),
         ],
   });
   return stages;
@@ -681,6 +766,7 @@ function humanReport(platform, stages) {
   await checkBuildTools(platform);
   await checkResources();
   const interactiveSession = checkDesktopSession(platform);
+  const linuxLegStackOk = checkLinuxLegStack(platform);
   const electron = await checkElectron(platform);
   await checkSafeStorageProbe(platform, electron);
   const networkOk = await checkStripeNetwork();
@@ -688,7 +774,7 @@ function humanReport(platform, stages) {
   await checkStripeAuthProbe(keyShape, networkOk);
 
   const checksById = Object.fromEntries(checks.map((c) => [c.id, c]));
-  const stages = deriveStages(platform, checksById, interactiveSession);
+  const stages = deriveStages(platform, checksById, interactiveSession, linuxLegStackOk);
   const failCount = checks.filter((c) => c.status === "fail").length;
 
   if (WANT_JSON) {

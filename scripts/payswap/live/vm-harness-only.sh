@@ -21,7 +21,14 @@
 
 set -euo pipefail
 
-REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+# 2026-11-16 修复：本脚本住 scripts/payswap/live/（三层深）—— 原推导只回退两层，
+# REPO_DIR 落在 <repo>/scripts；仓内相对路径（build-live-harness.mjs 调用）随之
+# 错位。package.json 在场自证 —— 推导错误 fail loud，不再静默错位。
+if [ ! -f "$REPO_DIR/package.json" ]; then
+  printf '[vm-harness-only] FATAL: REPO_DIR 推导错误（无 package.json）: %s\n' "$REPO_DIR" >&2
+  exit 2
+fi
 ARTIFACT_DIR="${LIVE_ARTIFACT_DIR:-/workspace/artifacts/live-harness}"
 cd "$REPO_DIR"
 
@@ -34,6 +41,22 @@ fi
 
 mkdir -p "$ARTIFACT_DIR"
 
+# Xvfb 显示服务（2026-11-16 修复）：mega-setup 拉起的 Xvfb 不跨 E2B 命令存活
+# （命令结束即进程组回收 —— 沙箱实测：Electron 报 Missing X server）。本臂的
+# harness 是裸 Electron main 进程，无 WDIO 代管显示 —— 运行器自行确保 :99 在
+# 场（幂等；与命令同生命周期，跑完即随命令回收）。
+if ! pgrep -x Xvfb >/dev/null 2>&1; then
+  (Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &)
+  for _ in $(seq 1 30); do
+    [ -e /tmp/.X11-unix/X99 ] && break
+    sleep 0.5
+  done
+fi
+if [ ! -e /tmp/.X11-unix/X99 ]; then
+  printf '[vm-harness-only] FATAL: Xvfb :99 未就绪 —— 显示服务腿配置失败（fail loud）\n' >&2
+  exit 1
+fi
+
 # 1. 编译真实 law 模块（tsup CJS bundle + createRequire shim 修补）。
 log "building the harness bundle from source"
 node scripts/payswap/live/build-live-harness.mjs
@@ -43,6 +66,7 @@ node scripts/payswap/live/build-live-harness.mjs
 exec dbus-run-session -- bash -c '
   set -euo pipefail
   export XDG_CURRENT_DESKTOP=GNOME
+  export DISPLAY='"${DISPLAY:-:99}"'
   export ZCODE_E2E_STRIPE_LIVE_KEY
   export ZCODE_PAYSWAP_LIVE_OUT_DIR='"$REPO_DIR"'/packages/desktop/.live-harness/out
   printf "\n" | gnome-keyring-daemon --unlock --replace --components=secrets --daemonize
@@ -61,8 +85,21 @@ exec dbus-run-session -- bash -c '
     exit 1
   fi
   printf "[vm-harness-only] secret service active (attempt %s)\n" "${attempt}"
+  # 2026-11-16 修复：本仓 node-linker=hoisted —— electron 二进制提升到仓库根
+  # node_modules/electron/dist/，packages/desktop/node_modules/.bin/ 下没有 shim
+  # （E2B 沙箱实测：No such file or directory）。优先根提升布局，包内 shim 为
+  # 历史布局兜底；两者皆缺席 = fail loud（不猜）。REPO_DIR 经 '"$REPO_DIR"'
+  # 拼接进入内层 bash（单引号块不展开外层变量）。
+  electron_bin='"$REPO_DIR"'/node_modules/electron/dist/electron
+  if [ ! -x "$electron_bin" ]; then
+    electron_bin='"$REPO_DIR"'/packages/desktop/node_modules/.bin/electron
+  fi
+  if [ ! -x "$electron_bin" ]; then
+    printf "[vm-harness-only] FATAL: electron 可执行缺席（hoisted 与包内布局都不在场）\n" >&2
+    exit 1
+  fi
   set +e
-  ./packages/desktop/node_modules/.bin/electron \
+  "$electron_bin" \
     --password-store=gnome-libsecret --no-sandbox \
     scripts/payswap/live/main.cjs
   status=$?
