@@ -62,6 +62,14 @@ const BUILD_LIVE_HARNESS = path.join(REPO_ROOT, "scripts", "payswap", "live", "b
 const MANUAL_EVIDENCE = require("./manual-evidence.cjs");
 const { MANUAL_CHECKLIST_ITEMS, CREDENTIAL_PATTERNS, validateManualEvidence, renderManualChecklist } = MANUAL_EVIDENCE;
 const RUNNER_REDACTION = require("./runner-redaction.cjs");
+// 共享裁决法则（平台无关）：退出码 / 泄漏裁决 / preflight 形状 / RESULT 解析。
+// linux runner（scripts/payswap/linux/）与本 runner 引同一模块 —— 语义防漂移。
+const {
+  computeExitCode,
+  applyLeakVerdicts,
+  validatePreflightJson,
+  parseResultHarness,
+} = require("../acceptance-verdicts.cjs");
 const { REDACTION, longestSecretPrefixSuffix, RedactingLog, leakScan, sanitizeLeaks } = RUNNER_REDACTION;
 
 const STAGE_ORDER = [
@@ -181,25 +189,6 @@ function execStep(log, command, args, options = {}) {
 async function sha256File(filePath) {
   const content = await fsp.readFile(filePath);
   return crypto.createHash("sha256").update(content).digest("hex");
-}
-
-/** preflight JSON 形状校验（纯函数）—— 形状不对 = 整个 run fail-closed。 */
-function validatePreflightJson(parsed, expectedPlatform) {
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    return { ok: false, reason: "preflight output is not a JSON object" };
-  }
-  if (parsed.platform !== expectedPlatform) {
-    return { ok: false, reason: `preflight platform '${parsed.platform}' != runner platform '${expectedPlatform}'` };
-  }
-  if (!Array.isArray(parsed.stages) || parsed.stages.length === 0) {
-    return { ok: false, reason: "preflight JSON has no stages array — stage records cannot be positively established" };
-  }
-  for (const stage of parsed.stages) {
-    if (!stage || typeof stage.id !== "string" || typeof stage.executable !== "boolean") {
-      return { ok: false, reason: "preflight stage record malformed (id/executable missing)" };
-    }
-  }
-  return { ok: true };
 }
 
 /** 子进程 preflight（--json）：launch 失败 / 无 JSON / 平台不符 = {ok:false}。
@@ -357,12 +346,6 @@ async function stageWindowsDesktopE2E(context) {
     ],
     logPath: log.filePath,
   };
-}
-
-function parseResultHarness(text) {
-  const match = /\bRESULT_HARNESS=(\d+)/.exec(text || "");
-  if (!match) return null;
-  return Number.parseInt(match[1], 10);
 }
 
 async function stageStripeLive(context) {
@@ -724,33 +707,6 @@ async function main() {
     );
   }
   process.exit(exitCode);
-}
-
-/** 退出码唯一权威：由 results + 假设集合推导（纯函数；泄漏裁决先行生效）。
- *  0 = 全 PASS；1 = FAIL/BOUNDARY（含泄漏）；2 = SKIP/MANUAL-PENDING/assumption。 */
-function computeExitCode(selectedStages, results, assumed) {
-  const verdictRank = { PASS: 0, BOUNDARY: 1, FAIL: 1, SKIP: 2, "MANUAL-PENDING": 2 };
-  let worst = 0;
-  for (const stageId of selectedStages) {
-    const verdict = results[stageId] ? results[stageId].verdict : "NOT-RUN";
-    worst = Math.max(worst, verdictRank[verdict] ?? 1);
-  }
-  if (assumed && assumed.size > 0) worst = Math.max(worst, 2);
-  return worst === 0 ? 0 : worst === 1 ? 1 : 2;
-}
-
-/** 泄漏裁决（纯函数）：命中即污染整个 run —— 所有 PASS 翻 FAIL，退出码必非 0。
- *  只改 results（唯一权威状态），summary 与退出码都从它派生。 */
-function applyLeakVerdicts(results, leaks) {
-  if (!leaks || leaks.length === 0) return results;
-  const note = `credential leak detected in artifact(s): ${leaks.join(", ")}`;
-  for (const stageId of Object.keys(results)) {
-    if (results[stageId].verdict === "PASS") {
-      results[stageId].verdict = "FAIL";
-      results[stageId].note = note;
-    }
-  }
-  return results;
 }
 
 if (require.main === module) {
