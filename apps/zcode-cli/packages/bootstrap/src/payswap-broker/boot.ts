@@ -18,6 +18,8 @@ import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import {
+  PAYSWAP_BROKER_HELPER_PATH_ENV_KEY,
+  PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY,
   createPayswapInstanceRegistry,
   type PayswapBrokerBootState,
   type PayswapInstanceRegistry,
@@ -239,6 +241,12 @@ export async function bootPayswapBroker(options: PayswapBrokerBootOptions): Prom
     // §11(3) 的"原因可操作员看见"落到审计行本身（relay 失败原因 vs reader 缺席，
     // 两条 degraded 路径的修复动作完全不同 —— 没有这一行，live 面只有 code 没有因）。
     ...(degradedReason ? { reason: degradedReason } : {}),
+    // 供给键在场性二分：false = env 链断了（桌面/宿主/agent 某一跳丢了键），
+    // true = relay 启动本身失败（helper 路径/hash/管道问题）。修复动作完全不同。
+    helperSupplyPresent: {
+      path: Boolean(process.env[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]?.trim()),
+      sha256: Boolean(process.env[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]?.trim()),
+    },
     instanceId: null,
     seq: null,
     op: null,
