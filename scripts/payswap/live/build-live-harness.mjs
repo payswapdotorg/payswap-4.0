@@ -31,13 +31,14 @@
 
 import { mkdir, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // 本脚本位于 <root>/scripts/payswap/live/ —— 文件路径起算四级上行才是仓库根
 // （file → live → payswap → scripts → root）。三级上行止于 scripts/，会把
 // OUT_DIR 钉到 scripts/packages/desktop/.live-harness，@zcode/shared 的依赖图
-// 解析随之崩塌（2026-11-17 win32 实测 6 连败根因之二）。
+// 解析随之崩塌（2026-11-17 win32 实测 6 连败根因之二；2026-11-16 E2B 沙箱
+// 独立发现同一缺陷 —— 两条腿的等价修复在此合并，取 win32 实测形态）。
 const REPO_ROOT = resolve(fileURLToPath(import.meta.url), "..", "..", "..", "..");
 const DESKTOP_DIR = join(REPO_ROOT, "packages", "desktop");
 const OUT_DIR = join(DESKTOP_DIR, ".live-harness");
