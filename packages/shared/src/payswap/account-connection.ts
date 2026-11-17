@@ -239,6 +239,13 @@ export type PayswapCapabilityStatus = z.infer<typeof payswapCapabilityStatusSche
  * the account's actual state, never from hardcoded claims」）。`requirements` 是
  * 去标识摘要：due 数组只保留计数（currently_due/past_due 的元素是 provider 的
  * requirement id —— 非秘密，但计数已足够 P2 的能力面；后续里程碑需要明细时再扩）。
+ *
+ * `requirements: null` 是**显式的 provider 缺席证据**（ADR-P2-1 修订 2026-11-17）：
+ * Stripe 对 standard 账户的受限键自读（/v1/account 与 /v1/accounts/{id}）返回
+ * `capabilities` 但**整个省略 `requirements` 字段**（live 实证 acct_1FPs7UAkPdhgtN6I）。
+ * 缺席 ≠ 捏造零值 —— null 表示「provider 本次读回未暴露 requirements」，
+ * capabilities 半区仍全部来自 provider（evidence, never claims 不变；present-but-
+ * 畸形的 requirements 仍是全有或全无的 fail-closed）。
  */
 export const payswapAccountCapabilityEvidenceSchema = z
   .object({
@@ -258,7 +265,8 @@ export const payswapAccountCapabilityEvidenceSchema = z
         currentlyDueCount: z.number().int().nonnegative(),
         pastDueCount: z.number().int().nonnegative(),
       })
-      .strict(),
+      .strict()
+      .nullable(),
   })
   .strict();
 export type PayswapAccountCapabilityEvidence = z.infer<

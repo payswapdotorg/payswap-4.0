@@ -367,6 +367,32 @@ describe("payswap stripe read-back adapter (ADR-P2-1) — capability evidence ca
       }
     }
   });
+
+  it("requirements field entirely absent (standard-account restricted-key wire shape, ADR-P2-1 amendment 2026-11-17) → evidence with explicit requirements:null — never fabricated zeros", async () => {
+    // live 实证（acct_1FPs7UAkPdhgtN6I）：/v1/account 与 /v1/accounts/{id} 对
+    // standard 账户的受限键自读返回 capabilities 但整个省略 requirements。
+    const client = recordingApiClient(() =>
+      jsonResponse(200, { id: PROVIDER_ACCOUNT_ID, capabilities: { transfers: "active", card_payments: "active" } }),
+    );
+    const port = createStripeAccountReadBackPort({ apiClient: client });
+    const outcome = await port({
+      providerId: "stripe",
+      mode: "test",
+      secretKind: "api-key",
+      secret: TEST_SECRET,
+    });
+    expect(outcome.kind).toBe("verified");
+    if (outcome.kind === "verified") {
+      expect(outcome.evidence).toEqual({
+        capabilities: [
+          { name: "card_payments", status: "active" },
+          { name: "transfers", status: "active" },
+        ],
+        requirements: null,
+      });
+      expect(payswapAccountReadBackOutcomeSchema.safeParse(outcome).success).toBe(true);
+    }
+  });
 });
 
 describe("payswap account service getOverviewData (ADR-P2-1) — the orchestration half", () => {

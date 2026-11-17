@@ -82,3 +82,23 @@ surface yet」。工具面已有两条硬法则：
   `docs/payswap/provider-facts/stripe-readonly-endpoints.md`（doc 06 §2.13 的
   fact-sheet 纪律：检索日期 + 复核期限；adapter 事实无当前 fact-sheet 引证即
   review 失败）。
+
+## Amendment 2026-11-17 — `requirements: null` 是显式的 provider 缺席证据（native Windows live 实证）
+
+- **Trigger:** 原生 Windows live 验收（acct_1FPs7UAkPdhgtN6I，restricted rk_test 键）：
+  `/v1/account` 与 `/v1/accounts/{id}` 对 **standard 账户的受限键自读**返回完整的
+  `capabilities`（13 项）但**整个省略 `requirements` 字段**。原全有或全无捕获把
+  缺席也判 null → 概览 detail 面 lawful typed 拒绝 `read_back_unavailable` ——
+  链路其余九步（连接/at-rest/refresh verified/桥铸造/清单）全绿，仅 detail 面被拒。
+- **Decision:** `PayswapAccountCapabilityEvidence.requirements` 改为 **nullable**：
+  - requirements 字段**整个缺席** → `requirements: null`（显式的「provider 本次
+    读回未暴露」证据 —— 绝不捏造零值；evidence, never claims 不变）；
+  - requirements **在场但畸形** → 整体无证据（fail-closed 不变 —— 载荷与声明契约
+    不符时不采信任何半区）；
+  - capabilities 缺席/空/畸形 → 整体无证据（不变）。
+- **Unchanged:** 概览 detail 的拒绝法则不变（evidence 缺席仍拒绝）；拒绝词汇闭集
+  不变；no-write 结构断言不变。能力注册表消费 null 时语义为「provider 未暴露
+  requirements」，不是「无 requirements 要求」。
+- **Battery:** payswap-account-data.test.ts 新增 standard-account wire 形态用例
+  （requirements 缺席 → evidence 携带 `requirements: null`，schema parse 通过）；
+  既有正例（requirements 在场）与畸形例（present-but-malformed → 无证据）原样钉死。
