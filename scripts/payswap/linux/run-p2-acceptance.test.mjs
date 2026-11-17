@@ -191,3 +191,68 @@ test("validatePreflightJson: shape law (platform + stages array + record shape)"
   assert.equal(verdicts.validatePreflightJson({ platform: "linux", stages: [{ id: "x" }] }, "linux").ok, false);
   assert.equal(verdicts.validatePreflightJson(null, "linux").ok, false);
 });
+
+// ---------------------------------------------------------------------------
+// manual evidence — 平台感知 attestation（安全复审修复：linux 腿的回执不再被
+// win32 的 10.0.<build> 硬编码卡死；两腿互不替代）
+// ---------------------------------------------------------------------------
+
+const manualEvidence = require("../windows/manual-evidence.cjs");
+
+const LINUX_UNAME =
+  "Linux c-6afc86c4 5.10.134-013.15.kangaroo.al8.x86_64 #1 SMP Debian GNU/Linux 13 (trixie)";
+
+function buildValidLinuxEvidence() {
+  const lines = ["# P2 conversation-acceptance — manual New Task evidence (Linux leg)", ""];
+  for (const [n, action, expected] of manualEvidence.MANUAL_CHECKLIST_ITEMS) {
+    lines.push(`## Step ${n}. ${action}`);
+    lines.push(`- Expected: ${expected}`);
+    lines.push("- Observed: saw exactly what was expected on the real desktop app (Linux leg)");
+    lines.push("- Result: PASS");
+    lines.push("");
+  }
+  lines.push("## Attestation");
+  lines.push("- Operator: TL-on-linux");
+  lines.push("- Date/time (local): 2026-11-17 19:30");
+  lines.push(`- Platform (uname -a output): ${LINUX_UNAME}`);
+  lines.push(`- App commit SHA: ${"a".repeat(40)}`);
+  lines.push("");
+  return lines.join("\n");
+}
+
+test("manual evidence (linux): a Linux receipt with kernel-version platform passes", () => {
+  assert.deepEqual(runner.validateManualEvidence(buildValidLinuxEvidence(), null, "linux"), []);
+});
+
+test("manual evidence (linux): Windows-form platform string is rejected — legs are not interchangeable", () => {
+  const text = buildValidLinuxEvidence().replace(
+    `- Platform (uname -a output): ${LINUX_UNAME}`,
+    "- Platform (winver output): Microsoft Windows [Version 10.0.26200.9974]",
+  );
+  const problems = runner.validateManualEvidence(text, null, "linux");
+  assert.equal(problems.some((p) => p.includes("Windows platform string")), true);
+});
+
+test("manual evidence (linux): platform line without a kernel version is rejected", () => {
+  const text = buildValidLinuxEvidence().replace(
+    `- Platform (uname -a output): ${LINUX_UNAME}`,
+    "- Platform (uname -a output): Debian GNU/Linux",
+  );
+  const problems = runner.validateManualEvidence(text, null, "linux");
+  assert.equal(problems.some((p) => p.includes("kernel version")), true);
+});
+
+test("manual evidence: default platform stays the historical win32 form (windows-matrix contract)", () => {
+  const problems = runner.validateManualEvidence(buildValidLinuxEvidence(), null);
+  assert.equal(problems.some((p) => p.includes("10.0.<build>")), true);
+});
+
+test("renderManualChecklist(linux) points at the linux runner (uname label; no winver, no backslash path)", () => {
+  const checklist = manualEvidence.renderManualChecklist("linux");
+  assert.equal(checklist.includes("scripts/payswap/linux/run-p2-acceptance.cjs"), true);
+  assert.equal(checklist.includes("uname -a output"), true);
+  assert.equal(checklist.includes("winver"), false);
+  assert.equal(checklist.includes("\\"), false);
+  // 模板落盘即待填回执：13 个步骤标题齐备
+  assert.equal((checklist.match(/^##\s*Step\s*\d+\./gm) || []).length, 13);
+});

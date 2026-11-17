@@ -624,7 +624,7 @@ async function stageConversationAcceptance(context) {
   const dir = stageDir(context.artifactsDir, "conversation-acceptance");
   await fsp.mkdir(dir, { recursive: true });
   const checklistPath = path.join(dir, "manual-new-task-checklist.md");
-  await fsp.writeFile(checklistPath, renderManualChecklist(), "utf8");
+  await fsp.writeFile(checklistPath, renderManualChecklist("linux"), "utf8");
 
   const evidencePath =
     context.options.manualEvidence || path.join(dir, "manual-new-task-evidence.md");
@@ -637,7 +637,7 @@ async function stageConversationAcceptance(context) {
     };
   }
   const text = await fsp.readFile(evidencePath, "utf8");
-  const problems = validateManualEvidence(text, context.secret);
+  const problems = validateManualEvidence(text, context.secret, "linux");
   if (problems.length > 0) {
     return {
       verdict: "FAIL",
@@ -912,4 +912,5 @@ module.exports = {
   parseProbeJson,
   parseResultHarness,
   validateManualEvidence,
+  renderManualChecklist,
 };

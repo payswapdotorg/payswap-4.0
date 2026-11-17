@@ -120,13 +120,41 @@
    sessions the leg rebuilt in-place — verdicts identical to §8 (build PASS /
    storage PASS 129/129 + probe gnome_libsecret / e2e PASS 7/7 / the two
    operator-gated stages honest SKIP), manifest 8/8 OK, ~5.6 min. Registered
-   as live-acceptance-evidence §8.5 (incl. one operational note: runner exit
-   phase can hang on a lingering child handle after manifest-last completion —
-   non-blocking, follow-up hygiene item). PR #46 defect verification
-   re-confirmed on this face: 915242dc covers RedactingLog cross-chunk carry,
-   13-step evidence strictness, preflight fail-closed; the Linux runner
-   consumes the same platform-neutral modules (runner-redaction.cjs /
-   manual-evidence.cjs / acceptance-verdicts.cjs).
+   as live-acceptance-evidence §8.5. PR #46 defect verification re-confirmed
+   on this face: 915242dc covers RedactingLog cross-chunk carry, 13-step
+   evidence strictness, preflight fail-closed; the Linux runner consumes the
+   same platform-neutral modules (runner-redaction.cjs / manual-evidence.cjs /
+   acceptance-verdicts.cjs).
+8. **Exit-hygiene observation CLOSED (runner exonerated, 2026-11-17 late)**:
+   the §8.5 first-draft "lingering child handle" suspicion was corrected after
+   four controlled stage re-runs (both output forms) + one instrumented
+   zero-assumption full run (timeline + process snapshot to files): the runner
+   exits cleanly in every form (335s, rc=2, zero survivors, shell completes);
+   the stall lives in the TL sandbox tool-harness layer (large-volume direct-
+   pipe EOF), not the runner. Documented form (file redirection) unaffected.
+9. **Second recycle, worse mode — wipe→bundle-restore→full run GREEN**
+   (2026-11-17T19:15:25Z): the next sandbox recycle emptied the repo working
+   tree entirely; branch restored from the delivered bundle at `5bdd6900`,
+   cold `pnpm install --frozen-lockfile` 58.7s, full zero-assumption run all
+   green again (3 PASS + 2 honest SKIP, manifest 8/8) — the delivered bundle's
+   restorability is now proven by execution, registered in §8.5.
+10. **Independent security review of 915242dc DONE — 2 findings, both fixed
+    in-branch** (record: `docs/payswap/p2/security-review-915242dc.md`;
+    probes in-repo: `scripts/payswap/security-review-915242dc.probes.mjs`).
+    F1 (high): manual-evidence attestation hard-coded the winver `10.0.<build>`
+    form → a Linux-leg 13-step receipt could NEVER pass (and the linux-leg
+    checklist template pointed at the windows runner with backslashes) —
+    fixed by platform-parameterizing manual-evidence.cjs (default win32 = the
+    windows-matrix contract; linux runner passes "linux": kernel-version
+    platform + Windows-string rejection; legs not interchangeable). F2
+    (medium): Operator/Date-time emptiness checks still used the `\s*\S`
+    cross-line borrow (the exact defect class 915242dc-B fixed for Observed)
+    plus a Date/time alternation-order slip — fixed with `[ \t]` scoping +
+    longest-alternative-first. The redaction engine itself held under all
+    2036 adversarial probes (every split boundary, byte-by-byte, fuzz,
+    self-overlap) — no findings. After fixes: windows matrix 25/25, linux
+    matrix 19/19, probes 2052/2052 blocked, 0 new lint warnings on changed
+    files. Review no longer blocks the PR #46 merge.
 
 ## Remaining (P2-Linux closure) — operator-controlled, precisely identified
 
