@@ -66,6 +66,7 @@ node scripts/payswap/live/build-live-harness.mjs
 exec dbus-run-session -- bash -c '
   set -euo pipefail
   export XDG_CURRENT_DESKTOP=GNOME
+  export DISPLAY='"${DISPLAY:-:99}"'
   export ZCODE_E2E_STRIPE_LIVE_KEY
   export ZCODE_PAYSWAP_LIVE_OUT_DIR='"$REPO_DIR"'/packages/desktop/.live-harness/out
   printf "\n" | gnome-keyring-daemon --unlock --replace --components=secrets --daemonize
