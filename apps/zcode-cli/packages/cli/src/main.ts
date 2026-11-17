@@ -1,4 +1,5 @@
 import { STORAGE_MIGRATION_COMMAND } from "@zcode/shared/sqlite-migrations";
+import { readCapturedPayswapBrokerHelperSupply } from "@zcode/shared/runtime-env";
 import { interceptTuiStderr, isTuiInvocation } from "./tui-stderr.js";
 import { interceptKnownRuntimeWarnings } from "./runtime-warnings.js";
 import { installStderrConsoleBoundary } from "./protocol-console.js";
@@ -53,9 +54,15 @@ async function main(): Promise<void> {
     if (argv[0] !== STORAGE_MIGRATION_COMMAND && !argv.includes("--prepare-storage"))
       // ADR-15 D15.3：同一注入位（runtime-tools 之后 —— 本进程 process.env 的
       // host-only 键面；两键经 D13.9 双表剔除不进任何子进程 env）。
+      // helper 供给的 operator-wins 次序：快照（清洗前捕获的桌面下发/operator 键）
+      // 展布在 SEA 注入之后 —— SEA 链 operator 未设键时 SEA manifest 值生效，
+      // dev 桌面链（非 SEA，ensure 恒 {}）由快照供给到达 lazy boot 的 relay 解析
+      // （resolveDefaultPeerRelayHelper 读 process.env —— 2026-11-17 native-Windows
+      // 实测：无此展布，dev 链 win32 永远 degraded_refusing）。
       Object.assign(process.env, {
         ...(await ensureSeaRuntimeTools()),
         ...(await ensureSeaPayswapBrokerPeerHelper()),
+        ...readCapturedPayswapBrokerHelperSupply(),
       });
     lifecycle?.signal.throwIfAborted();
     const context = {
