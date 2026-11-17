@@ -82,7 +82,7 @@ node scripts\payswap\windows\run-p2-acceptance.cjs --stage stripe-live `
 | 阶段 | 证明什么 | 何时算过 |
 |---|---|---|
 | `windows-build` | 原生 Windows 构建链（frozen install + CI 证明的 `build:bootstrap` 序列） | 两步 exit 0 |
-| `windows-secure-storage` | **真 Electron DPAPI**：`isEncryptionAvailable` + 加解密往返（探针）；生产键仓法则回归（vitest 4 套件）；harness 平台门回归（win32 永不碰 Linux-only API） | 三步全绿 |
+| `windows-secure-storage` | **真 Electron DPAPI**：`isEncryptionAvailable` + 加解密往返（探针）；生产 P2 法则电池（vitest `--project engineering`，CI 同款 13 套件）；harness 平台门回归（win32 永不碰 Linux-only API） | 三步全绿 |
 | `windows-desktop-e2e` | 真窗口连接旅程（`payswap-connection-ui` spec：fail-closed 拒绝、connected + at-rest 密文、refresh 闭集、revoke、corrupted-key restart） | wdio exit 0 |
 | `stripe-live` | 真键真网：E2E live spec（connect→**verified**→revoke，stronger-than-CI）+ 对话面 harness（`RESULT_HARNESS=0` = 四类别数据经直连+桥两跳） | spec 绿 **且** RESULT_HARNESS=0 |
 | `conversation-acceptance` | 交互式 New Task 全流程（13 步清单：连接→at-rest→重启持久→四类别自然语言问答→无泄漏→撤销→撤销后 typed 拒绝） | 回执文件校验通过 |
