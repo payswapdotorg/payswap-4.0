@@ -236,6 +236,9 @@ export async function bootPayswapBroker(options: PayswapBrokerBootOptions): Prom
     ts: Date.now(),
     outcome: "boot",
     code: probe.verified ? "peer_verified" : "degraded_refusing",
+    // §11(3) 的"原因可操作员看见"落到审计行本身（relay 失败原因 vs reader 缺席，
+    // 两条 degraded 路径的修复动作完全不同 —— 没有这一行，live 面只有 code 没有因）。
+    ...(degradedReason ? { reason: degradedReason } : {}),
     instanceId: null,
     seq: null,
     op: null,
