@@ -59,7 +59,10 @@ const PROBE_SCRIPT = path.join(REPO_ROOT, "scripts", "payswap", "electron-safe-s
 const GATE_TEST = path.join(REPO_ROOT, "scripts", "payswap", "live", "safe-storage-backend-gate.test.mjs");
 const LIVE_MAIN = path.join(REPO_ROOT, "scripts", "payswap", "live", "main.cjs");
 const BUILD_LIVE_HARNESS = path.join(REPO_ROOT, "scripts", "payswap", "live", "build-live-harness.mjs");
-const REDACTION = "<redacted-live-key>";
+const MANUAL_EVIDENCE = require("./manual-evidence.cjs");
+const { MANUAL_CHECKLIST_ITEMS, CREDENTIAL_PATTERNS, validateManualEvidence, renderManualChecklist } = MANUAL_EVIDENCE;
+const RUNNER_REDACTION = require("./runner-redaction.cjs");
+const { REDACTION, longestSecretPrefixSuffix, RedactingLog, leakScan, sanitizeLeaks } = RUNNER_REDACTION;
 
 const STAGE_ORDER = [
   "windows-build",
@@ -127,83 +130,6 @@ function quoteForWindowsShell(token) {
   return token;
 }
 
-/** secret 在 pending 尾部的最长「真前缀」后缀长度（0..secret.length-1）——
- *  跨 chunk 分裂的凭据前半会停在这里，直到后续 chunk 补全或 flush 兜底置换。 */
-function longestSecretPrefixSuffix(text, secret) {
-  const max = Math.min(secret.length - 1, text.length);
-  for (let len = max; len >= 1; len -= 1) {
-    if (secret.startsWith(text.slice(text.length - len))) return len;
-  }
-  return 0;
-}
-
-class RedactingLog {
-  constructor(filePath, secret, options = {}) {
-    this.filePath = filePath;
-    this.secret = secret && secret.length > 0 ? secret : null;
-    this.chunks = [];
-    this.scrubbed = 0;
-    this.echo = options.echo !== false;
-    this.pending = ""; // 未定稿的原文尾部（可能携带分裂凭据的前缀，永不落盘/回显）
-  }
-  /** 流式置换：完整命中即刻置换；尾部最长 secret.length-1 字符扣留待续。
-   *  任何时刻 emitted+pending 的拼接与原文流一致，但 emitted 永不含完整键值 ——
-   *  单 chunk、双 chunk、逐字节分裂、stderr 混流均覆盖。 */
-  append(text) {
-    if (!text) return;
-    this.pending += text;
-    let emitLen;
-    if (this.secret) {
-      const last = this.pending.lastIndexOf(this.secret);
-      if (last >= 0) {
-        const afterStart = last + this.secret.length;
-        const rest = this.pending.slice(afterStart);
-        emitLen = afterStart + rest.length - longestSecretPrefixSuffix(rest, this.secret);
-        this.scrubbed += 1;
-      } else {
-        emitLen = this.pending.length - longestSecretPrefixSuffix(this.pending, this.secret);
-      }
-    } else {
-      emitLen = this.pending.length;
-    }
-    const emitRaw = this.pending.slice(0, emitLen);
-    this.pending = this.pending.slice(emitLen);
-    const emitSafe = this.secret ? emitRaw.split(this.secret).join(REDACTION) : emitRaw;
-    if (emitSafe) {
-      this.chunks.push(emitSafe);
-      if (this.echo) process.stdout.write(emitSafe);
-    }
-  }
-  /** flush：扣留尾部兜底置换（此处必然无后续 chunk，可全量产出），再落盘。 */
-  async flush() {
-    let emitSafe;
-    if (this.secret) {
-      const last = this.pending.lastIndexOf(this.secret);
-      if (last >= 0) {
-        this.scrubbed += 1;
-        emitSafe = this.pending.slice(0, last) + REDACTION + this.pending.slice(last + this.secret.length);
-      } else {
-        emitSafe = this.pending;
-      }
-      this.pending = "";
-    } else {
-      emitSafe = this.pending;
-      this.pending = "";
-    }
-    if (emitSafe) {
-      this.chunks.push(emitSafe);
-      if (this.echo) process.stdout.write(emitSafe);
-    }
-    await fsp.mkdir(path.dirname(this.filePath), { recursive: true });
-    const body = this.chunks.join("");
-    if (this.secret && body.includes(this.secret)) {
-      // 纵深防御：理论上不可达 —— 命中即说明置换不变量被破坏，绝不写原文。
-      throw new Error(`redaction invariant violated for ${this.filePath}`);
-    }
-    await fsp.writeFile(this.filePath, body, "utf8");
-  }
-}
-
 /** 子进程执行 + 全量日志捕获（stdout/stderr 合流、键值置换、超时保护）。 */
 function execStep(log, command, args, options = {}) {
   return new Promise((resolve) => {
@@ -255,47 +181,6 @@ function execStep(log, command, args, options = {}) {
 async function sha256File(filePath) {
   const content = await fsp.readFile(filePath);
   return crypto.createHash("sha256").update(content).digest("hex");
-}
-
-/** 工件字节级泄漏自检（返回命中的文件名列表；空 = 干净）。 */
-async function leakScan(dir, secret) {
-  if (!secret) return [];
-  const hits = [];
-  async function walk(current) {
-    for (const entry of await fsp.readdir(current, { withFileTypes: true })) {
-      const full = path.join(current, entry.name);
-      if (entry.isDirectory()) await walk(full);
-      else {
-        const buf = await fsp.readFile(full);
-        if (buf.includes(Buffer.from(secret, "utf8"))) hits.push(path.relative(dir, full));
-      }
-    }
-  }
-  await walk(dir);
-  return hits;
-}
-
-/** 污染工件就地消毒（命中字节置换为 REDACTION 标记）；返回已消毒文件列表。
- *  manifest 与 summary 只允许在消毒后复扫干净的艺术品上产生。 */
-async function sanitizeLeaks(dir, secret) {
-  if (!secret) return [];
-  const sanitized = [];
-  async function walk(current) {
-    for (const entry of await fsp.readdir(current, { withFileTypes: true })) {
-      const full = path.join(current, entry.name);
-      if (entry.isDirectory()) await walk(full);
-      else {
-        const buf = await fsp.readFile(full);
-        const needle = Buffer.from(secret, "utf8");
-        if (buf.includes(needle)) {
-          await fsp.writeFile(full, buf.toString("utf8").split(secret).join(REDACTION), "utf8");
-          sanitized.push(path.relative(dir, full));
-        }
-      }
-    }
-  }
-  await walk(dir);
-  return sanitized;
 }
 
 /** preflight JSON 形状校验（纯函数）—— 形状不对 = 整个 run fail-closed。 */
@@ -362,110 +247,6 @@ async function runPreflight(options = {}) {
 // docs/payswap/p2/ENVIRONMENT-READINESS-HANDOFF.md 同源同序）
 // ---------------------------------------------------------------------------
 
-const MANUAL_CHECKLIST_ITEMS = [
-  ["1", "Start the real PaySwap desktop application (pnpm dev:desktop:prod, or the installed package)", "the app window opens normally"],
-  ["2", "Open the PaySwap connections section in Settings", "the section renders; the connect form is present"],
-  ["3", "Connect the Stripe test account with the real restricted read-only key", "the connection lands connected (UI feedback)"],
-  ["4", "Inspect the local credential files: ciphertext, never plaintext", "credentials.json contains the connectionId, zero key plaintext"],
-  ["5", "Refresh the account", "evidence refreshes to verified; no re-entry of the key required"],
-  ["6", "Restart the application (full quit, then start again)", "the connection persists; no re-connect needed"],
-  ["7", "Refresh again after restart", "verified; the stored credential is used"],
-  ["8", "Open the New Task conversation", "the conversation surface opens normally"],
-  ["9", "Ask a natural-language question that requires balance, payment objects, customer summary and disputes data", "the answer reflects real Stripe data (consistent with the dashboard or harness artifacts)"],
-  ["10", "Confirm the app used the production PaySwap tools and bridge (no bypass API path)", "the exchange ran through the New Task workflow; no separate Stripe chat surface"],
-  ["11", "Check the conversation and logs for customer PII / credential leakage", "no key material, no sensitive PII in the transcript"],
-  ["12", "Revoke the connection", "final state revoked; the local secret is deleted"],
-  ["13", "Attempt a read after revocation", "typed refusal (fail-closed), not a crash"],
-];
-
-function renderManualChecklist() {
-  const lines = [
-    "# P2 conversation-acceptance — manual New Task evidence",
-    "",
-    "> Fill every `Result:` line below with what you actually observed, attach sanitized",
-    "> screenshots next to this file, then save as `manual-new-task-evidence.md` and re-run:",
-    "> `node scripts\\payswap\\windows\\run-p2-acceptance.cjs --stage conversation-acceptance --manual-evidence <path>`",
-    "> Never paste the restricted key or customer PII into this file.",
-    "",
-  ];
-  for (const [n, action, expected] of MANUAL_CHECKLIST_ITEMS) {
-    lines.push(`## Step ${n}. ${action}`);
-    lines.push(`- Expected: ${expected}`);
-    lines.push(`- Observed: `);
-    lines.push(`- Result: `);
-    lines.push("");
-  }
-  lines.push("## Attestation");
-  lines.push("- Operator: ");
-  lines.push("- Date/time (local): ");
-  lines.push("- Platform (winver output): ");
-  lines.push("- App commit SHA: ");
-  lines.push("");
-  return lines.join("\n");
-}
-
-const CREDENTIAL_PATTERNS = [/rk_test_/, /rk_live_/, /sk_test_/, /sk_live_/, /whsec_/];
-
-/** 人工回执严格校验（defect B 关闭）：报告存在 ≠ 验收成功。
- *  - 恰好 13 个步骤标题（Step 1..13），无缺、无重、无未知编号；
- *  - 每步有非空 Observed 且 Result 恰为 PASS（FAIL/BLOCKED/SKIP/空/未知值一律不过）；
- *  - attestation 四要素齐备（operator、date/time、Windows 版本号、40 hex commit SHA）；
- *  - 任何凭据材料形态命中即拒。 */
-function validateManualEvidence(text, secret) {
-  const problems = [];
-  const stepHeadingRe = /^##\s*Step\s*(\d+)\./gm;
-  const headings = [];
-  let m;
-  while ((m = stepHeadingRe.exec(text)) !== null) {
-    headings.push({ n: Number.parseInt(m[1], 10), index: m.index });
-  }
-  const unknown = headings.filter((h) => h.n < 1 || h.n > MANUAL_CHECKLIST_ITEMS.length);
-  if (unknown.length > 0) problems.push(`unknown step number(s) present: ${unknown.map((h) => h.n).join(", ")}`);
-  for (let n = 1; n <= MANUAL_CHECKLIST_ITEMS.length; n += 1) {
-    const found = headings.filter((h) => h.n === n);
-    if (found.length === 0) {
-      problems.push(`missing step heading: Step ${n}`);
-      continue;
-    }
-    if (found.length > 1) {
-      problems.push(`duplicate step heading: Step ${n} appears ${found.length} times`);
-      continue;
-    }
-    const start = found[0].index;
-    const nextHeading = text.indexOf("\n## ", start + 1);
-    const section = nextHeading >= 0 ? text.slice(start, nextHeading) : text.slice(start);
-    // 注意 [ \t]*：\s* 会跨行吞掉换行后下一行的首个非空白，令空 Observed 误判为有值。
-    if (!/-\s*Observed:[ \t]*\S/.test(section)) {
-      problems.push(`Step ${n}: 'Observed:' is empty — every step needs its own observation`);
-    }
-    const resultMatches = section.match(/-\s*Result:[^\n]*/g) || [];
-    if (resultMatches.length === 0) {
-      problems.push(`Step ${n}: no 'Result:' line`);
-    } else {
-      for (const line of resultMatches) {
-        const value = (line.match(/-\s*Result:[ \t]*(\S+)/) || [])[1];
-        if (value !== "PASS") {
-          problems.push(`Step ${n}: Result is '${value || "(empty)"}' — only 'Result: PASS' is accepted (FAIL/BLOCKED/SKIP never passes)`);
-        }
-      }
-    }
-  }
-  if (!/Operator:\s*\S/.test(text)) problems.push("Attestation 'Operator:' is empty");
-  if (!/(Date\/time|Date\/time \(local\)):\s*\S/.test(text)) problems.push("Attestation 'Date/time' is empty");
-  const platformLine = text.match(/Platform[^:\n]*:\s*(\S[^\n]*)/);
-  if (!platformLine || !/10\.0\.\d+/.test(platformLine[1])) {
-    problems.push("Attestation 'Platform' must contain the exact Windows version/build (10.0.<build> from winver)");
-  }
-  const shaLine = text.match(/App commit SHA:\s*(\S+)/);
-  if (!shaLine || !/^[0-9a-f]{40}$/.test(shaLine[1])) {
-    problems.push("Attestation 'App commit SHA' must be the exact 40-hex commit SHA of the tested application");
-  }
-  for (const pattern of CREDENTIAL_PATTERNS) {
-    if (pattern.test(text)) problems.push(`credential material detected in evidence (pattern ${pattern}) — sanitize and re-run`);
-  }
-  if (secret && text.includes(secret)) problems.push("evidence contains the live key itself");
-  return problems;
-}
 
 // ---------------------------------------------------------------------------
 // 阶段实现
@@ -506,25 +287,37 @@ async function stageWindowsSecureStorage(context) {
   });
   steps.push({ name: "electron safeStorage DPAPI probe (exit 0 = available + round-trip ok)", code: probe.code === 0 ? 0 : 1 });
 
-  // 2) 生产键仓法则回归（win32 平台值流入测试矩阵）。
-  log.append("\n[runner] step: production key-store law regression (vitest, win32)\n");
+  // 2) 生产键仓法则回归（win32 平台值流入测试矩阵）——CI 同款调用面：
+  //    仓库根 `pnpm exec vitest run --project engineering <repo 相对路径>`（ci.yml
+  //    "Payswap P2 engineering law battery"）。--filter exec 形态在包目录内找不
+  //    到 workspace 工程（No test files found），不是合法的调用面。
+  log.append("\n[runner] step: production P2 law battery (vitest --project engineering, CI-canonical, win32)\n");
   const vitest = await execStep(
     log,
     "pnpm",
     [
-      "--filter",
-      "@zcode/desktop",
       "exec",
       "vitest",
       "run",
-      "test/payswap-psp-key-store.test.ts",
-      "test/payswap-psp-storage-backend-policy.test.ts",
-      "test/payswap-account-runtime-wiring.test.ts",
-      "test/payswap-account-connection-ipc.test.ts",
+      "--project",
+      "engineering",
+      "packages/desktop/test/payswap-account-connection-ipc.test.ts",
+      "packages/desktop/test/payswap-account-runtime-wiring.test.ts",
+      "packages/desktop/test/payswap-psp-key-store.test.ts",
+      "packages/desktop/test/payswap-psp-warmup.test.ts",
+      "packages/desktop/test/payswap-psp-storage-backend-policy.test.ts",
+      "packages/desktop/test/payswap-reader-bridge-entry.test.ts",
+      "packages/desktop/test/payswap-reader-bridge-relay.test.ts",
+      "packages/services/test/payswap-account-data.test.ts",
+      "packages/services/test/payswap-account-runtime.test.ts",
+      "packages/services/test/payswap-account-service.test.ts",
+      "packages/services/test/payswap-credential-security.test.ts",
+      "packages/services/test/payswap-stripe-read-back.test.ts",
+      "packages/ui/test/payswap-connection-ui-presentation.test.ts",
     ],
     { timeoutMs: 15 * 60 * 1000 },
   );
-  steps.push({ name: "vitest: payswap key-store/storage-policy/runtime-wiring/ipc law suites", code: vitest.code });
+  steps.push({ name: "vitest: P2 engineering law battery (13 suites, CI-canonical surface)", code: vitest.code });
 
   // 3) harness 平台门回归（win32 路径永不触碰 Linux-only API）。
   log.append("\n[runner] step: harness platform-gate regression (node --test)\n");
@@ -912,7 +705,6 @@ async function main() {
 
   // 汇总表 + 退出码同源于 results（泄漏裁决已在其上生效 —— 泄漏绝不可能退出 0）。
   const exitCode = computeExitCode(options.stages, results, assumed);
-  let worst = 0;
   console.log("\n================ P2 acceptance summary ================");
   for (const stageId of options.stages) {
     const verdict = results[stageId] ? results[stageId].verdict : "NOT-RUN";
@@ -980,4 +772,5 @@ module.exports = {
   computeExitCode,
   MANUAL_CHECKLIST_ITEMS,
   CREDENTIAL_PATTERNS,
+  manualEvidenceModule: MANUAL_EVIDENCE,
 };
