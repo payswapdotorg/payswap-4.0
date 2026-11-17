@@ -127,3 +127,81 @@ fail-loud 修补验证（原件为根目录结构化编译 + 手工 sed）；(c)
 
 加固不改变 §1 已登记事实与 §2 哈希基准；重建工具链「尚未重跑」的边界
 （§4 末段）保持不变。
+
+## 7. 环境就绪审计（2026-11-17，TL Linux 沙箱 —— Linux 补充证据，非 Windows 验收）
+
+> 审计与整改全文见 [environment-readiness-report.md](environment-readiness-report.md)；
+> 交接执行手册见 [ENVIRONMENT-READINESS-HANDOFF.md](ENVIRONMENT-READINESS-HANDOFF.md)。
+> 本节只登记**实际执行过**的命令与结局；不重复里程碑状态裁决（roadmap 仍为唯一
+> 权威）。**明确非声明**：本节无任何 Windows 证明、无任何真实 Stripe 调用（TL
+> 环境无键 —— §7.4）、无任何秘密面。
+
+### 7.1 审计环境与基线
+
+- 环境：TL Linux 沙箱（Debian 13 trixie 容器，内核 5.10.134，x86_64，headless：
+  `DISPLAY`/`WAYLAND_DISPLAY` 空，2 vCPU / 4.1 GB RAM）。**非**原生 Windows/WSL2。
+- 基线：`main` @ `8d595ed32cd48858ecfe3f0b32f6cc4996caa93d`（PR #44），工作树干净。
+- 工具版本：node v24.22.3、git 2.47.3、pnpm 10.33.2（corepack 安装 —— 审计时
+  缺席，属环境配置项非仓库缺陷）。
+
+### 7.2 harness 平台缺陷的确认与收口（本 PR）
+
+- **确认**：`scripts/payswap/live/main.cjs` 步骤 1 无条件调用
+  `safeStorage.getSelectedStorageBackend()` —— Electron 的 Linux-only API（源码
+  `#if BUILDFLAG(IS_LINUX)` 编译期裁剪）；win32 运行时上方法不存在 → `TypeError`
+  → live harness 在原生 Windows 无法起步。生产键仓（`pspCredentialKeyStore.ts`）
+  的同名查询本就按平台门住（`pspSafeStorageBackendPolicy` 法则 2）—— 缺陷纯
+  harness 侧；伴生死缺省值（win32→"dpapi"，无 API 可比较）一并移除。
+- **收口**：`scripts/payswap/live/safe-storage-backend-gate.cjs`（平台感知门；
+  linux=后端名闭集 / win32=DPAPI 可用性 / darwin=Keychain 可用性 / 其余
+  fail-closed；不发明 Windows 后端名 API）+ `main.cjs` 步骤 1 改用该门（Linux
+  行为逐字节保持）+ `safe-storage-backend-gate.test.mjs`（12 行回归矩阵 ——
+  win32/darwin 以 throwing spy 钉死「永不调用 Linux-only API」）+ CI 挂载
+  （`payswap-roadmap.yml` 新步骤）。
+- **新增工具链**（Windows 验收执行面）：`scripts/payswap/preflight-env.cjs`（预检
+  + 五分类可执行裁决）、`scripts/payswap/electron-safe-storage-probe.cjs`（真
+  Electron DPAPI/Keychain/Libsecret 探针）、`scripts/payswap/windows/run-p2-acceptance.cjs`
+  （五分类验收 runner：PASS/FAIL/BOUNDARY/SKIP/MANUAL-PENDING 闭集；SKIP 永不让
+  run 变绿；键值落盘前置换 + 工件字节级泄漏自检 + SHA-256 manifest）。
+
+### 7.3 实际执行的命令与结局（全部 Linux 沙箱；TL 环境补充证据）
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `git clone https://github.com/payswapdotorg/payswap-4.0.git`（匿名） | 0 | 365 MB 工作副本 |
+| `git rev-parse HEAD` / `git status --short` | 0 | `8d595ed3…`；干净 |
+| `corepack prepare pnpm@10.33.2 --activate` | 0 | `pnpm 10.33.2` |
+| `pnpm install --frozen-lockfile` | 0 | 58.3 s；node-pty Linux 重建完成 |
+| `pnpm lint` | 0 | 0 errors（97 条既有 warnings —— 门只看 errors） |
+| `node scripts/architecture/architecture-check.mjs check` | 0 | violations 0 |
+| `node scripts/payswap/validate-roadmap.mjs` | 0 | 单一权威 roadmap 通过 |
+| `node --test scripts/payswap/validate-roadmap.test.mjs` | 0 | 全绿 |
+| `node --test scripts/payswap/live/safe-storage-backend-gate.test.mjs`（新） | 0 | **12/12** |
+| `pnpm exec vitest run --project engineering packages/desktop/test/payswap-psp-key-store.test.ts packages/desktop/test/payswap-psp-storage-backend-policy.test.ts packages/desktop/test/payswap-account-runtime-wiring.test.ts packages/desktop/test/payswap-account-connection-ipc.test.ts packages/desktop/test/payswap-psp-warmup.test.ts packages/desktop/test/payswap-reader-bridge-entry.test.ts` | 0 | **42/42** |
+| `node scripts/payswap/preflight-env.cjs`（沙箱自跑） | 1 | **按设计 fail-closed**（pnpm 当时缺席/磁盘 7.6 GB 低于 8 GB 线/electron 当时未装 —— hint 逐项给出；Windows 分类 N/A、stripe-live GATED） |
+| `node scripts/payswap/windows/run-p2-acceptance.cjs --dry-run`（沙箱） | 2 | **按设计不转绿**：五分类全 SKIP（Linux + 无键），汇总表明示 NOT GREEN |
+| `node scripts/payswap/windows/run-p2-acceptance.cjs --stage bogus` | 3 | 用法错误路径正确 |
+| `curl -sS -o /dev/null -w '%{http_code}' https://api.stripe.com/v1/balance` | 0 | `401`（无认证预期应答 —— 可达性） |
+| `node --check`（新/改 .cjs × 4：gate、main、preflight、probe、runner） | 0 | 语法面通过 |
+
+消毒工件（仓内登记，SHA-256 基准）：
+
+- `evidence/environment-readiness/preflight-linux-2026-11-17.json` ——
+  SHA-256 `bfa1a0e8e1bb3385da1ecae5693577df3752d0dd543890a622809c15dc7ba179`
+- `evidence/environment-readiness/runner-dryrun-summary-linux-2026-11-17.json` ——
+  SHA-256 `814cd7ae7d774e30ad35f2f9e026f3519e3de7fc1a243fb8728b09bec92a980a`
+- （两件的生成时刻为整改工作树（本 PR 内容）；工件内 `commit` 字段为当时 HEAD
+  `8d595ed3`，如实录。）
+
+### 7.4 如实边界（本节证据**不**构成的事项）
+
+- 原生 Windows 验收（DPAPI/桌面/E2E/对话面）：**未执行** —— TL 沙箱结构性
+  BLOCKED；待本地 Windows agent 按 handoff 执行 `windows-build` →
+  `windows-secure-storage` → `windows-desktop-e2e` → `stripe-live` →
+  `conversation-acceptance`，证据回传后在本登记面开 §8（Windows）小节。
+- 真实 Stripe 调用：**未执行**（TL 环境无 `ZCODE_E2E_STRIPE_LIVE_KEY`；聊天转录
+  非合格秘密通道 —— 键须在验收机本地经 0600 env 文件供给）。
+- §1.3 的账户激活边界**保持不变**：四类别数据落地仍待 Stripe 邮箱验证激活；
+  激活后 `stripe-live` 分类复跑即本登记面的终局运行。
+- P2 里程碑状态：**不变**（roadmap P2 行保持 `in_progress` —— 环境就绪 ≠ P2
+  完成）。

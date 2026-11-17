@@ -1,0 +1,135 @@
+{
+  "startedAt": "2026-11-17T12:50:11.265Z",
+  "platform": "linux",
+  "checks": [
+    {
+      "id": "os",
+      "title": "Operating system",
+      "status": "pass",
+      "detail": "platform=linux arch=x64 release=5.10.134-013.15.kangaroo.al8.x86_64 hostname=c-6afc3a8d-140d72b5-a7f2a39783dc | PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\" | container=yes",
+      "hint": null
+    },
+    {
+      "id": "node",
+      "title": "Node.js version (repo engine)",
+      "status": "pass",
+      "detail": "node=24.22.3 (repo requires >=24.0.0)",
+      "hint": null
+    },
+    {
+      "id": "pnpm",
+      "title": "pnpm version (repo packageManager)",
+      "status": "pass",
+      "detail": "pnpm=10.33.2 (repo pins 10.33.2)",
+      "hint": null
+    },
+    {
+      "id": "git",
+      "title": "git presence",
+      "status": "pass",
+      "detail": "git version 2.47.3",
+      "hint": null
+    },
+    {
+      "id": "build-tools",
+      "title": "build toolchain (linux)",
+      "status": "pass",
+      "detail": "gcc=present make=present",
+      "hint": null
+    },
+    {
+      "id": "resources",
+      "title": "RAM / free disk",
+      "status": "fail",
+      "detail": "cpus=2 ram=4.1GB free-disk=4.1GB",
+      "hint": "free at least 8GB (workspace install + electron + build artifacts)"
+    },
+    {
+      "id": "desktop-session",
+      "title": "Display session (linux live leg)",
+      "status": "warn",
+      "detail": "DISPLAY='' WAYLAND_DISPLAY=''",
+      "hint": "linux live recipes (vm-run-live.sh / vm-harness-only.sh) provision their own dbus/gnome-keyring/Xvfb leg — run them inside the VM recipe, not a bare headless shell"
+    },
+    {
+      "id": "electron",
+      "title": "Electron runtime (repo desktop pin)",
+      "status": "pass",
+      "detail": "electron=44.7.0 cli=node_modules/electron/cli.js (desktop pins 44.7.0)",
+      "hint": null
+    },
+    {
+      "id": "safe-storage-probe",
+      "title": "Electron safeStorage runtime probe",
+      "status": "skip",
+      "detail": "headless linux without a display — the vm live recipes provision Xvfb themselves; DPAPI proof is a win32-runner stage",
+      "hint": null
+    },
+    {
+      "id": "stripe-network",
+      "title": "Stripe API network reachability",
+      "status": "pass",
+      "detail": "GET https://api.stripe.com/v1/balance (unauthenticated) -> HTTP 401 (401 expected — proves reachability)",
+      "hint": null
+    },
+    {
+      "id": "stripe-live-key",
+      "title": "ZCODE_E2E_STRIPE_LIVE_KEY presence (value never shown)",
+      "status": "fail",
+      "detail": "absent",
+      "hint": "supply the restricted read-only test key (rk_test_*) via a 0600 env file — never via command lines or chat transcripts"
+    },
+    {
+      "id": "stripe-auth-probe",
+      "title": "Stripe authorized read-back probe (key never shown)",
+      "status": "skip",
+      "detail": "no live key supplied",
+      "hint": null
+    }
+  ],
+  "stages": [
+    {
+      "id": "windows-build",
+      "applicable": false,
+      "executable": false,
+      "reasons": [
+        "platform is linux — the windows-build stage proves the native Windows toolchain"
+      ]
+    },
+    {
+      "id": "windows-secure-storage",
+      "applicable": false,
+      "executable": false,
+      "reasons": [
+        "platform is linux — DPAPI proof is a win32-only stage"
+      ]
+    },
+    {
+      "id": "windows-desktop-e2e",
+      "applicable": false,
+      "executable": false,
+      "reasons": [
+        "platform is linux — desktop E2E needs the native Windows interactive desktop"
+      ]
+    },
+    {
+      "id": "stripe-live",
+      "applicable": true,
+      "executable": false,
+      "reasons": [
+        "restricted test key (rk_test_*) not verified present",
+        "authorized read-back probe not green"
+      ]
+    },
+    {
+      "id": "conversation-acceptance",
+      "applicable": false,
+      "executable": false,
+      "reasons": [
+        "platform is linux — the New Task conversational acceptance runs on the native Windows desktop app"
+      ]
+    }
+  ],
+  "failCount": 2,
+  "exitCode": 1
+}

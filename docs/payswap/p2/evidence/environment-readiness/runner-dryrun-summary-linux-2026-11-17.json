@@ -1,0 +1,47 @@
+{
+  "runner": "payswap-p2-acceptance",
+  "startedAt": "2026-11-17T12-50-10-709Z",
+  "platform": "linux",
+  "platformRelease": "5.10.134-013.15.kangaroo.al8.x86_64",
+  "node": "24.22.3",
+  "commit": "8d595ed32cd48858ecfe3f0b32f6cc4996caa93d",
+  "dryRun": true,
+  "assumedStagesPassed": [],
+  "secretPresent": false,
+  "stages": {
+    "windows-build": {
+      "verdict": "SKIP",
+      "steps": [],
+      "note": "platform is linux — the windows-build stage proves the native Windows toolchain",
+      "logPath": null
+    },
+    "windows-secure-storage": {
+      "verdict": "SKIP",
+      "steps": [],
+      "note": "platform is linux — DPAPI proof is a win32-only stage",
+      "logPath": null
+    },
+    "windows-desktop-e2e": {
+      "verdict": "SKIP",
+      "steps": [],
+      "note": "platform is linux — desktop E2E needs the native Windows interactive desktop",
+      "logPath": null
+    },
+    "stripe-live": {
+      "verdict": "SKIP",
+      "steps": [],
+      "note": "restricted test key (rk_test_*) not verified present; authorized read-back probe not green",
+      "logPath": null
+    },
+    "conversation-acceptance": {
+      "verdict": "SKIP",
+      "steps": [],
+      "note": "platform is linux — the New Task conversational acceptance runs on the native Windows desktop app",
+      "logPath": null
+    }
+  },
+  "leakScan": {
+    "performed": false,
+    "hits": []
+  }
+}
