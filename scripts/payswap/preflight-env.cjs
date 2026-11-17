@@ -30,7 +30,8 @@
  * 2 = 用法错误。warn 不影响退出码（如 RAM 偏低、live 键缺席且未 --require-live-key）。
  */
 
-const { execFile } = require("node:child_process");
+const { execFile, spawn } = require("node:child_process");
+const https = require("node:https");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -72,19 +73,106 @@ function record(id, title, status, detail, hint) {
   return status;
 }
 
+/** 与 run-p2-acceptance.cjs execStep 同款：win32 上 pnpm 经 .cmd shim 分发，
+ *  CreateProcess（execFile 直调）解析不到 → ENOENT —— 走 cmd.exe 解析。
+ *  词表为固定字面量（无用户输入拼接），引号由 quoteForWindowsShell 负责。 */
+function quoteForWindowsShell(token) {
+  if (/[\s"^&|<>()!]/.test(token)) return `"${token.replace(/"/g, '""')}"`;
+  return token;
+}
+
 function run(command, argv, timeoutMs) {
   return new Promise((resolve) => {
-    try {
-      execFile(command, argv, { timeout: timeoutMs, cwd: REPO_ROOT, windowsHide: true }, (error, stdout, stderr) => {
-        resolve({
-          error: error ? String(error.message || error) : null,
-          stdout: typeof stdout === "string" ? stdout.trim() : "",
-          stderr: typeof stderr === "string" ? stderr.trim() : "",
-        });
+    const finish = (error, stdout, stderr) =>
+      resolve({
+        error: error ? String(error.message || error) : null,
+        stdout: typeof stdout === "string" ? stdout.trim() : "",
+        stderr: typeof stderr === "string" ? stderr.trim() : "",
       });
+    try {
+      if (process.platform === "win32") {
+        const child = spawn([command, ...argv].map(quoteForWindowsShell).join(" "), {
+          shell: true,
+          cwd: REPO_ROOT,
+          stdio: ["ignore", "pipe", "pipe"],
+          windowsHide: true,
+        });
+        let out = "";
+        let err = "";
+        let settled = false;
+        const timer = setTimeout(() => {
+          if (!settled) {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              /* already gone */
+            }
+          }
+        }, timeoutMs);
+        child.stdout.on("data", (d) => {
+          out += d.toString("utf8");
+        });
+        child.stderr.on("data", (d) => {
+          err += d.toString("utf8");
+        });
+        child.on("error", (error) => {
+          settled = true;
+          clearTimeout(timer);
+          finish(error, out, err);
+        });
+        child.on("close", (code) => {
+          settled = true;
+          clearTimeout(timer);
+          finish(code === 0 ? null : new Error(`exit ${code === null ? "unknown" : code}`), out, err);
+        });
+      } else {
+        execFile(command, argv, { timeout: timeoutMs, cwd: REPO_ROOT, windowsHide: true }, (error, stdout, stderr) =>
+          finish(error, stdout, stderr),
+        );
+      }
     } catch (error) {
-      resolve({ error: String(error.message || error), stdout: "", stderr: "" });
+      finish(error, "", "");
     }
+  });
+}
+
+/** Stripe API 探针专用 GET：显式销毁的一次性 https 请求。
+ *  不用全局 fetch/undici —— 其 keep-alive 连接池在 process.exit 时触发 win32
+ *  libuv 断言（UV_HANDLE_CLOSING，exit 127 + stderr 污染），会破坏 runner 对
+ *  --json 输出的消费。headers 中的凭据永不进入任何日志。 */
+function httpsGetJson(url, headers, timeoutMs) {
+  return new Promise((resolve) => {
+    let settled = false;
+    const settle = (value) => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
+    const req = https.request(
+      url,
+      { method: "GET", headers: headers || {}, agent: false, timeout: timeoutMs },
+      (res) => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk) => {
+          body += chunk;
+        });
+        res.on("end", () => {
+          let json = null;
+          try {
+            json = JSON.parse(body);
+          } catch {
+            /* non-JSON body is a valid outcome (e.g. HTML error pages) */
+          }
+          req.destroy();
+          settle({ status: res.statusCode || 0, json, error: null });
+        });
+      },
+    );
+    req.on("timeout", () => req.destroy(new Error(`timeout after ${timeoutMs}ms`)));
+    req.on("error", (error) => settle({ status: 0, json: null, error: String(error.message || error) }));
+    req.end();
   });
 }
 
@@ -359,28 +447,27 @@ async function checkSafeStorageProbe(platform, electron) {
 }
 
 async function checkStripeNetwork() {
-  try {
-    const response = await fetch(STRIPE_BALANCE_URL, { signal: AbortSignal.timeout(15000) });
+  const response = await httpsGetJson(STRIPE_BALANCE_URL, null, 15000);
+  if (response.status > 0) {
     // Any HTTP answer (401 expected without auth) proves network reachability.
     record(
       "stripe-network",
       "Stripe API network reachability",
-      response.status > 0 ? "pass" : "fail",
+      "pass",
       `GET ${STRIPE_BALANCE_URL} (unauthenticated) -> HTTP ${response.status} (401 expected — proves reachability)`,
     );
     return true;
-  } catch (error) {
-    record(
-      "stripe-network",
-      "Stripe API network reachability",
-      LIVE_KEY ? "fail" : "warn",
-      `network error: ${String(error.message || error)}`,
-      LIVE_KEY
-        ? "live stages need direct HTTPS access to api.stripe.com (check egress proxies/firewalls)"
-        : "live stages are not selected here; reachability becomes mandatory once a live key is supplied",
-    );
-    return false;
   }
+  record(
+    "stripe-network",
+    "Stripe API network reachability",
+    LIVE_KEY ? "fail" : "warn",
+    `network error: ${response.error || "no HTTP response"}`,
+    LIVE_KEY
+      ? "live stages need direct HTTPS access to api.stripe.com (check egress proxies/firewalls)"
+      : "live stages are not selected here; reachability becomes mandatory once a live key is supplied",
+  );
+  return false;
 }
 
 function checkLiveKey() {
@@ -444,36 +531,33 @@ async function checkStripeAuthProbe(keyShape, networkOk) {
     record("stripe-auth-probe", "Stripe authorized read-back probe (key never shown)", "skip", "network unreachable — skipping authorized probe");
     return;
   }
-  try {
-    const response = await fetch(STRIPE_BALANCE_URL, {
-      headers: { Authorization: `Bearer ${LIVE_KEY}` },
-      signal: AbortSignal.timeout(20000),
-    });
-    const body = await response.json().catch(() => ({}));
-    if (response.status === 200 && body.object === "balance") {
-      record(
-        "stripe-auth-probe",
-        "Stripe authorized read-back probe (key never shown)",
-        "pass",
-        `GET /v1/balance -> HTTP 200, object=balance${body.livemode === false ? ", livemode=false" : ""}`,
-      );
-      return;
-    }
+  const response = await httpsGetJson(STRIPE_BALANCE_URL, { Authorization: `Bearer ${LIVE_KEY}` }, 20000);
+  const body = response.json || {};
+  if (response.status === 200 && body.object === "balance") {
     record(
       "stripe-auth-probe",
       "Stripe authorized read-back probe (key never shown)",
-      "fail",
-      `GET /v1/balance -> HTTP ${response.status}, error=${body && body.error ? body.error.code || body.error.type : "(none)"}`,
-      "a restricted key rejected on /v1/balance means the key lacks the Balance read permission or has been revoked — check the Stripe dashboard before running live stages",
+      "pass",
+      `GET /v1/balance -> HTTP 200, object=balance${body.livemode === false ? ", livemode=false" : ""}`,
     );
-  } catch (error) {
-    record(
-      "stripe-auth-probe",
-      "Stripe authorized read-back probe (key never shown)",
-      "fail",
-      `network error: ${String(error.message || error)}`,
-    );
+    return;
   }
+  if (response.status === 0) {
+    record(
+      "stripe-auth-probe",
+      "Stripe authorized read-back probe (key never shown)",
+      "fail",
+      `network error: ${response.error || "no HTTP response"}`,
+    );
+    return;
+  }
+  record(
+    "stripe-auth-probe",
+    "Stripe authorized read-back probe (key never shown)",
+    "fail",
+    `GET /v1/balance -> HTTP ${response.status}, error=${body && body.error ? body.error.code || body.error.type : "(none)"}`,
+    "a restricted key rejected on /v1/balance means the key lacks the Balance read permission or has been revoked — check the Stripe dashboard before running live stages",
+  );
 }
 
 function deriveStages(platform, checksById, interactiveSession) {
