@@ -115,6 +115,18 @@
    `scripts/payswap/linux/milestone-split-surgery.py`): P2 row split into
    P2-Linux + P2-Windows; validator REQUIRED_MILESTONES + playbook updated;
    validate-roadmap + its test green.
+7. **Post-recycle zero-assumption re-run GREEN** (2026-11-17T18:25:49Z, HEAD
+   `80c42ba1` = the merge candidate face): after full process reaping between
+   sessions the leg rebuilt in-place — verdicts identical to §8 (build PASS /
+   storage PASS 129/129 + probe gnome_libsecret / e2e PASS 7/7 / the two
+   operator-gated stages honest SKIP), manifest 8/8 OK, ~5.6 min. Registered
+   as live-acceptance-evidence §8.5 (incl. one operational note: runner exit
+   phase can hang on a lingering child handle after manifest-last completion —
+   non-blocking, follow-up hygiene item). PR #46 defect verification
+   re-confirmed on this face: 915242dc covers RedactingLog cross-chunk carry,
+   13-step evidence strictness, preflight fail-closed; the Linux runner
+   consumes the same platform-neutral modules (runner-redaction.cjs /
+   manual-evidence.cjs / acceptance-verdicts.cjs).
 
 ## Remaining (P2-Linux closure) — operator-controlled, precisely identified
 

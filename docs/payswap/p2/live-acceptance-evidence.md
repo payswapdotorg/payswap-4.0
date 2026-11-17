@@ -269,3 +269,38 @@ fail-loud 修补验证（原件为根目录结构化编译 + 手工 sed）；(c)
   可独立执行半边的执行证据，非关闭登记）。
 - Windows 腿：本节无任何 Windows 证明（见 P2-Windows 行与
   ENVIRONMENT-READINESS-HANDOFF.md）。
+
+### 8.5 沙箱回收后零假设复跑（可复现性补强，2026-11-17T18:25:49Z）
+
+> 同一 TL Linux 沙箱在会话间隔后经历了**进程全面回收**（文件系统保留、
+> Xvfb/D-Bus/keyring 等一切运行时进程不在）—— 复跑证明验收腿可从该冷态
+> **原地重建**，且基线推进到将合入的 HEAD。
+
+- **基线**：分支 `p2/acceptance-runner-fail-closed` @
+  `80c42ba1a7c263479f283aad99b968344d6347d8`（= §8 登记运行之后的两提交：
+  §8 证据登记 `2c086515` + runner lint `80c42ba1`；即待合入面本身）。
+- **命令**：与 §8.1 相同（`PAYSWAP_LINUX_LEG_STACK=<prefix> node
+  scripts/payswap/linux/run-p2-acceptance.cjs`），单次完整、零假设
+  （`assumedStagesPassed: []`）、`dryRun: false`、`secretPresent: false`。
+- **结局**：与 §8.2 逐字一致 —— linux-build **PASS** / linux-secure-storage
+  **PASS**（探针 `gnome_libsecret` + `isEncryptionAvailable=true` +
+  `roundTrip=ok`；法则电池 **129/129**；平台门 12/12）/ linux-desktop-e2e
+  **PASS**（`payswap-connection-ui` **7/7**，七臂逐条 ✓）/ stripe-live
+  **SKIP** / conversation-acceptance **SKIP**。耗时 18:25:49Z→18:31:28Z
+  （≈5.6 分钟，与 §8 运行同量级）。
+- **消毒工件**：`artifacts/p2-acceptance-linux/2026-11-17T18-25-49-176Z/`，
+  MANIFEST 8 文件复核一致 —— `MANIFEST-sha256.txt` SHA-256
+  `4a8671de5be1d1ef9136af270d76312df5f1d4dd31bea6cc8c66f90877a5ce2c`；
+  `summary.json` SHA-256
+  `2d53db0392af994e5990260f7add4109f94f4d04669fd5d5c5aa286574259c18`；
+  `preflight.json` SHA-256
+  `8179e4a0077330916305cebc422a3bfc696a70087a5dfc720200e2d0fb8b43b4`
+  （阶段日志八文件清单见该 run 自身的 MANIFEST，逐项 OK）。
+- **运维观察（非裁决缺陷，如实登记）**：runner 在 manifest 落盘（18:31:28Z）
+  后的**退出相位**被一个残留子句柄拖住（外层看护超时于 ≈18:35:49Z 终止进程
+  树；退出码未及回传）。裁决与工件不受影响 —— manifest-last 设计保证全部
+  工件在挂起前已完整性落盘并复核。后续改进项（非阻塞）：TL 沙箱形态下
+  runner 的退出卫生（e2e 阶段子进程句柄收敛）。
+- **边界不变**：本节仍是可独立执行半边的证据 —— 键供给与账户 onboarding
+  身份段两操作者控制步（LINUX-P2-CLOSURE-HANDOFF.md §1）未变，P2-Linux
+  状态裁决仍以 roadmap 的 P2-Linux 行为准。
