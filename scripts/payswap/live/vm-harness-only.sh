@@ -68,8 +68,21 @@ exec dbus-run-session -- bash -c '
     exit 1
   fi
   printf "[vm-harness-only] secret service active (attempt %s)\n" "${attempt}"
+  # 2026-11-16 修复：本仓 node-linker=hoisted —— electron 二进制提升到仓库根
+  # node_modules/electron/dist/，packages/desktop/node_modules/.bin/ 下没有 shim
+  # （E2B 沙箱实测：No such file or directory）。优先根提升布局，包内 shim 为
+  # 历史布局兜底；两者皆缺席 = fail loud（不猜）。REPO_DIR 经 '"$REPO_DIR"'
+  # 拼接进入内层 bash（单引号块不展开外层变量）。
+  electron_bin='"$REPO_DIR"'/node_modules/electron/dist/electron
+  if [ ! -x "$electron_bin" ]; then
+    electron_bin='"$REPO_DIR"'/packages/desktop/node_modules/.bin/electron
+  fi
+  if [ ! -x "$electron_bin" ]; then
+    printf "[vm-harness-only] FATAL: electron 可执行缺席（hoisted 与包内布局都不在场）\n" >&2
+    exit 1
+  fi
   set +e
-  ./packages/desktop/node_modules/.bin/electron \
+  "$electron_bin" \
     --password-store=gnome-libsecret --no-sandbox \
     scripts/payswap/live/main.cjs
   status=$?
