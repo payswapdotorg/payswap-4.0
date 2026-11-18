@@ -196,9 +196,15 @@ export function createPayswapBrokerDispatch(
           // ADR-P2-1 detail 半：connectionId 收窄且 detail reader 在场 → 现读 detail
           // （验证读状态机 + 能力证据 + 四类别只读数据）。抛错 → internal_error
           //（§6.3，与 reader 同类）；typed detail 联合原样入 `account`。
-          if (requestedConnectionId !== undefined && accountDetailReader !== undefined) {
+          // 确定性单账户消歧（2026-11-18 review §5）：省略 connectionId 且已连接集合
+          // 恰一个账户 → 直接对该行现读 detail（四类别同答返回，模型无需两步猜 id）；
+          // 多账户 → 仅回清单（即消歧选择面，用户指定 connectionId 后再取 detail）。
+          const detailTargetId =
+            requestedConnectionId ??
+            (narrowed.length === 1 ? narrowed[0]?.connectionId : undefined);
+          if (detailTargetId !== undefined && accountDetailReader !== undefined) {
             try {
-              data.account = await accountDetailReader(requestedConnectionId);
+              data.account = await accountDetailReader(detailTargetId);
             } catch {
               return { kind: "refused", code: "internal_error", retryable: false };
             }

@@ -323,6 +323,27 @@ function overviewProjection(overrides: Partial<PayswapConnectionStatusProjection
   };
 }
 
+/** ADR-P2-1 detail 半的替身（形状与 payswap-account-reader-bridge.test.ts 的 detailArm 同族；四类别全 ok 行）。 */
+function detailArm(): PayswapAccountOverviewDetail {
+  return {
+    kind: "detail",
+    connection: overviewProjection(),
+    evidence: {
+      capabilities: [{ name: "card_payments", status: "active" }],
+      requirements: { disabledReason: null, currentlyDueCount: 0, pastDueCount: 0 },
+    },
+    data: {
+      balance: {
+        status: "ok",
+        data: { available: [{ amount: "700", currency: "usd" }], pending: [] },
+      },
+      payment_objects: { status: "ok", data: [] },
+      customers: { status: "ok", data: [] },
+      disputes: { status: "ok", data: [] },
+    },
+  };
+}
+
 afterEach(async () => {
   for (const child of activeChildren.splice(0)) {
     child.kill("SIGKILL");
@@ -618,6 +639,76 @@ describe("P2.2 slice 3 — account-overview real-data half (pure dispatch, all p
     if (unknown.kind !== "dispatched") return;
     const data = unknown.body.data as { kind: string; refusal?: { code: string } };
     expect(data.refusal?.code).toBe("not_connected");
+  });
+
+  it("deterministic single-account resolution: no connectionId + exactly one connected account + detail reader → the detail rides in the same answer (2026-11-18 review §5)", async () => {
+    const detailTargetCalls: string[] = [];
+    const detail: PayswapAccountOverviewDetail = detailArm();
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => [overviewProjection()],
+      accountDetailReader: (connectionId) => {
+        detailTargetCalls.push(connectionId);
+        return Promise.resolve(detail);
+      },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    expect(result.body.data).toEqual({
+      kind: "overview",
+      connections: [overviewProjection()],
+      account: detail,
+    });
+    expect(detailTargetCalls).toEqual(["conn-overview-1"]);
+  });
+
+  it("multiple connected accounts with no connectionId → sanitized list only (the choices surface); the detail reader is never consulted", async () => {
+    let detailCalls = 0;
+    const connections = [
+      overviewProjection(),
+      overviewProjection({ connectionId: "conn-overview-2", mode: "live", displayName: "Stripe (live)" }),
+    ];
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => connections,
+      accountDetailReader: () => {
+        detailCalls += 1;
+        return Promise.resolve(detailArm());
+      },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    expect(result.body.data).toEqual({ kind: "overview", connections });
+    expect(detailCalls).toBe(0);
+  });
+
+  it("a throwing detail reader (single-account auto-resolve arm) is an internal_error bridge failure, same as the explicit-narrow arm", async () => {
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => [overviewProjection()],
+      accountDetailReader: () => {
+        throw new Error("detail store exploded");
+      },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result).toEqual({ kind: "refused", code: "internal_error", retryable: false });
   });
 
   it("a throwing overview reader is an internal_error bridge failure (no detail leaked; §6.3, same class as the live-state reader)", async () => {

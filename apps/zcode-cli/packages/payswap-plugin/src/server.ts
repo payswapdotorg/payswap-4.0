@@ -169,10 +169,18 @@ export function createPayswapServer(options: PayswapServerOptions = {}): McpServ
     {
       title: "Get account overview",
       description:
-        "Redacted, evidence-based overview of connected financial accounts. Read-only. " +
-        REFUSAL_NOTE,
+        "Redacted, evidence-based overview of connected financial accounts. " +
+        "With no connectionId and exactly one connected account, its full detail " +
+        "(balance, payment objects, customers, disputes — each with its own status) " +
+        "is returned in the same answer; with several connected accounts only the " +
+        "sanitized connection list is returned — ask the user to pick one and pass " +
+        "its connectionId for the detail. Read-only. " + REFUSAL_NOTE,
       inputSchema: {
-        connectionId: z.string().min(1).optional().describe("Restrict to one connection, if known."),
+        connectionId: z
+          .string()
+          .min(1)
+          .optional()
+          .describe("Restrict to one connection, if known; required for the detail when several accounts are connected."),
       },
       annotations: { readOnlyHint: true },
     },
