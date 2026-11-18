@@ -1,0 +1,3 @@
+a9601e3242390433098b968fe3614b0e3802c9d515a62d4e4e466ca94c49a05f *broker-audit.jsonl
+fc60368147a9b509e398f971fd5ad9c5d1d84ca5a46d19260a4baff43e13f2ed *reader-bridge-relay-lines.txt
+31af44246ad38ef462ce3d1244b18623cc67da61d03571244d9a8a7402a56841 *newtask-conversation-redacted.md

@@ -1,0 +1,4 @@
+[electron] [P2-DEBUG-MAIN] bridge port message posted to host
+[electron] [2026-11-18 18:48:24.553] [pid:17152] [main] [host-log] (local-1) [host] [P2-DEBUG-HOST] raw msg type: payswap-reader-bridge-port ports: 1
+[electron] [2026-11-18 18:48:24.554] [pid:17152] [main] [host-log] (local-1) [host] [2026-11-18 18:48:24.553] [pid:17388] [zcode-host] [payswap-reader-bridge-relay] main port attached (reader bridge relay live)
+[electron] [2026-11-18 18:48:24.554] [pid:17152] [main] [host-log] (local-1) [host] [2026-11-18 18:48:24.553] [pid:17388] [zcode-host] [payswap-reader-bridge-relay] main port attached (reader bridge relay live)

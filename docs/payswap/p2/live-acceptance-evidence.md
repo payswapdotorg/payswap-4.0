@@ -314,3 +314,65 @@ fail-loud 修补验证（原件为根目录结构化编译 + 手工 sed）；(c)
 - **边界不变**：本节仍是可独立执行半边的证据 —— 键供给与账户 onboarding
   身份段两操作者控制步（LINUX-P2-CLOSURE-HANDOFF.md §1）未变，P2-Linux
   状态裁决仍以 roadmap 的 P2-Linux 行为准。
+
+## 9. P2-Windows 腿 —— 真实 New Task 四分类会话证据（2026-11-18，native Windows）
+
+> 本节是 P2-Windows 的**会话半边**新证据：不是 runner 阶段产物，而是真实桌面应用
+> 内的 New Task 对话（模型 = GLM-5.3，Z.ai Start Plan）。运行环境为**隔离数据根**
+> （`ZCODE_DATA_BASE_DIR=C:\Users\Lenovo\payswap-dev-data` —— 与已安装产品的
+> `~/.zcode` 完全分离；该分离本身源于 2026-11-18 的共享凭据文件踩踏事故，见
+> TL-PROGRESS.md）。测试分支状态：`p2/acceptance-runner-fail-closed` @ `15d1eca6`。
+
+**先决修复（同分支三提交，TL 已复核）**：`feb6837f`（broker helper 供给快照转发
+→ boot `peer_verified`）、`e017b5a8`（gateway `alwaysLoad` + 单账户确定性消歧）、
+`15d1eca6`（reader 桥端口铸造器移入 `SpawnHostProcessOptions` 第 5 参 → host 中继
+首次 live）。
+
+| 证据臂 | 结果 | 审计/工件 |
+|---|---|---|
+| broker boot（无操作者 env 注入） | `peer_verified`，`helperSupplyPresent {true,true}` | `evidence/newtask-2026-11-18/broker-audit.jsonl` |
+| relay 挂接 | `[payswap-reader-bridge-relay] main port attached (reader bridge relay live)`（首次出现） | `evidence/newtask-2026-11-18/reader-bridge-relay-lines.txt` |
+| 四分类会话读 | 模型调用 `payswap_get_account_overview`（无 connectionId）→ `dispatched op:get_account_overview peerPid:5488` → **四类别同答全 ok**（余额 USD 69,854.06 + EUR 147.48；10 笔支付对象 8✅/2❌；10 条脱敏客户投影——零 PII；争议空） | 会话转录摘录 + 审计行，已消毒入库 |
+| 撤销（步骤 12） | Settings → Payment connections → Revoke → "Connection revoked. The locally stored secret was deleted."（store 行 `status=revoked`，updatedAt 2026-11-18T18:54:09.236Z） | 同上转录文件 |
+| 撤销后读（步骤 13） | typed refusal：四类别逐条 unavailable — connection revoked；模型如实转述并将再授权指向 UI —— **零即兴、零凭据触达** | 同上转录文件 |
+
+**消毒证据（已入仓，SHA-256 复核清单）**：
+`docs/payswap/p2/evidence/newtask-2026-11-18/MANIFEST-sha256.txt` —
+`broker-audit.jsonl`
+`a9601e3242390433098b968fe3614b0e3802c9d515a62d4e4e466ca94c49a05f`；
+`reader-bridge-relay-lines.txt`
+`fc60368147a9b509e398f971fd5ad9c5d1d84ca5a46d19260a4baff43e13f2ed`；
+`newtask-conversation-redacted.md`
+`31af44246ad38ef462ce3d1244b18623cc67da61d03571244d9a8a7402a56841`。
+
+**单账户消歧契约（TL review §C 修正后）**：省略 connectionId 时仅 `status
+"connected"` 行参与消歧（恰一行 → detail 同答；零/多行 → 无 detail）；
+revoked/expired 行永远保留在清单投影里。混合状态 battery 见
+`payswap-broker-dispatch.test.ts`（27 通过）。
+
+**边界声明**：本节证明的是**真实会话半边**（New Task → 插件工具 → broker →
+reader 桥 → 账户服务 → provider 只读）。P2-Windows 的形式裁决仍差：13 步手工
+回执 + 五阶段 runner `--manual-evidence`（§4 形态）+ 本节的独立复核。roadmap
+P2-Windows 行维持 `in_progress` 直至 §10 的安全项与上述门全部通过。
+
+## 10. 凭据安全状态（2026-11-18，如实声明 —— 未关闭）
+
+**历史暴露的遏制（部分完成，操作者步未完成）**：
+- 恢复面为 `acct_1FPs7UAkPdhgtN6I`（Cattyz）的 `rk_test_*` 只读受限键（API 复核：
+  capabilities 13 项）。该键仍以 0600 ACL 存于
+  `C:\Users\Lenovo\.payswap-live.env`（owner-only，继承已断）。
+- **轮换尚未执行**：受限键无法经 API 自铸（无管理能力）——轮换必须在 Cattyz
+  dashboard（ekontetevi@gmail.com 登录）删除旧键并铸造新键；属操作者控制步。
+  轮换后须更新 `~/.payswap-live.env` 并重跑会话臂以绑定新键。
+- 已检面：当日 CLI 审计日志与工作区转录的密钥形模式清扫为 0 命中（2026-11-18）。
+
+**复发防护（架构性）——如实声明：尚未解决**。本分支三提交均未改变
+"同用户任意进程可解密 DPAPI 包裹的 PSP 凭据" 的 Windows 事实模型
+（Electron safeStorage/DPAPI 明示不防同用户进程）。2026-11-18 会话未发生凭据
+恢复**不构成**能力消失的证明。既定缓解（TL 复述）= PSP 凭据读取移入独立保护
+身份（专用服务账户/service SID 或 AppContainer 模型侧限制）+ 窄 RPC 面 ——
+登记为独立里程碑（安全加固），不并入 P2-Windows 形式裁决的既有门；P2 关闭时
+本节按上表如实转述，不宣称已防护。
+
+**回归保护增量（TL review §3 B 已落地）**：`e41f1a85` —— reader 桥第 5 参契约
+battery、混合状态消歧 battery、alwaysLoad 双层断言。
