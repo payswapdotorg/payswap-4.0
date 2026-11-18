@@ -460,3 +460,18 @@ exit 0 = hardening acceptance criterion; deliberately outside CI).
 3. At merge: roadmap P2-Windows flip from the merged state (register law).
 4. Separate tracks: New Task enablement preflight UX; panel ui/initialize
    handshake; stale-connection-row cleanup in the isolated home (cosmetic).
+
+### Hardening milestone kickoff (2026-11-18 late — continuation of the round-trip)
+
+- ADR-P2-3 **first implementation attempt REJECTED by live Windows privilege
+  reality**: restricted-token spawn needs SeIncreaseQuotaPrivilege on
+  `CreateProcessAsUser` (win32 1314 on 26200) — not held by non-elevated desktop
+  processes. Helper instrumentation (`--harden-path` / `--harden-child` /
+  `--spawn-restricted`) compiled + staged (manifest sha `d33c97e3…`); deny-ACE
+  idempotence and host readability verified live.
+- **ADR pivoted to the dedicated-identity custodian helper** (LogonUser
+  impersonation over a provisioned local account; DACLs re-keyed to revoke
+  Lenovo; Stripe read-back relocated into the custodian; redacted projections
+  only over the D14.8-gated channel; one-time elevated provisioning). The RED
+  isolation gate stays the acceptance criterion; implementation = next milestone
+  after TL design sign-off on the amended ADR (commit `8450f0ac`).
