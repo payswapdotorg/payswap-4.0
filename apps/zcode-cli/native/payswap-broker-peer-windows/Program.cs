@@ -3,9 +3,11 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Pipes;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using System.ServiceProcess;
 using System.Text;
 using System.Threading;
 using Microsoft.Win32.SafeHandles;
@@ -68,6 +70,13 @@ namespace PayswapBrokerPeerHelper
                 if (HasArgument(args, "--harden-path")) return HardenPath(args);
                 if (HasArgument(args, "--spawn-restricted")) return SpawnRestricted(args);
                 if (HasArgument(args, "--harden-child")) return HardenChild(args);
+                if (HasArgument(args, "--svc-install")) return SvcInstall(args);
+                if (HasArgument(args, "--svc-uninstall")) return SvcUninstall(args);
+                if (HasArgument(args, "--svc-run")) return SvcRun(args);
+                if (HasArgument(args, "--svc-console")) return SvcConsole(args);
+                if (HasArgument(args, "--custodian-register")) return CustodianClient(args, "register");
+                if (HasArgument(args, "--custodian-push")) return CustodianClient(args, "push");
+                if (HasArgument(args, "--custodian-get")) return CustodianClient(args, "get");
                 return RunRelay(args);
             }
             catch
@@ -1051,6 +1060,530 @@ namespace PayswapBrokerPeerHelper
                 Console.Error.WriteLine("harden-child:" + e.Message);
                 return 3;
             }
+        }
+
+        // ------------------------------------------------------------------
+        // ADR-P2-3 custodian service：SYSTEM 服务持有 PSP 密钥（SYSTEM-DPAPI 包装落盘
+        // + 内存持有），具名管道只服务**已注册的 main pid**（内核事实 + electron 映像门
+        // + helper 父进程门），有界五路只读 GET 代理（路径闭集）。秘密永不落可读文件。
+        // ------------------------------------------------------------------
+
+        private const string CustodianServiceName = "PayswapCustodianSvc";
+        private const string CustodianPipeName = "payswap-custodian-v1";
+        private const string CustodianProgramDataDir = "C:\\ProgramData\\payswap";
+        private const string CustodianConfigFile = CustodianProgramDataDir + "\\custodian-config.json";
+        private const string CustodianEndpointFile = CustodianProgramDataDir + "\\custodian-endpoint.json";
+        private const string CustodianKeyBlobFile = CustodianProgramDataDir + "\\custodian-key.bin";
+        private const string CustodianAllowedPaths =
+            "/v1/balance|/v1/charges|/v1/customers|/v1/disputes|/v1/account";
+
+        private static volatile bool custodianStopping;
+        private static readonly object CustodianStateLock = new object();
+        private static int registeredMainPid = -1;
+        private static string custodianKeyHex;
+        private static string custodianElectronImage;
+        private static string custodianHelperImage;
+        private static string custodianUserSid;
+
+        private static int SvcInstall(string[] args)
+        {
+            Dictionary<string, string> parsed = ParseArguments(args);
+            string image = RequireArgument(parsed, "--image");
+            string helperPath = System.Reflection.Assembly.GetExecutingAssembly().Location;
+            string userSid = WindowsIdentity.GetCurrent().User.Value;
+            Directory.CreateDirectory(CustodianProgramDataDir);
+            File.WriteAllText(
+                CustodianConfigFile,
+                "{\"image\":\"" + image.Replace("\\", "\\\\") + "\",\"userSid\":\"" + userSid +
+                "\",\"helper\":\"" + helperPath.Replace("\\", "\\\\") + "\"}");
+            string binPath = "\"" + helperPath + "\" --svc-run --image \"" + image + "\"";
+            RunSc("create " + CustodianServiceName + " binPath= \"" + binPath + "\" start= demand DisplayName= \"PaySwap Credential Custodian\"");
+            RunSc("start " + CustodianServiceName);
+            Console.Out.WriteLine("svc-install:ok");
+            return 0;
+        }
+
+        private static int SvcUninstall(string[] args)
+        {
+            RunSc("stop " + CustodianServiceName);
+            RunSc("delete " + CustodianServiceName);
+            try { File.Delete(CustodianKeyBlobFile); } catch { }
+            Console.Out.WriteLine("svc-uninstall:ok");
+            return 0;
+        }
+
+        private static void RunSc(string arguments)
+        {
+            var psi = new ProcessStartInfo("sc.exe", arguments);
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow = true;
+            var p = Process.Start(psi);
+            p.WaitForExit(30000);
+            if (p.ExitCode != 0 && p.ExitCode != 1060 && p.ExitCode != 1062)
+                throw new InvalidOperationException("sc-failed exit=" + p.ExitCode);
+        }
+
+        private static int SvcRun(string[] args)
+        {
+            Dictionary<string, string> parsed = ParseArguments(args);
+            custodianElectronImage = RequireArgument(parsed, "--image").ToLowerInvariant();
+            custodianHelperImage = System.Reflection.Assembly.GetExecutingAssembly().Location.ToLowerInvariant();
+            // config 里的 userSid（Lenovo SID）：DACL 授权面（endpoint 文件 + 管道）。
+            try
+            {
+                string configText = File.ReadAllText(CustodianConfigFile);
+                custodianUserSid = ExtractJsonString(configText, "\"userSid\":\"");
+            }
+            catch { }
+            System.ServiceProcess.ServiceBase.Run(new CustodianService());
+            return 0;
+        }
+
+        private static string custodianTestGateSubstring;
+
+        private static int SvcConsole(string[] args)
+        {
+            Dictionary<string, string> parsed = ParseArguments(args);
+            custodianElectronImage = RequireArgument(parsed, "--image").ToLowerInvariant();
+            custodianHelperImage = System.Reflection.Assembly.GetExecutingAssembly().Location.ToLowerInvariant();
+            // 测试缝（--diag 同族）：console 门以 --test-gate 子串放宽父映像匹配，仅供
+            // 协议验证；生产 --svc-run 不传（门走 electron 全路径）。
+            if (parsed.TryGetValue("--test-gate", out custodianTestGateSubstring) && custodianTestGateSubstring.Length == 0)
+                custodianTestGateSubstring = null;
+            CustodianServeLoop();
+            return 0;
+        }
+
+        private sealed class CustodianService : System.ServiceProcess.ServiceBase
+        {
+            public CustodianService()
+            {
+                this.ServiceName = CustodianServiceName;
+                this.CanStop = true;
+            }
+
+            protected override void OnStart(string[] args)
+            {
+                var thread = new Thread(CustodianServeLoop);
+                thread.IsBackground = false;
+                thread.Start();
+            }
+
+            protected override void OnStop()
+            {
+                custodianStopping = true;
+            }
+        }
+
+        private static void CustodianServeLoop()
+        {
+            // SYSTEM-wrapped 密钥 blob 自举（跨重启持久； SYSTEM DPAPI 自解）。
+            try
+            {
+                if (File.Exists(CustodianKeyBlobFile))
+                {
+                    byte[] blob = File.ReadAllBytes(CustodianKeyBlobFile);
+                    byte[] plain = CryptUnprotectBytes(blob);
+                    string hex = System.Text.Encoding.UTF8.GetString(plain);
+                    if (hex.Length == 64) lock (CustodianStateLock) { custodianKeyHex = hex; }
+                }
+            }
+            catch { }
+
+            // token + endpoint 文件（Lenovo 可读 → main 读；管道门 + pid 门是真正的门）。
+            string token = Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N");
+            Directory.CreateDirectory(CustodianProgramDataDir);
+            File.WriteAllText(
+                CustodianEndpointFile,
+                "{\"pipe\":\"" + CustodianPipeName + "\",\"token\":\"" + token + "\"}");
+
+            while (!custodianStopping)
+            {
+                NamedPipeServerStream pipe = CreateCustodianPipe();
+                if (pipe == null) { Console.Error.WriteLine("custodian:pipe-null"); Thread.Sleep(500); continue; }
+                Console.Error.WriteLine("custodian:listening");
+                IAsyncResult pending = pipe.BeginWaitForConnection(null, null);
+                while (!pending.IsCompleted && !custodianStopping) Thread.Sleep(200);
+                if (custodianStopping) { try { pipe.Dispose(); } catch { } break; }
+                try
+                {
+                    pipe.WaitForConnection();
+                    Console.Error.WriteLine("custodian:connection");
+                    ServeCustodianConnection(pipe, token);
+                }
+                catch
+                {
+                }
+                try { pipe.Disconnect(); } catch { }
+                try { pipe.Dispose(); } catch { }
+            }
+        }
+
+        private static NamedPipeServerStream CreateCustodianPipe()
+        {
+            try
+            {
+                PipeSecurity security = new PipeSecurity();
+                security.SetAccessRuleProtection(true, false);
+                security.AddAccessRule(new PipeAccessRule(
+                    new SecurityIdentifier(WellKnownSidType.LocalSystemSid, null),
+                    PipeAccessRights.ReadWrite, AccessControlType.Allow));
+                // console 测试态：服务 = 当前用户（Lenovo）→ 授自身；SYSTEM 态下
+                // current user = SYSTEM（与上条重复，无害）。userSid（安装时记录的
+                // Lenovo SID）在场时也授 —— 覆盖 packaged 语境。
+                SecurityIdentifier currentUser = WindowsIdentity.GetCurrent().User;
+                if (currentUser != null)
+                {
+                    security.AddAccessRule(new PipeAccessRule(
+                        currentUser, PipeAccessRights.ReadWrite, AccessControlType.Allow));
+                }
+                if (custodianUserSid != null)
+                {
+                    security.AddAccessRule(new PipeAccessRule(
+                        new SecurityIdentifier(custodianUserSid),
+                        PipeAccessRights.ReadWrite, AccessControlType.Allow));
+                }
+                return new NamedPipeServerStream(
+                    CustodianPipeName,
+                    PipeDirection.InOut,
+                    1,
+                    PipeTransmissionMode.Byte,
+                    PipeOptions.Asynchronous,
+                    PipeBufferSize,
+                    PipeBufferSize,
+                    security);
+            }
+            catch { return null; }
+        }
+
+        /** 单连接服务：token 握手 → 注册/数据操作。门 = 内核 client pid + 映像 + 父链。 */
+        /** 客户端父进程门：测试缝 = 父映像子串（MSYS fork 使测试父 pid 不稳定）；
+            生产 = 精确 registered pid + electron 全路径。 */
+        private static bool IsAuthorizedCustodianParent(int parentPid, string parentImage)
+        {
+            if (parentImage == null) return false;
+            string lower = parentImage.ToLowerInvariant();
+            if (custodianTestGateSubstring != null)
+                return lower.Contains(custodianTestGateSubstring);
+            return parentPid == registeredMainPid && lower.Contains("electron.exe");
+        }
+
+        private static void ServeCustodianConnection(NamedPipeServerStream pipe, string token)
+        {
+            Console.Error.WriteLine("custodian:serve");
+            uint clientPid = 0;
+            try
+            {
+                uint clientProcessId;
+                if (GetNamedPipeClientProcessId(pipe.SafePipeHandle, out clientProcessId))
+                    clientPid = clientProcessId;
+            }
+            catch { }
+            Console.Error.WriteLine("custodian:clientPid=" + clientPid);
+
+            string tokenLine = ReadPipeLine(pipe, 5000);
+            Console.Error.WriteLine("custodian:token=" + (tokenLine == null ? "null" : (tokenLine.Trim() == token ? "match" : "mismatch-len" + tokenLine.Trim().Length)));
+            if (tokenLine == null || tokenLine.Trim() != token) return;
+
+            string opLine = ReadPipeLine(pipe, 8000);
+            Console.Error.WriteLine("custodian:op=" + (opLine == null ? "null" : opLine));
+            if (opLine == null) return;
+            string op = ExtractJsonString(opLine, "\"op\":\"");
+            if (op == null) { Console.Error.WriteLine("custodian:op-unparsable"); return; }
+
+            // 父链事实：client pid 的父 = main（electron 映像）。所有操作共用此门。
+            int parentPid;
+            string parentImage;
+            if (!GetParentProcessInfo((int)clientPid, out parentPid, out parentImage)) { Console.Error.WriteLine("custodian:parent-unavailable"); return; }
+            Console.Error.WriteLine("custodian:parent=" + parentPid + " image=" + parentImage);
+            if (!IsAuthorizedCustodianParent(parentPid, parentImage)) { Console.Error.WriteLine("custodian:gate-reject"); return; }
+
+            if (op == "register")
+            {
+                // 注册 = 自报内核父 pid（client 用 TOOLHELP 查自己的父）+ electron 映像门
+                //（父映像由服务用 QueryFullProcessImageName 核验 —— 线上声明不参与）。
+                registeredMainPid = parentPid;
+                WritePipeLine(pipe, "{\"v\":1,\"ok\":true,\"registered\":" + parentPid + "}");
+                return;
+            }
+            // 生产 = registered pid 精确门；测试缝（MSYS fork 使父 pid 不稳定）= 映像门。
+            if (custodianTestGateSubstring == null && parentPid != registeredMainPid)
+            { Console.Error.WriteLine("custodian:not-registered-parent pid=" + parentPid); return; }
+
+            if (op == "push")
+            {
+                string key = ExtractJsonString(opLine, "\"key\":\"");
+                if (key == null || key.Length < 64) { Console.Error.WriteLine("custodian:push-shape-invalid len=" + (key == null ? -1 : key.Length)); return; }
+                lock (CustodianStateLock) { custodianKeyHex = key; }
+                try
+                {
+                    byte[] plain = System.Text.Encoding.UTF8.GetBytes(key);
+                    byte[] blob = CryptProtectBytes(plain);
+                    File.WriteAllBytes(CustodianKeyBlobFile, blob);
+                }
+                catch (Exception e) { Console.Error.WriteLine("custodian:blob-write-failed " + e.Message); }
+                Console.Error.WriteLine("custodian:push-ok len=" + key.Length);
+                WritePipeLine(pipe, "{\"v\":1,\"ok\":true}");
+                return;
+            }
+
+            if (op == "drop")
+            {
+                lock (CustodianStateLock) { custodianKeyHex = null; }
+                try { File.Delete(CustodianKeyBlobFile); } catch { }
+                WritePipeLine(pipe, "{\"v\":1,\"ok\":true}");
+                return;
+            }
+
+            if (op == "get")
+            {
+                string path = ExtractJsonString(opLine, "\"path\":\"");
+                if (path == null) return;
+                if (!CustodianAllowedPaths.Split('|').Contains(path.Split('?')[0])) { Console.Error.WriteLine("custodian:get-path-not-allowed " + path); return; }
+                string key;
+                lock (CustodianStateLock) { key = custodianKeyHex; }
+                if (key == null) { Console.Error.WriteLine("custodian:get-no-key"); WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"no-key\"}"); return; }
+                try
+                {
+                    // Stripe 需要 TLS 1.2+（.NET Framework 缺省不含 Tls12 —— 显式启用）。
+                    System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12;
+                    var request = (System.Net.HttpWebRequest)System.Net.WebRequest.Create("https://api.stripe.com" + path);
+                    request.Method = "GET";
+                    request.Headers.Add("Authorization", "Bearer " + key);
+                    request.Timeout = 30000;
+                    var response = (System.Net.HttpWebResponse)request.GetResponse();
+                    string body = new StreamReader(response.GetResponseStream(), System.Text.Encoding.UTF8).ReadToEnd();
+                    Console.Error.WriteLine("custodian:get-status=" + (int)response.StatusCode + " bodyLen=" + body.Length);
+                    WritePipeLine(pipe, "{\"v\":1,\"status\":" + (int)response.StatusCode + ",\"body\":\"" + EscapeJson(body) + "\"}");
+                }
+                catch (System.Net.WebException e)
+                {
+                    var response = e.Response as System.Net.HttpWebResponse;
+                    if (response != null)
+                    {
+                        string body = new StreamReader(response.GetResponseStream(), System.Text.Encoding.UTF8).ReadToEnd();
+                        WritePipeLine(pipe, "{\"v\":1,\"status\":" + (int)response.StatusCode + ",\"body\":\"" + EscapeJson(body) + "\"}");
+                    }
+                    else
+                    {
+                        Console.Error.WriteLine("custodian:get-network-error " + e.Message);
+                        WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"network-error\"}");
+                    }
+                }
+                return;
+            }
+            Console.Error.WriteLine("custodian:op-unknown " + op);
+        }
+
+        private static string EscapeJson(string value)
+        {
+            var sb = new StringBuilder(value.Length + 16);
+            foreach (char c in value)
+            {
+                if (c == '"') sb.Append("\\\"");
+                else if (c == '\\') sb.Append("\\\\");
+                else if (c < ' ') sb.Append("\\u" + ((int)c).ToString("x4"));
+                else sb.Append(c);
+            }
+            return sb.ToString();
+        }
+
+        private static string ExtractJsonString(string line, string key)
+        {
+            try
+            {
+                int start = line.IndexOf(key, StringComparison.Ordinal);
+                if (start < 0) return null;
+                int valueStart = start + key.Length;
+                int valueEnd = line.IndexOf('"', valueStart);
+                if (valueEnd < 0) return null;
+                return UnescapeJsonString(line.Substring(valueStart, valueEnd - valueStart));
+            }
+            catch { return null; }
+        }
+
+        private static bool ExtractJsonInt(string line, string key, out int value)
+        {
+            value = 0;
+            try
+            {
+                int start = line.IndexOf(key, StringComparison.Ordinal);
+                if (start < 0) return false;
+                int valueStart = start + key.Length;
+                int valueEnd = valueStart;
+                while (valueEnd < line.Length && line[valueEnd] >= '0' && line[valueEnd] <= '9') valueEnd++;
+                return ParsePositiveInt(line.Substring(valueStart, valueEnd - valueStart), out value);
+            }
+            catch { return false; }
+        }
+
+        private static bool GetParentProcessInfo(int pid, out int parentPid, out string parentImage)
+        {
+            parentPid = -1;
+            parentImage = null;
+            try
+            {
+                var snapshot = CreateToolhelp32Snapshot(0x2 /* TH32CS_SNAPPROCESS */, 0);
+                if (snapshot == IntPtr.Zero) return false;
+                try
+                {
+                    var entry = new PROCESSENTRY32();
+                    entry.dwSize = (uint)Marshal.SizeOf(typeof(PROCESSENTRY32));
+                    if (Process32First(snapshot, ref entry))
+                    {
+                        do
+                        {
+                            if ((int)entry.th32ProcessID == pid)
+                            {
+                                parentPid = (int)entry.th32ParentProcessID;
+                                break;
+                            }
+                        } while (Process32Next(snapshot, ref entry));
+                    }
+                }
+                finally { CloseHandle(snapshot); }
+                if (parentPid < 0) return false;
+                IntPtr process = OpenProcess(ProcessQueryLimitedInformation, false, parentPid);
+                if (process == IntPtr.Zero) return false;
+                try
+                {
+                    var buffer = new StringBuilder(1024);
+                    int size = 1024;
+                    if (QueryFullProcessImageName(process, 0, buffer, ref size))
+                    {
+                        parentImage = buffer.ToString();
+                        return true;
+                    }
+                    return false;
+                }
+                finally { CloseHandle(process); }
+            }
+            catch { return false; }
+        }
+
+        [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+        private struct PROCESSENTRY32
+        {
+            public uint dwSize;
+            public uint cntUsage;
+            public uint th32ProcessID;
+            public IntPtr th32DefaultHeapID;
+            public uint th32ModuleID;
+            public uint cntThreads;
+            public uint th32ParentProcessID;
+            public int pcPriClassBase;
+            public uint dwFlags;
+            [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+            public string szExeFile;
+        }
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern IntPtr CreateToolhelp32Snapshot(uint flags, uint processId);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool Process32First(IntPtr snapshot, ref PROCESSENTRY32 entry);
+
+        [DllImport("kernel32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool Process32Next(IntPtr snapshot, ref PROCESSENTRY32 entry);
+
+        private static byte[] CryptProtectBytes(byte[] plain)
+        {
+            IntPtr desc = IntPtr.Zero;
+            byte[] output;
+            if (!CryptProtectData(plain, null, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0, out output))
+                throw new InvalidOperationException("protect");
+            return output;
+        }
+
+        private static byte[] CryptUnprotectBytes(byte[] blob)
+        {
+            byte[] output;
+            string descrOut; if (!CryptUnprotectData(blob, out descrOut, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero, 0, out output))
+                throw new InvalidOperationException("unprotect");
+            return output;
+        }
+
+        [DllImport("crypt32.dll", SetLastError = true)]
+        private static extern bool CryptProtectData(byte[] pDataIn, string szDataDescr, IntPtr pOptionalEntropy, IntPtr pvReserved, IntPtr pPromptStruct, uint dwFlags, out byte[] pDataOut);
+
+        [DllImport("crypt32.dll", SetLastError = true)]
+        private static extern bool CryptUnprotectData(byte[] pDataIn, out string ppszDataDescr, IntPtr pOptionalEntropy, IntPtr pvReserved, IntPtr pPromptStruct, uint dwFlags, out byte[] pDataOut);
+
+        private static string ReadPipeLine(NamedPipeServerStream pipe, int timeoutMs)
+        {
+            var sb = new StringBuilder();
+            var deadline = DateTime.UtcNow.AddMilliseconds(timeoutMs);
+            var buffer = new byte[1];
+            while (DateTime.UtcNow < deadline)
+            {
+                if (!pipe.IsConnected) return null;
+                int read = pipe.ReadAsync(buffer, 0, 1).GetAwaiter().GetResult();
+                if (read == 0) return null;
+                char c = (char)buffer[0];
+                if (c == '\n') return sb.ToString();
+                if (c != '\r') sb.Append(c);
+                if (sb.Length > MaxControlLineLength * 8) return null;
+            }
+            return null;
+        }
+
+        private static void WritePipeLine(NamedPipeServerStream pipe, string line)
+        {
+            byte[] bytes = System.Text.Encoding.UTF8.GetBytes(line + "\n");
+            pipe.WriteAsync(bytes, 0, bytes.Length).GetAwaiter().GetResult();
+            pipe.Flush();
+        }
+
+        private static int CustodianClient(string[] args, string op)
+        {
+            Dictionary<string, string> parsed = ParseArguments(args);
+            string endpointText = File.ReadAllText(CustodianEndpointFile);
+            string pipeName = ExtractJsonString(endpointText, "\"pipe\":\"");
+            string token = ExtractJsonString(endpointText, "\"token\":\"");
+            if (pipeName == null || token == null) throw new InvalidDataException();
+
+            var pipe = new NamedPipeClientStream(".", NormalizePipeName(pipeName), PipeDirection.InOut);
+            pipe.Connect(10000);
+
+            byte[] tokenBytes = System.Text.Encoding.UTF8.GetBytes(token + "\n");
+            pipe.Write(tokenBytes, 0, tokenBytes.Length);
+
+            string opLine;
+            if (op == "register")
+            {
+                int parentPid;
+                string parentImage;
+                GetParentProcessInfo(System.Diagnostics.Process.GetCurrentProcess().Id, out parentPid, out parentImage);
+                opLine = "{\"op\":\"register\",\"pid\":" + parentPid + "}";
+            }
+            else if (op == "push")
+            {
+                string key = Console.In.ReadLine();
+                if (string.IsNullOrWhiteSpace(key)) throw new InvalidDataException();
+                key = key.Trim();
+                opLine = "{\"op\":\"push\",\"key\":\"" + key + "\"}";
+            }
+            else
+            {
+                string path = RequireArgument(parsed, "--path");
+                opLine = "{\"op\":\"get\",\"path\":\"" + path + "\"}";
+            }
+            byte[] opBytes = System.Text.Encoding.UTF8.GetBytes(opLine + "\n");
+            pipe.Write(opBytes, 0, opBytes.Length);
+            pipe.Flush();
+
+            var sb = new StringBuilder();
+            var buffer = new byte[4096];
+            while (true)
+            {
+                int read = pipe.Read(buffer, 0, buffer.Length);
+                if (read == 0) break;
+                sb.Append(System.Text.Encoding.UTF8.GetString(buffer, 0, read));
+                if (sb.ToString().Contains("\n")) break;
+            }
+            pipe.Dispose();
+            Console.Out.WriteLine(sb.ToString().Trim());
+            return 0;
         }
 
         // ------------------------------------------------------------------

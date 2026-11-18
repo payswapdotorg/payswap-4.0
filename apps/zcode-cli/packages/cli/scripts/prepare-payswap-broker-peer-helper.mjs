@@ -105,6 +105,7 @@ const cscArgsForArch = (arch) => [
   "/warnaserror+",
   "/win32manifest:app.manifest",
   "/reference:System.Core.dll",
+  "/reference:System.ServiceProcess.dll",
   `/out:out/${PAYSWAP_BROKER_PEER_HELPER_BINARY_NAME}`,
   "Program.cs",
 ];
