@@ -63,3 +63,116 @@
   matching clicks (label y ↔ option y) are the reliable setter.
 - The IAB controlled tab can vanish between calls; re-claim via
   `agent.browsers.open(url)` on the same URL.
+
+
+---
+
+# TL progress log — P2-Linux closure on the TL Linux sandbox (2026-11-17, evening)
+
+> Continuity note for the Linux leg. Branch: `p2/acceptance-runner-fail-closed`
+> (the same branch as the Windows work; merge `57669794` brings the E2B-side
+> `p2/vm-scripts-repo-root` fixes onto it). This sandbox IS a real Linux
+> environment (Debian 13, 4GiB cgroup, 2 vCPU) with a prefix-installed desktop
+> stack (`/home/z/my-project/linux-stack`: gnome-keyring + libsecret + p11-kit +
+> dbus from local debs) — the Linux desktop acceptance leg runs in-place.
+
+## Done (Linux leg, 2026-11-17)
+
+1. **Branch recovery + E2B-fix merge**: sandbox recycle lost the prior checkout;
+   re-cloned from origin and merged `p2/vm-scripts-repo-root` (6 commits:
+   REPO_ROOT derivation, hoisted electron resolution, Xvfb lifetime, DISPLAY
+   export) — merge commit `57669794`.
+2. **linux-build GREEN** (real chain, memory-constrained form):
+   `pnpm install --frozen-lockfile` (exit 0, 1m39s) + e2e-report build:node +
+   `pnpm --filter @zcode/desktop... run build` (exit 0, ~4min). The full
+   workspace bootstrap (`pnpm build:bootstrap` incl. packages/web) OOMs in the
+   4GiB cgroup — vite chunk rendering with hidden sourcemaps peaks >3.3GiB
+   native RSS (measured SIGKILL at anon-rss 3347MB, heap cap irrelevant —
+   sourcemap merging is native memory). Delivered
+   `ZCODE_DESKTOP_BUILD_SOURCEMAPS=off` (commit `1bd675dd`) — env-gated knob,
+   E2E/acceptance face only; production packaging face unchanged.
+3. **Display-leg self-verification GREEN**: Xvfb :99 + dbus-run-session +
+   gnome-keyring (`org.freedesktop.secrets` on the session bus, attempt 2) +
+   real Electron 44.7.0 probe: `backendSelected=gnome_libsecret,
+   isEncryptionAvailable=true, roundTrip=ok`.
+4. **Linux acceptance face DELIVERED** (this branch): preflight linux stage
+   derivation (`linux-leg-stack` check + linux-build/linux-secure-storage/
+   linux-desktop-e2e derivations; stripe-live & conversation-acceptance shared
+   ids per platform), `scripts/payswap/linux/` (leg-stack.cjs / leg-session.sh /
+   run-p2-acceptance.cjs + 14-case regression matrix), shared verdict law module
+   `scripts/payswap/acceptance-verdicts.cjs` (windows runner refactored onto it,
+   its 24-case matrix stays green).
+5. **Canonical five-stage run (TL sandbox, leg-stack prefix form)**:
+   linux-build **PASS** / linux-secure-storage **PASS** (probe + 13 suites
+   129/129 + platform gate 12/12) / linux-desktop-e2e **PASS**
+   (payswap-connection-ui 7/7, first-time pass 100% — the four storage arms on
+   the real gnome_libsecret backend) / stripe-live **SKIP** (no
+   ZCODE_E2E_STRIPE_LIVE_KEY in this environment — chat transcripts are not a
+   valid secret channel) / conversation-acceptance **SKIP** → **exit 2** (a
+   skip is never a pass). Sanitized artifacts + SHA-256 manifest under
+   `artifacts/p2-acceptance-linux/`.
+6. **Milestone decomposition landed** (roadmap surgery, script kept at
+   `scripts/payswap/linux/milestone-split-surgery.py`): P2 row split into
+   P2-Linux + P2-Windows; validator REQUIRED_MILESTONES + playbook updated;
+   validate-roadmap + its test green.
+7. **Post-recycle zero-assumption re-run GREEN** (2026-11-17T18:25:49Z, HEAD
+   `80c42ba1` = the merge candidate face): after full process reaping between
+   sessions the leg rebuilt in-place — verdicts identical to §8 (build PASS /
+   storage PASS 129/129 + probe gnome_libsecret / e2e PASS 7/7 / the two
+   operator-gated stages honest SKIP), manifest 8/8 OK, ~5.6 min. Registered
+   as live-acceptance-evidence §8.5. PR #46 defect verification re-confirmed
+   on this face: 915242dc covers RedactingLog cross-chunk carry, 13-step
+   evidence strictness, preflight fail-closed; the Linux runner consumes the
+   same platform-neutral modules (runner-redaction.cjs / manual-evidence.cjs /
+   acceptance-verdicts.cjs).
+8. **Exit-hygiene observation CLOSED (runner exonerated, 2026-11-17 late)**:
+   the §8.5 first-draft "lingering child handle" suspicion was corrected after
+   four controlled stage re-runs (both output forms) + one instrumented
+   zero-assumption full run (timeline + process snapshot to files): the runner
+   exits cleanly in every form (335s, rc=2, zero survivors, shell completes);
+   the stall lives in the TL sandbox tool-harness layer (large-volume direct-
+   pipe EOF), not the runner. Documented form (file redirection) unaffected.
+9. **Second recycle, worse mode — wipe→bundle-restore→full run GREEN**
+   (2026-11-17T19:15:25Z): the next sandbox recycle emptied the repo working
+   tree entirely; branch restored from the delivered bundle at `5bdd6900`,
+   cold `pnpm install --frozen-lockfile` 58.7s, full zero-assumption run all
+   green again (3 PASS + 2 honest SKIP, manifest 8/8) — the delivered bundle's
+   restorability is now proven by execution, registered in §8.5.
+10. **Independent security review of 915242dc DONE — 2 findings, both fixed
+    in-branch** (record: `docs/payswap/p2/security-review-915242dc.md`;
+    probes in-repo: `scripts/payswap/security-review-915242dc.probes.mjs`).
+    F1 (high): manual-evidence attestation hard-coded the winver `10.0.<build>`
+    form → a Linux-leg 13-step receipt could NEVER pass (and the linux-leg
+    checklist template pointed at the windows runner with backslashes) —
+    fixed by platform-parameterizing manual-evidence.cjs (default win32 = the
+    windows-matrix contract; linux runner passes "linux": kernel-version
+    platform + Windows-string rejection; legs not interchangeable). F2
+    (medium): Operator/Date-time emptiness checks still used the `\s*\S`
+    cross-line borrow (the exact defect class 915242dc-B fixed for Observed)
+    plus a Date/time alternation-order slip — fixed with `[ \t]` scoping +
+    longest-alternative-first. The redaction engine itself held under all
+    2036 adversarial probes (every split boundary, byte-by-byte, fuzz,
+    self-overlap) — no findings. After fixes: windows matrix 25/25, linux
+    matrix 19/19, probes 2052/2052 blocked, 0 new lint warnings on changed
+    files. Review no longer blocks the PR #46 merge.
+
+## Remaining (P2-Linux closure) — operator-controlled, precisely identified
+
+1. **Restricted key supply** for `acct_1UblugEz3o7yd7Uo` (or the activated
+   `ekontetevi+p2acceptance@gmail.com` account): the key (`rk_test_*`, name
+   `payswap-p2-live-ro`, created 2026-11-16) lives in
+   `~/.payswap-keys.env` **on the Windows operator machine**. The TL sandbox has
+   no key and no valid secret channel (chat = transcript). Action: run the two
+   Stripe stages either on the operator machine (E2B driver §4.1 / windows
+   runner) or deliver the key to a chosen Linux acceptance machine via a 0600
+   env file.
+2. **Account onboarding completion**: email verified ✓; wizard stopped at 3/5
+   (2FA authenticator). `/v1/account` has no `requirements` object until the
+   identity section completes → detail read-back stays the typed
+   `read_back_unavailable` refusal (lawful, not a defect). Action: finish 2FA +
+   steps 4-5, then verify
+   `curl -s -u "$KEY:" https://api.stripe.com/v1/account | jq '.requirements,
+   (.capabilities|length)'` shows requirements + non-empty capabilities.
+3. Then re-run `stripe-live` (expect RESULT_E2E=0; RESULT_HARNESS=0 iff the
+   requirements gate holds) + `conversation-acceptance` (13-step manual receipt)
+   — exact commands in LINUX-P2-CLOSURE-HANDOFF.md.

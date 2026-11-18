@@ -256,7 +256,16 @@ export default defineConfig(({ command, mode }) => {
       emptyOutDir: true,
       // 生产包若直接暴露 sourceMappingURL，攻击者可在客户端侧还原业务源码。
       // 生产使用 hidden sourcemap：本地/发布流程保留 .map，不在产物里暴露映射入口。
-      sourcemap: mode === "production" ? "hidden" : true,
+      // ZCODE_DESKTOP_BUILD_SOURCEMAPS=off：内存受限构建机（~4GiB cgroup）上
+      // sourcemap 合并的 native 内存峰值会使 vite build 在 rendering chunks 阶段
+      // 被 cgroup OOM 击杀（2026-11-17 TL Linux 沙箱实测 RSS>3.3GiB）。该开关只
+      // 用于 E2E/验收面（E2E 不消费 .map；production 打包面保持 hidden 不变）。
+      sourcemap:
+        process.env.ZCODE_DESKTOP_BUILD_SOURCEMAPS === "off"
+          ? false
+          : mode === "production"
+            ? "hidden"
+            : true,
       rollupOptions: {
         // 多入口：主窗口 + 进程监控 + CUA 权限拖拽浮窗
         input: {

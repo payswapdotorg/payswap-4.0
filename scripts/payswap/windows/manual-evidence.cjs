@@ -1,6 +1,12 @@
 // 交互验收人工清单与回执严格校验（自 run-p2-acceptance.cjs 拆出 —— 800 行
 // 仓库上限；conversation-acceptance 阶段的证据模板 —— 与
 // docs/payswap/p2/ENVIRONMENT-READINESS-HANDOFF.md 同源同序）。
+//
+// 平台感知（2026-11-17 安全复审修复）：attestation 的 Platform 行按腿校验 ——
+// win32 腿要求 winver 的 10.0.<build>；linux 腿要求 uname 内核版本，且拒绝
+// Windows 字样（两腿互不替代是登记条款，不是便利）。platform 参数缺省 "win32"
+// = 历史行为（windows runner 与其 24 例矩阵的既有契约）；两 runner 各自显式
+// 传参，不允许静默按宿主推断（跨平台跑矩阵会漂移）。
 
 const MANUAL_CHECKLIST_ITEMS = [
   ["1", "Start the real PaySwap desktop application (pnpm dev:desktop:prod, or the installed package)", "the app window opens normally"],
@@ -18,27 +24,32 @@ const MANUAL_CHECKLIST_ITEMS = [
   ["13", "Attempt a read after revocation", "typed refusal (fail-closed), not a crash"],
 ];
 
-function renderManualChecklist() {
+function renderManualChecklist(platform = "win32") {
+  const isLinux = platform === "linux";
   const lines = [
-    "# P2 conversation-acceptance — manual New Task evidence",
+    isLinux
+      ? "# P2 conversation-acceptance — manual New Task evidence (Linux leg)"
+      : "# P2 conversation-acceptance — manual New Task evidence",
     "",
     "> Fill every `Result:` line below with what you actually observed, attach sanitized",
     "> screenshots next to this file, then save as `manual-new-task-evidence.md` and re-run:",
-    "> `node scripts\\payswap\\windows\\run-p2-acceptance.cjs --stage conversation-acceptance --manual-evidence <path>`",
+    isLinux
+      ? "> `node scripts/payswap/linux/run-p2-acceptance.cjs --stage conversation-acceptance --manual-evidence <path>`"
+      : "> `node scripts\\payswap\\windows\\run-p2-acceptance.cjs --stage conversation-acceptance --manual-evidence <path>`",
     "> Never paste the restricted key or customer PII into this file.",
     "",
   ];
   for (const [n, action, expected] of MANUAL_CHECKLIST_ITEMS) {
     lines.push(`## Step ${n}. ${action}`);
     lines.push(`- Expected: ${expected}`);
-    lines.push(`- Observed: `);
-    lines.push(`- Result: `);
+    lines.push("- Observed: ");
+    lines.push("- Result: ");
     lines.push("");
   }
   lines.push("## Attestation");
   lines.push("- Operator: ");
   lines.push("- Date/time (local): ");
-  lines.push("- Platform (winver output): ");
+  lines.push(isLinux ? "- Platform (uname -a output): " : "- Platform (winver output): ");
   lines.push("- App commit SHA: ");
   lines.push("");
   return lines.join("\n");
@@ -49,9 +60,10 @@ const CREDENTIAL_PATTERNS = [/rk_test_/, /rk_live_/, /sk_test_/, /sk_live_/, /wh
 /** 人工回执严格校验（defect B 关闭）：报告存在 ≠ 验收成功。
  *  - 恰好 13 个步骤标题（Step 1..13），无缺、无重、无未知编号；
  *  - 每步有非空 Observed 且 Result 恰为 PASS（FAIL/BLOCKED/SKIP/空/未知值一律不过）；
- *  - attestation 四要素齐备（operator、date/time、Windows 版本号、40 hex commit SHA）；
+ *  - attestation 四要素齐备（operator、date/time、平台标识、40 hex commit SHA）——
+ *    平台标识按 platform 腿校验（win32=10.0.<build>；linux=内核版本且拒 Windows 字样）；
  *  - 任何凭据材料形态命中即拒。 */
-function validateManualEvidence(text, secret) {
+function validateManualEvidence(text, secret, platform = "win32") {
   const problems = [];
   const stepHeadingRe = /^##\s*Step\s*(\d+)\./gm;
   const headings = [];
@@ -90,10 +102,20 @@ function validateManualEvidence(text, secret) {
       }
     }
   }
-  if (!/Operator:\s*\S/.test(text)) problems.push("Attestation 'Operator:' is empty");
-  if (!/(Date\/time|Date\/time \(local\)):\s*\S/.test(text)) problems.push("Attestation 'Date/time' is empty");
+  if (!/Operator:[ \t]*\S/.test(text)) problems.push("Attestation 'Operator:' is empty");
+  if (!/(?:Date\/time \(local\)|Date\/time):[ \t]*\S/.test(text)) problems.push("Attestation 'Date/time' is empty");
   const platformLine = text.match(/Platform[^:\n]*:\s*(\S[^\n]*)/);
-  if (!platformLine || !/10\.0\.\d+/.test(platformLine[1])) {
+  if (!platformLine) {
+    problems.push("Attestation 'Platform:' is empty");
+  } else if (platform === "linux") {
+    if (/windows/i.test(platformLine[1])) {
+      problems.push(
+        "Attestation 'Platform' carries a Windows platform string — the Linux leg requires the Linux platform attestation (uname -a; the two legs are not interchangeable)",
+      );
+    } else if (!/\d+\.\d+\.\d+/.test(platformLine[1])) {
+      problems.push("Attestation 'Platform' must contain the Linux kernel version (e.g. 5.10.134-... from uname -a)");
+    }
+  } else if (!/10\.0\.\d+/.test(platformLine[1])) {
     problems.push("Attestation 'Platform' must contain the exact Windows version/build (10.0.<build> from winver)");
   }
   const shaLine = text.match(/App commit SHA:\s*(\S+)/);

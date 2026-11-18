@@ -218,6 +218,30 @@ test("B9: unknown step numbers and incomplete attestation fail", () => {
   assert.equal(runner.validateManualEvidence(noPlatform, null).some((p) => p.includes("10.0.<build>")), true);
 });
 
+test("B10: empty attestation lines never borrow the next line's content (review finding: \\s* cross-line)", () => {
+  // 2026-11-17 安全复审发现：Operator/Date/time 的空值检查曾是 \\s*\\S —— 跨行
+  // 吞掉换行后把下一行首字符当值。与 Observed 的 [ \t] 修复同类，同修。
+  const noOperator = buildValidEvidence().replace("- Operator: TL-on-windows", "- Operator: ");
+  assert.equal(runner.validateManualEvidence(noOperator, null).some((p) => p.includes("'Operator:' is empty")), true);
+  const noDate = buildValidEvidence().replace(
+    "- Date/time (local): 2026-11-17 15:00",
+    "- Date/time (local): ",
+  );
+  assert.equal(runner.validateManualEvidence(noDate, null).some((p) => p.includes("'Date/time' is empty")), true);
+  // 值写在下一行（跨行借用）同样不过
+  const dateNextLine = buildValidEvidence().replace(
+    "- Date/time (local): 2026-11-17 15:00",
+    "- Date/time (local): \n2026-11-17 15:00",
+  );
+  assert.equal(runner.validateManualEvidence(dateNextLine, null).some((p) => p.includes("'Date/time' is empty")), true);
+  // "(local)" 后缀不得被当作值（alternation 顺序缺陷：空值 + "(local)" 形态）
+  const plainDateEmpty = buildValidEvidence().replace(
+    "- Date/time (local): 2026-11-17 15:00",
+    "- Date/time: ",
+  );
+  assert.equal(runner.validateManualEvidence(plainDateEmpty, null).some((p) => p.includes("'Date/time' is empty")), true);
+});
+
 // ---------------------------------------------------------------------------
 // C — preflight fail-closed（launch 失败 / 畸形输出 / 缺记录 / 平台不符绝不放行）
 // ---------------------------------------------------------------------------

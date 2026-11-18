@@ -21,7 +21,15 @@
 
 set -euo pipefail
 
-REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+# 2026-11-16 修复：本脚本住 scripts/payswap/live/（三层深）—— 原推导只回退两层，
+# REPO_DIR 落在 <repo>/scripts；dbus-run-session 内相对 cwd 的 cd packages/desktop
+# 直接失败（E2E 臂实测）。mega-setup 此前靠 pnpm 向上找 workspace 根而侥幸可用。
+# package.json 在场自证 —— 推导错误 fail loud，不再静默错位。
+if [ ! -f "$REPO_DIR/package.json" ]; then
+  printf '[vm-run-live] FATAL: REPO_DIR 推导错误（无 package.json）: %s\n' "$REPO_DIR" >&2
+  exit 2
+fi
 ARTIFACT_DIR="${LIVE_ARTIFACT_DIR:-/workspace/artifacts/live-e2e}"
 cd "$REPO_DIR"
 
@@ -33,6 +41,17 @@ if [ -z "${ZCODE_E2E_STRIPE_LIVE_KEY:-}" ]; then
 fi
 
 mkdir -p "$ARTIFACT_DIR"
+
+# Xvfb 显示服务（2026-11-16 修复）：mega-setup 拉起的 Xvfb 不跨 E2B 命令存活。
+# WDIO 的 xvfb 服务会为 spec 运行自行管理显示，但运行器导出的 DISPLAY 缺省
+# :99 —— 确保在场（幂等），不依赖外部状态。
+if ! pgrep -x Xvfb >/dev/null 2>&1; then
+  (Xvfb :99 -screen 0 1280x800x24 >/dev/null 2>&1 &)
+  for _ in $(seq 1 30); do
+    [ -e /tmp/.X11-unix/X99 ] && break
+    sleep 0.5
+  done
+fi
 
 # 真 Secret Service 腿（container entrypoint 同款 recipe：空口令 login keyring +
 # 有界重试自证 org.freedesktop.secrets 在场 —— 宁可腿红也不静默退化 fallback-only）。

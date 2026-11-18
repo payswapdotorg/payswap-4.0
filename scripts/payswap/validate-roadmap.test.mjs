@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { validateRoadmap } from "./validate-roadmap.mjs";
 
-const milestones = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", "P9"];
+const milestones = ["P1", "P2-Linux", "P2-Windows", "P3", "P4", "P5", "P6", "P7", "P8", "P9"];
 
 function fixture() {
   const root = mkdtempSync(join(tmpdir(), "payswap-roadmap-test-"));
