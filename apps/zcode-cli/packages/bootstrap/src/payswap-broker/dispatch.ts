@@ -196,12 +196,16 @@ export function createPayswapBrokerDispatch(
           // ADR-P2-1 detail 半：connectionId 收窄且 detail reader 在场 → 现读 detail
           // （验证读状态机 + 能力证据 + 四类别只读数据）。抛错 → internal_error
           //（§6.3，与 reader 同类）；typed detail 联合原样入 `account`。
-          // 确定性单账户消歧（2026-11-18 review §5）：省略 connectionId 且已连接集合
-          // 恰一个账户 → 直接对该行现读 detail（四类别同答返回，模型无需两步猜 id）；
-          // 多账户 → 仅回清单（即消歧选择面，用户指定 connectionId 后再取 detail）。
+          // 确定性单账户消歧（2026-11-18 review §5；TL review §C 修正）：省略
+          // connectionId 时只有 status "connected" 的行参与消歧 —— 恰一行 → 对它现读
+          // detail（四类别同答）；零行或多行 → 无 detail（清单仍是选择面）。revoked /
+          // expired 行永远保留在清单投影里（状态可见面，不因消歧被隐藏）。
+          const connectedRows = connections.filter(
+            (connection) => connection.status === "connected",
+          );
           const detailTargetId =
             requestedConnectionId ??
-            (narrowed.length === 1 ? narrowed[0]?.connectionId : undefined);
+            (connectedRows.length === 1 ? connectedRows[0]?.connectionId : undefined);
           if (detailTargetId !== undefined && accountDetailReader !== undefined) {
             try {
               data.account = await accountDetailReader(detailTargetId);

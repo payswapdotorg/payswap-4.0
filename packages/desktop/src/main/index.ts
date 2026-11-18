@@ -294,6 +294,7 @@ import {
   installPluginSandboxHost,
 } from "./pluginSandbox/index.js";
 import { installDesktopPayswapApproval, installDesktopPayswapConnections } from "./payswap/index.js";
+import { buildPayswapReaderBridgeSpawnOptions } from "./payswap/readerBridgeSpawnOptions.js";
 
 registerLocalMediaPreviewScheme(protocol, [
   PLUGIN_SANDBOX_PRIVILEGED_SCHEME,
@@ -2037,10 +2038,8 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
           //（第 5 参）。此前被误 spread 进第 4 参 dependencies（字段不在其类型里，运行期
           // 被丢弃）—— options 里恒无铸造器，端口从未转移（2026-11-18 live 证实：host
           // "main port attached" 从不出现 → agent spawn env 无桥标记 → reader 缺席 →
-          // get_account_overview 恒 not_connected）。
-          ...(mintPayswapReaderBridgePortForHost
-            ? { mintPayswapReaderBridgePort: mintPayswapReaderBridgePortForHost }
-            : {}),
+          // get_account_overview 恒 not_connected）。回归保护：buildPayswapReaderBridgeSpawnOptions。
+          ...buildPayswapReaderBridgeSpawnOptions(mintPayswapReaderBridgePortForHost),
         },
       ),
     disposeHostProcess: (child, label, forceKillDelayMs) =>
