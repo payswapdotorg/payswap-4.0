@@ -423,3 +423,21 @@ typed refusal（四类别逐条 unavailable，模型如实转述，零即兴）�
 **不**阻断同用户模型侧进程 —— Electron 44 的 os_crypt/DPAPI 方案不改变同用户
 边界。遏制（轮换）仍是操作者 dashboard 步；架构加固（计划 §4：独立保护身份 +
 窄 RPC 面）按独立里程碑推进。P2-Windows 关闭时按本节如实转述。
+
+### §10.1 补全：恢复键轮换完成（2026-11-18 深夜 —— TL closure mission Priority 1 遏制步闭环）
+
+- **操作**：Stripe dashboard（acct_1FPs7UAkPdhgtN6I，test mode）→ 受限键
+  "PaySwap P2 read-only acceptance" → **Expire key**（旧值 `rk_test_…aabJ` 即刻失效）；
+  同页新建受限键 "PaySwap P2 read-only acceptance (rotated 2026-11-18)" ——
+  权限=五读族（Core / Balance / Charges and Refunds / Customers / Payment Disputes
+  各 Read + Connect→Accounts Read），无过期日。
+- **验证（API 实测）**：新键 → `/v1/balance`、`/v1/charges`、`/v1/customers`、
+  `/v1/disputes`、`/v1/account` 全 **HTTP 200**；旧键 → **HTTP 401
+  `api_key_expired`**。
+- **交付**：新键直接写入 `C:\Users\Lenovo\.payswap-live.env`（dashboard 显示的
+  show-once 值经页面 DOM 捕获直写文件，**未进入聊天转录**；ACL =
+  owner-only，继承已断）。会话转录中因 dashboard 复制单元格渲染曾短暂出现
+  旧键全值 —— 该值现已失效，风险随轮换闭合。
+- **残余**：架构加固（§10 所述独立保护身份 + 窄 RPC）仍是独立里程碑；
+  `docs/payswap/p2/evidence/newtask-2026-11-18/security-probe-result.txt` 的
+  RECOVERED 结论在本轮换后仍成立（针对新凭据同链可行），故加固优先级不变。
