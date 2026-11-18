@@ -167,6 +167,7 @@
   "packages/services/test/payswap-account-data.test.ts",
   "packages/services/test/payswap-account-runtime.test.ts",
   "packages/services/test/payswap-account-service.test.ts",
+  "packages/services/test/payswap-agent-helper-forward.test.ts",
   "packages/services/test/payswap-credential-security.test.ts",
   "packages/services/test/payswap-protocol-contract.test.ts",
   "packages/services/test/payswap-stripe-read-back.test.ts",

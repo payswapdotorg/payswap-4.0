@@ -265,3 +265,73 @@ Next agent steps:
 - Artifacts: run-1 `artifacts/p2-acceptance/2026-11-17T15-31-25-426Z/`;
   run-2 `…/2026-11-17T15-48-00-883Z/`; harness evidence `/tmp/harness-repro2/`
   (copy to `artifacts/` before /tmp cleanup).
+
+---
+
+# BROKER BLOCKER CLOSED (continuation agent, 2026-11-18 afternoon)
+
+> Append-only continuation. Branch head at handoff: `e9a9118b`. The §C blocker
+> (New Task conversational read dies `instance_mismatch` because the broker
+> boots `degraded_refusing`) is **FIXED and proven live on native Windows**.
+
+## Root cause (§C post-mortem)
+
+The hop-2 forward in `zcodeAgentProcessManager.ts` read
+`process.env[PAYSWAP_BROKER_HELPER_*]` — but the host's own init
+(`initializeRuntimeProcessEnv` → `sanitizeZCodeRuntimeEnvInPlace(process.env)`)
+strips those keys from the host's own `process.env` **after capturing them**
+(capture-before-strip snapshot in shared `runtimeEnv.ts`). The snapshot reader
+(`readCapturedPayswapBrokerHelperSupply`) existed and was consumed by the agent
+CLI entry (`cli/src/main.ts:65` re-injection), but the host-side forward never
+consulted it → the forward was permanently empty on the desktop chain → agent
+CLI capture empty → coordinator lazy-boot relay resolution empty → win32
+`degraded_refusing` with reason `reader=unavailable` (the `relayConfig === null`
+arm — the relay was never even attempted). Hop 1 (`48f128b3`) was correct all
+along: the live probe proved the desktop main resolves + digest-verifies the
+staged pair (`7374217e…`) and injects both keys into the host fork env.
+
+## Fix
+
+- `packages/services/src/zcode-agent/zcodeAgentProcessManager.ts`: new
+  `resolvePayswapBrokerHelperForwardEnv(processEnv)` — captured snapshot first,
+  un-sanitized `process.env` fallback (remote forms), empty spread when absent.
+  The spawn env assembly now uses it.
+- Regression battery: `packages/services/test/payswap-agent-helper-forward.test.ts`
+  (4 cases: snapshot-after-strip regression, env fallback, half/absent supply →
+  empty, invalid sha shape → fail-closed null). Registered in
+  `scripts/engineering-test-files.json`. 4/4 green; oxlint 0/0 on changed files.
+
+## Live evidence (2026-11-18, dev desktop, no operator env injection)
+
+1. Boot audit `2026-11-18T16:15:56.396Z` (entrypoint `zcode_protocol`):
+   `outcome:boot code:peer_verified helperSupplyPresent:{path:true,sha256:true}` —
+   the first `peer_verified` boot on the native-Windows dev chain (previous boots:
+   `degraded_refusing`, `helperSupplyPresent:{false,false}`).
+2. TEMP hop probes (removed before commit) recorded the full chain:
+   hop-1 desktop injection both keys present; hop-2 forward `captured=true`
+   after the fix (was `false false` before).
+
+## Notes / gaps found while bisecting
+
+- `resolveDefaultPeerRelayHelper`'s docstring says "仅 darwin" — stale; it
+  accepts win32 (peer-relay.ts:105). Comment-only issue.
+- Operator-wins on the desktop dev chain is currently ineffective for
+  operator-set user env keys: desktop main captures+strips them and the resolver
+  yields `{}` under operator-wins, so nothing forwards them to the host. The
+  §C step-2 fallback ("set the two keys operator-side") would NOT have unblocked
+  the desktop chain; the production fix above is the only working path.
+  If operator override is wanted on this chain, the desktop main must forward
+  its captured snapshot explicitly (deliberate decision, not done here).
+- Harness evidence `/tmp/harness-repro2/` rescued to
+  `artifacts/p2-acceptance/harness-repro2-rescued/` (3 files).
+
+## Remaining to P2 closure (unchanged §C step 3 + pasted plan §7-8)
+
+1. Real New Task conversational four-category run through the plugin (broker now
+   verified — the path is unblocked).
+2. Revoke → typed refusal (checklist steps 12-13).
+3. 13-step manual evidence → final zero-assumption five-stage run with
+   `--manual-evidence` → evidence register §7+ → roadmap P2 → complete.
+4. P2 availability work from the review: `alwaysLoad: true` on the PaySwap
+   gateway server, New Task enablement/consent preflight, deterministic
+   single-account overview resolution (dispatch.ts detail attach).
