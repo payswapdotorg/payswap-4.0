@@ -376,3 +376,50 @@ P2-Windows 行维持 `in_progress` 直至 §10 的安全项与上述门全部通
 
 **回归保护增量（TL review §3 B 已落地）**：`e41f1a85` —— reader 桥第 5 参契约
 battery、混合状态消歧 battery、alwaysLoad 双层断言。
+
+### §9.1 形式验收运行补全（同日稍晚 —— TL closure mission Priority 3）
+
+**零假设五阶段运行 + 13 步手工回执（全 PASS，exit 0）**：测试 SHA
+`9dabf63ab39034dc523f5826efafd3cde3185a5a`（win32 10.0.26200，node 24.14.0）。
+
+| 阶段 | 裁决 |
+|---|---|
+| windows-build | PASS（install + build:bootstrap，exit 0） |
+| windows-secure-storage | PASS（DPAPI probe + 法则电池） |
+| windows-desktop-e2e | PASS |
+| stripe-live | PASS |
+| conversation-acceptance | **PASS（13 步手工回执经严格校验）** |
+
+工件：`artifacts/p2-acceptance/2026-11-18T20-12-16-275Z/`（summary.json +
+MANIFEST-sha256.txt 10/10 复核一致）。人工回执副本（消毒）+
+最终 summary/manifest 已入仓：`docs/payswap/p2/evidence/newtask-2026-11-18/`
+（`manual-new-task-evidence.md`、`final-run-summary.json`、
+`final-run-MANIFEST-sha256.txt`、更新后的 `MANIFEST-sha256.txt`）。
+
+13 步回执要点（全 PASS，attestation：operator = Lenovo/payswapdotorg continuation
+agent；winver `Microsoft Windows [Version 10.0.26200.9974]`；SHA = 测试提交）：
+连接（真实 UI + 真键）→ at-rest 检查（`enc` 前缀包裹 blob，137 B 密文，
+v2 全树零键明文形）→ 刷新免重输 → 全退出重启后连接持久 + 再刷新 → New Task
+四分类会话（审计 `dispatched op:get_account_overview peerPid:1940`）→ 转录/日志
+零密钥材料零 PII → Revoke（"locally stored secret was deleted"）→ 撤销后读 =
+typed refusal（四类别逐条 unavailable，模型如实转述，零即兴）。
+
+### §10 补全：凭据安全验证探针（TL closure mission Priority 1 —— 如实声明）
+
+**探针问题**：同用户、非 Electron 的普通进程能否恢复一份新鲜的 PSP 凭据？
+**结果：能（RECOVERED）** —— 完整链已实证（全部格式来自仓内公开代码，键明文
+零打印零落盘）：
+1. `%APPDATA%/ZCode Dev/session/Local State` 的 `os_crypt.encrypted_key`
+   （"DPAPI" 前缀 283 B）→ 普通 .NET DPAPI unprotect → **32 字节主键恢复**；
+2. `v2/payswap-psp-safe-storage-key`（"v10" Chromium os_crypt blob）→ 主键
+   AES-256-GCM 解包 → **64-hex 文件键恢复**；
+3. 新鲜连接的 `enc:v1:` 槽位 → sha256(file-key) → AES-256-GCM → **受限键明文
+   恢复（107 字符，形状确认后立即丢弃）**。
+
+探针全程只读键材料；演示后新鲜槽位即刻撤销（密文删除）。完整记录：
+`docs/payswap/p2/evidence/newtask-2026-11-18/security-probe-result.txt`。
+
+**结论（与 TL 复核 §3-A 一致，且加强）**：P2-Windows 的凭据边界在当前架构下
+**不**阻断同用户模型侧进程 —— Electron 44 的 os_crypt/DPAPI 方案不改变同用户
+边界。遏制（轮换）仍是操作者 dashboard 步；架构加固（计划 §4：独立保护身份 +
+窄 RPC 面）按独立里程碑推进。P2-Windows 关闭时按本节如实转述。

@@ -1,0 +1,25 @@
+SECURITY VERIFICATION PROBE — 2026-11-18 (native Windows, isolated data home)
+Question: can a plain, non-Electron, SAME-USER process recover a fresh PSP credential?
+
+Chain attempted (all steps from repo-public formats, key material never printed):
+ 1. %APPDATA%/ZCode Dev/session/Local State → os_crypt.encrypted_key
+    ("DPAPI"-prefixed, 283 B) → .NET ProtectedData.Unprotect (CurrentUser)
+    → SUCCESS: 32-byte AES master key recovered by the plain process.
+ 2. v2/payswap-psp-safe-storage-key ("v10" Chromium os_crypt blob, 95 B)
+    → AES-256-GCM with the master key → SUCCESS: 64-hex file key unwrapped.
+ 3. v2/credentials.json slot payswap:psp:stripe:<connectionId>:api-key
+    ("enc:v1:" + base64url(iv).tag.ct — format public in
+    packages/services/src/credential/providers/credentialCipherProvider.ts)
+    → sha256(file-key) → AES-256-GCM → SUCCESS with a fresh connected slot:
+    recovered 107 chars, shape "rk_test_…" (plaintext NOT printed, not logged).
+
+RESULT: RECOVERED — the same-user, non-Electron capability is REAL on the current
+architecture (Electron 44 safeStorage on Windows + the enc:v1 services cipher).
+The 2026-11-17-era DPAPI claim holds; Electron 44's os_crypt key does not change
+the same-user boundary. Architectural hardening (separate protected broker
+identity / model-side restriction, plan §4) is REQUIRED and registered as its own
+milestone. Containment: the historical key rotation remains the operator step.
+
+Post-probe state: fresh slot revoked (secret deleted) — probe was read-only
+against key material at every step; the recovered plaintext was never printed,
+written, or transmitted outside the probe process.

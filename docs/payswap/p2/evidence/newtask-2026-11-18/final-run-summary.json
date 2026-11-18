@@ -1,0 +1,95 @@
+{
+  "runner": "payswap-p2-acceptance",
+  "startedAt": "2026-11-18T20-12-16-275Z",
+  "platform": "win32",
+  "platformRelease": "10.0.26200",
+  "node": "24.14.0",
+  "commit": "9dabf63ab39034dc523f5826efafd3cde3185a5a",
+  "dryRun": false,
+  "assumedStagesPassed": [],
+  "secretPresent": true,
+  "stages": {
+    "windows-build": {
+      "verdict": "PASS",
+      "steps": [
+        {
+          "name": "pnpm install --frozen-lockfile",
+          "code": 0
+        },
+        {
+          "name": "pnpm build:bootstrap",
+          "code": 0
+        }
+      ],
+      "note": null,
+      "logPath": "artifacts\\p2-acceptance\\2026-11-18T20-12-16-275Z\\windows-build\\windows-build.log"
+    },
+    "windows-secure-storage": {
+      "verdict": "PASS",
+      "steps": [
+        {
+          "name": "electron safeStorage DPAPI probe (exit 0 = available + round-trip ok)",
+          "code": 0
+        },
+        {
+          "name": "vitest: P2 engineering law battery (13 suites, CI-canonical surface)",
+          "code": 0
+        },
+        {
+          "name": "node --test safe-storage-backend-gate (win32 never calls getSelectedStorageBackend)",
+          "code": 0
+        }
+      ],
+      "note": "DPAPI proof = real Electron runtime round-trip + production key-store law on win32; at-rest ciphertext inspection is carried by the windows-desktop-e2e / stripe-live specs",
+      "logPath": "artifacts\\p2-acceptance\\2026-11-18T20-12-16-275Z\\windows-secure-storage\\windows-secure-storage.log"
+    },
+    "windows-desktop-e2e": {
+      "verdict": "PASS",
+      "steps": [
+        {
+          "name": "wdio: payswap-connection-ui.test.ts (connection journey, at-rest ciphertext, refresh closed set, revoke, corrupted-key restart)",
+          "code": 0
+        }
+      ],
+      "note": null,
+      "logPath": "artifacts\\p2-acceptance\\2026-11-18T20-12-16-275Z\\windows-desktop-e2e\\windows-desktop-e2e.log"
+    },
+    "stripe-live": {
+      "verdict": "PASS",
+      "steps": [
+        {
+          "name": "wdio: payswap-connection-live.test.ts (connect connected / refresh verified / revoke + at-rest deletion)",
+          "code": 0
+        },
+        {
+          "name": "node scripts/payswap/live/build-live-harness.mjs",
+          "code": 0
+        },
+        {
+          "name": "electron main.cjs live harness (RESULT_HARNESS=0 — four-category data via direct + bridge forms)",
+          "code": 0
+        }
+      ],
+      "note": null,
+      "logPath": "artifacts\\p2-acceptance\\2026-11-18T20-12-16-275Z\\stripe-live\\stripe-live.log"
+    },
+    "conversation-acceptance": {
+      "verdict": "PASS",
+      "steps": [
+        {
+          "name": "manual New Task evidence validated (13/13 PASS + full attestation)",
+          "code": 0,
+          "answered": 13
+        }
+      ],
+      "note": "operator-attested interactive evidence (manual, not automated) — recorded as such in the summary",
+      "logPath": "artifacts\\p2-acceptance\\2026-11-18T19-34-14-525Z\\conversation-acceptance\\manual-new-task-evidence.md"
+    }
+  },
+  "leakScan": {
+    "performed": true,
+    "hits": [],
+    "sanitized": [],
+    "rescanClean": true
+  }
+}
