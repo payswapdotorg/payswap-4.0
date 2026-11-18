@@ -45,4 +45,5 @@ export {
   createPayswapAccountRuntime,
   type PayswapAccountRuntime,
   type PayswapAccountRuntimeDependencies,
+  type PayswapCustodianBridge,
 } from "./runtime.js";

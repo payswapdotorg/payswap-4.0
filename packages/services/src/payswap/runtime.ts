@@ -29,7 +29,12 @@ import type {
   PayswapConnectionStatusProjection,
 } from "@zcode/shared/payswap";
 import { createCredentialService } from "../credential/credentialService.js";
-import { createPayswapAccountService } from "./accounts/accountService.js";
+import {
+  CUSTODIAN_SECRET_MARKER,
+  createPayswapAccountService,
+  type PayswapAccountCredentialPort,
+  type PayswapCustodianBridge,
+} from "./accounts/accountService.js";
 import { createPayswapConnectionRecordStore } from "./accounts/connectionRecordStore.js";
 import { createStripeAccountDataReadPort } from "./providers/stripe/readAccountData.js";
 import { createStripeAccountReadBackPort } from "./providers/stripe/readBackAccount.js";
@@ -47,7 +52,17 @@ export interface PayswapAccountRuntimeDependencies {
   now?(): string;
   /** 连接 ID 铸造（缺省 = shared 法则）。 */
   mintConnectionId?(): string;
+  /** ADR-P2-3 custodian 桥（在位 = 密钥只入托管；缺席 = 既有直接路径不变）。 */
+  custodianBridge?: PayswapCustodianBridge;
 }
+
+/**
+ * ADR-P2-3 custodian 桥：桌面 main 注入的 helper 通道（push/get/drop）。在位时
+ * accountService 走 custodian 分支 —— 密钥只进 custodian（SYSTEM 服务内存 + 其
+ * SYSTEM-DPAPI blob），main 不持明文、不落 enc:v1 槽；Stripe GET 经有界代理。
+ * 法则与标记常量住 accountService.js（单一事实源），此处类型转发。
+ */
+export type { PayswapCustodianBridge } from "./accounts/accountService.js";
 
 export interface PayswapAccountRuntime {
   /** 账户服务（连接/撤销/证据刷新/概览 —— 唯一写者实例）。 */
@@ -62,6 +77,27 @@ export interface PayswapAccountRuntime {
  * 创建账户运行时（生产装配）。单一服务实例 + 两个绑定 reader 面；凭据通道经 env
  * 交付（法则 2）。本模块无 boot 副作用（懒装配 —— store/凭据文件按操作触达）。
  */
+
+/** Authorization 头读取（HeadersInit 三形态；缺省 ""）。 */
+function readAuthorizationHeader(init?: RequestInit): string {
+  const headers = init?.headers;
+  if (headers === undefined) return "";
+  if (typeof Headers !== "undefined" && headers instanceof Headers) {
+    return headers.get("Authorization") ?? "";
+  }
+  if (Array.isArray(headers)) {
+    for (const [name, value] of headers) {
+      if (name.toLowerCase() === "authorization") return value;
+    }
+    return "";
+  }
+  const record = headers as Record<string, string>;
+  for (const [name, value] of Object.entries(record)) {
+    if (name.toLowerCase() === "authorization") return value;
+  }
+  return "";
+}
+
 export function createPayswapAccountRuntime(
   dependencies: PayswapAccountRuntimeDependencies = {},
 ): PayswapAccountRuntime {
@@ -70,18 +106,52 @@ export function createPayswapAccountRuntime(
   const connectionStore = createPayswapConnectionRecordStore({
     resolveStorePath: dependencies.resolveStorePath,
   });
+  const custodianBridge = dependencies.custodianBridge;
+  // ADR-P2-3 custodian 凭据端口：save = push（connect 时恰一次，密钥入托管）；
+  // load = 占位标记（读取经标记路由 transport 转发托管代理）；delete = no-op
+  //（托管清除走 revoke 分支的 drop）。在位时 main 全程不持明文、不落 enc:v1 槽。
+  const custodianCredentialPort: PayswapAccountCredentialPort = custodianBridge
+    ? {
+        load: async () => CUSTODIAN_SECRET_MARKER,
+        save: async (_key, value) => {
+          await custodianBridge.push(value);
+        },
+        delete: async () => {},
+      }
+    : credentialPort;
+  // ADR-P2-3：custodian 在位 → apiClient 包装为标记路由 transport —— 携占位
+  // Bearer（"custodian-managed"）的 GET 转发托管代理（服务端补真 Bearer + 路径
+  // 闭集 + pid 门）；其余 fetch 原样（行为不变）。代理应答以 status/body 重铸
+  // Response（两 adapter 只消费 status/json —— 形状契约不变）。
+  const apiClient: ApiClient | undefined = custodianBridge
+    ? {
+        async request(input, requestInit) {
+          const url = typeof input === "string" ? input : input.toString();
+          const auth = readAuthorizationHeader(requestInit);
+          if (!auth.endsWith(CUSTODIAN_SECRET_MARKER)) {
+            const fallback = dependencies.apiClient ?? { request: (i, r) => fetch(i, r) };
+            return fallback.request(input, requestInit);
+          }
+          const parsed = new URL(url);
+          const reply = await custodianBridge.get(parsed.pathname + parsed.search);
+          return new Response(reply.body, {
+            status: reply.status === 0 ? 502 : reply.status,
+          });
+        },
+      }
+    : dependencies.apiClient;
   const readBackAccount = createStripeAccountReadBackPort({
-    apiClient: dependencies.apiClient,
+    apiClient,
     accountUrl: dependencies.stripeApiBase
       ? `${dependencies.stripeApiBase.replace(/\/+$/, "")}/v1/account`
       : undefined,
   });
   const readAccountData = createStripeAccountDataReadPort({
-    apiClient: dependencies.apiClient,
+    apiClient,
     apiBase: dependencies.stripeApiBase,
   });
   const accountService = createPayswapAccountService({
-    credentialPort,
+    credentialPort: custodianCredentialPort,
     connectionStore,
     readBackAccount,
     readAccountData,

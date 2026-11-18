@@ -64,9 +64,27 @@ export interface PayswapAccountCredentialPort {
   delete(key: string): Promise<void>;
 }
 
+/**
+ * ADR-P2-3 custodian 桥（可选注入）：在位时密钥只入托管（SYSTEM 服务内存 + 其
+ * SYSTEM-DPAPI blob），main 不持明文、不落 enc:v1 槽。语义：
+ *   - push = credentialPort.save 的托管形态（connect 时恰一次）；
+ *   - load = 占位标记（"custodian-managed"）—— 读取经 apiClient 标记路由进托管
+ *     有界代理（服务端补真 Bearer）；
+ *   - drop = revoke 时清托管（内存 + blob 全删）。
+ */
+export interface PayswapCustodianBridge {
+  push(key: string): Promise<void>;
+  get(path: string): Promise<{ status: number; body: string }>;
+  drop(): Promise<void>;
+}
+
+export const CUSTODIAN_SECRET_MARKER = "custodian-managed";
+
 export interface PayswapAccountServiceDependencies {
   /** 凭据 store 端口（真实装配 = LocalCredentialService；PSP 键级政策在彼处）。 */
   credentialPort: PayswapAccountCredentialPort;
+  /** ADR-P2-3 custodian 桥（缺席 = 既有直接路径不变）。 */
+  custodianBridge?: PayswapCustodianBridge;
   /** 连接记录 store（非秘密元数据；本模块是唯一写者）。 */
   connectionStore: PayswapConnectionRecordStore;
   /** 注册的 provider 认证规格（缺省 = [Stripe]；P3 起 per-provider 追加）。 */
@@ -123,6 +141,7 @@ export function createPayswapAccountService(
   dependencies: PayswapAccountServiceDependencies,
 ): PayswapAccountService {
   const credentialPort = dependencies.credentialPort;
+  const custodianBridge = dependencies.custodianBridge;
   const connectionStore = dependencies.connectionStore;
   const authSpecs = dependencies.authSpecs ?? [PAYSWAP_STRIPE_AUTH_SPEC];
   const readBackAccount = dependencies.readBackAccount;
@@ -225,6 +244,7 @@ export function createPayswapAccountService(
       if (record.status === "revoked") {
         // 幂等：已撤销连接的重复撤销不抛错；补清可能残留的秘密（删键对缺失键安全）。
         await deleteSecrets(record).catch(() => undefined);
+      await custodianBridge?.drop().catch(() => undefined);
         return { kind: "revoked", connection: projectPayswapConnectionStatus(record) };
       }
       // 先标 revoked（任何中间态绝不留下失真的 connected），再删秘密。
@@ -235,6 +255,7 @@ export function createPayswapAccountService(
       };
       await connectionStore.upsert(revoked);
       await deleteSecrets(record);
+      await custodianBridge?.drop().catch(() => undefined);
       return { kind: "revoked", connection: projectPayswapConnectionStatus(revoked) };
     },
 

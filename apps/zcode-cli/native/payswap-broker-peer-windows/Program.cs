@@ -77,6 +77,7 @@ namespace PayswapBrokerPeerHelper
                 if (HasArgument(args, "--custodian-register")) return CustodianClient(args, "register");
                 if (HasArgument(args, "--custodian-push")) return CustodianClient(args, "push");
                 if (HasArgument(args, "--custodian-get")) return CustodianClient(args, "get");
+                if (HasArgument(args, "--custodian-drop")) return CustodianClient(args, "drop");
                 return RunRelay(args);
             }
             catch
@@ -1555,6 +1556,10 @@ namespace PayswapBrokerPeerHelper
                 string parentImage;
                 GetParentProcessInfo(System.Diagnostics.Process.GetCurrentProcess().Id, out parentPid, out parentImage);
                 opLine = "{\"op\":\"register\",\"pid\":" + parentPid + "}";
+            }
+            else if (op == "drop")
+            {
+                opLine = "{\"op\":\"drop\"}";
             }
             else if (op == "push")
             {

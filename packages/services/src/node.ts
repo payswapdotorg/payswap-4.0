@@ -184,6 +184,7 @@ export {
   createPayswapAccountRuntime,
   type PayswapAccountRuntime,
   type PayswapAccountRuntimeDependencies,
+  type PayswapCustodianBridge,
 } from "#src/payswap/index.js";
 export { createBroadcastService } from "./broadcast/broadcastService.js";
 export { createZCodeAgentService } from "./zcode-agent/zcodeAgentService.js";

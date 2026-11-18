@@ -294,6 +294,7 @@ import {
   installPluginSandboxHost,
 } from "./pluginSandbox/index.js";
 import { installDesktopPayswapApproval, installDesktopPayswapConnections } from "./payswap/index.js";
+import { createDesktopCustodianBridge } from "./payswap/custodianClient.js";
 import { buildPayswapReaderBridgeSpawnOptions } from "./payswap/readerBridgeSpawnOptions.js";
 
 registerLocalMediaPreviewScheme(protocol, [
@@ -2195,6 +2196,10 @@ app.whenReady().then(async () => {
   const payswapConnectionsInstallation = installDesktopPayswapConnections({
     getMainWindowFrameUrl: () =>
       getApplicationWindowsExcludingCuaIndicator()[0]?.webContents.getURL() ?? "",
+    // ADR-P2-3：custodian 服务在位 → 密钥只入托管（桥缺席 = 既有直接路径不变）。
+    runtimeDependencies: {
+      custodianBridge: createDesktopCustodianBridge() ?? undefined,
+    },
     onWarmupError: (error) => {
       logger.warn("[payswap] connection key warmup failed (fail-safe, empty env):", error);
     },
