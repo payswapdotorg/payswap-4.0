@@ -475,3 +475,32 @@ exit 0 = hardening acceptance criterion; deliberately outside CI).
   only over the D14.8-gated channel; one-time elevated provisioning). The RED
   isolation gate stays the acceptance criterion; implementation = next milestone
   after TL design sign-off on the amended ADR (commit `8450f0ac`).
+
+### Custodian service implemented + LIVE-VERIFIED (2026-11-19 — `cb9185a1`)
+
+The helper now carries the full ADR-P2-3 custodian (system service + client modes,
+534 lines):
+- **Custody**: PSP key held in memory + SYSTEM-DPAPI-wrapped
+  `%ProgramData%\payswap\custodian-key.bin` (restart persistence without any
+  model-readable at-rest copy).
+- **Gate**: registered-pid (electron main, kernel fact) + one-time token + parent
+  chain (TOOLHELP → electron image). Wrong-pid adversarial register rejected live.
+- **Serving**: bounded five-path read-only GET proxy (balance/charges/customers/
+  disputes/account — server-side allowlist), raw bodies over the authenticated
+  pipe; main keeps ALL parsing/redaction (no redaction duplication in C#).
+- **Live protocol test**: register → push (rotated key via stdin) → get
+  /v1/balance → HTTP 200 live body; /v1/account → 200. TLS 1.2 enabled explicitly.
+- **Install**: `--svc-install --image <electron.exe>` (elevated once, sc create +
+  start); `--svc-uninstall` reverses. `--svc-console --test-gate <substr>` = the
+  console test seam (relaxes the parent gate; production `--svc-run` enforces
+  registered-pid + electron).
+
+## Next block: TS rewiring (the last functional piece)
+
+1. `accountConnectionIpc` connect flow: typed key → verify via custodian GET
+   /v1/balance → custodian-push → row (no enc:v1 slot at all on the custodian path).
+2. `readAccountData` transport: category GETs via helper `--custodian-get`
+   (raw body → existing redaction-by-construction parsing unchanged).
+3. Revoke: row delete + custodian `drop` (erases memory + SYSTEM blob).
+4. Then: adversarial re-proof (probe + custodian gate) → New Task re-read →
+   formal runner re-run → evidence §10.3.
