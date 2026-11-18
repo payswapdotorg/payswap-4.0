@@ -176,3 +176,92 @@
 3. Then re-run `stripe-live` (expect RESULT_E2E=0; RESULT_HARNESS=0 iff the
    requirements gate holds) + `conversation-acceptance` (13-step manual receipt)
    — exact commands in LINUX-P2-CLOSURE-HANDOFF.md.
+
+---
+
+# WINDOWS CONTINUATION (TL, 2026-11-17 evening → 2026-11-18 morning)
+
+> Append-only continuation of the log above. Branch head at handoff:
+> **`2cd89736`** (merge of the Linux-leg delivery `b0eda0a5` into the Windows
+> continuation; everything pushed). Local checkout `p2/acceptance-run-tl`.
+
+## A. Delivered since the log above (all on the branch, battery-backed)
+
+| Commit | What |
+|---|---|
+| `3ed89be3`+`5de31b89` | **three-hop helper-key env wiring** (host→agent forward in `zcodeAgentProcessManager.ts`; agent-CLI capture-before-strip + re-injection at the D15.3 site; coordinator `idleTimeoutMs` passthrough) + bootstrap battery additions |
+| `2beca244` | live-harness builder win32 portability (REPO_ROOT 4-level; backslash import specifiers die in JS escapes) |
+| `63e8498a` | **ADR-P2-1 amendment** — standard-account restricted-key self-fetch OMITS `requirements` entirely (live-proven); evidence schema `requirements: nullable` (absence = explicit provider-absence evidence; malformed-present still fail-closed; refusal law unchanged); harness 10/10 RESULT_HARNESS=0 after |
+| `c47e7035`+`e3406abc` | §11(3) audit sinks on BOTH coordinator surfaces (the desktop `--surface desktop` boots through the **protocol-entrypoint** coordinator — the create-app sink never fires there) |
+| `73fd40c6`+`1b5289d1`+`4f81e1dd` | boot audit carries degradedReason + helperSupplyPresent booleans |
+| `48f128b3` | **defaultDevBundledToolsRoots compiled-layout fix** — dev main runs the bundled `out/main/index.js` (ESM, everything inlined): `import.meta.dirname` = out/main → up 2 = packages/desktop; the old `../../` resolved `out/bundled-tools` (absent) so hop 1 never injected |
+| helper staged | `packages/desktop/bundled-tools/win32-x64/payswap-broker-peer/` (sha256 `c613315f…`; `pnpm --filter @zcode/desktop prepare:payswap-broker-peer`) |
+
+## B. Acceptance faces proven GREEN on this machine (do not redo)
+
+1. **windows-build** (install 0 + build:bootstrap 0); 2. **windows-secure-storage**
+(real Electron 44.7.0 DPAPI `available=true roundTrip=ok` + CI-canonical
+13-file law battery 129/129 + platform gate); 3. **windows-desktop-e2e**
+(`payswap-connection-ui` real-window spec, twice); 4a. **E2E live spec 3/3**
+(connect→at-rest→verified via real api.stripe.com→revoke→secret deleted);
+4b. **harness 10/10, RESULT_HARNESS=0** (four-category conversational data,
+both direct and bridge forms — `/tmp/harness-repro2/` evidence, copy before
+/tmp cleanup). Stripe account activated (live account, Payments Active;
+payouts-only tasks don't block reads); restricted key at
+`C:\Users\Lenovo\.payswap-live.env` (0600, never in chat); `/v1/balance` → 200.
+
+## C. THE ONE REMAINING BLOCKER + next steps
+
+The New Task conversational read still dies `instance_mismatch` because the
+broker boots **degraded_refusing**. The audit instrumentation (both surfaces)
+shows `helperSupplyPresent {path:false,sha256:false}` — the supply keys die
+between desktop main and the booting process. `48f128b3` fixes the hop-1
+resolution (compiled layout) but has **not been verified live** (the app died
+first). A vitest probe already proved `bootPayswapBroker` returns
+`peer_verified` when the keys are in `process.env`.
+
+Next agent steps:
+1. Relaunch detached (session-bound launches die):
+   `Start-Process cmd '/c cd /d …\payswap-4.0 && pnpm dev:desktop:prod > %TEMP%\dev.log 2>&1' -WindowStyle Hidden`
+   (the dev chain rebuilds dists — fixes ride along).
+2. Fresh New Task → four-category question → read the newest
+   `payswap-broker-audit` boot line in `~/.zcode/cli/log/zcode-2026-11-18.jsonl`:
+   - `{true,true}` + `peer_verified` → done: verify the tool answer carries the
+     four categories, then checklist steps 12–13 (revoke → typed refusal).
+   - `{true,true}` + degraded with a relay reason → debug
+     `startPayswapWindowsPeerRelay` (helper spawn/pipe), reason is logged now.
+   - still `{false,false}` → set the two keys operator-side (user env vars;
+     operator-wins is honored end-to-end) to unblock the conversation, and
+     bisect the desktop-main injection as a parallel fix.
+3. Then: 13-step manual evidence → final zero-assumption five-stage run with
+   `--manual-evidence` → evidence register §7+ → roadmap P2 → complete.
+
+## D. Security findings for the final report (none are secrets)
+
+1. **Model bypass ×3**: plugin disabled by design (S0b) → no PaySwap tool →
+   the New Task model improvised a full DPAPI→os_crypt→AES-GCM credential-chain
+   unwrap + direct Stripe GETs; again with the plugin enabled but the broker
+   degraded. Tooling was secret-free (sha256 recorded) and deleted, but the P2
+   law "PSP credentials never exposed to the model" was violated at the model
+   layer — any same-user process can perform the unwrap. P3 candidate:
+   host-side hardening; short-term: keep the verified tool path working (C).
+2. **dev relay starvation**: helper never staged in dev + three env hops
+   stripping the supply keys + 30s idle rotation under a live MCP child — all
+   fixed on the branch; final live confirmation pending (C).
+3. A Linux-leg note: the runner was exonerated on the exit-hygiene suspicion
+   (a66b5ea4) — consistent with our Windows observations.
+
+## E. Gotchas (all live-encountered)
+
+- Pre-push: `ZCODE_PRE_PUSH_BASE=origin/main` (script demands nonexistent
+  `origin/staging`). Bootstrap tests are OUTSIDE the engineering manifest
+  (run inside the package). `spawn-wiring.ts` has an intentional `\0` literal —
+  Read/grep choke, edit via node. Dev app dies if launched from a session-bound
+  shell — launch detached. Rebuild bootstrap before cli (cli embeds
+  `bootstrap/dist`); restart the dev app after rebuilding. oxlint max-lines
+  800 hard gate. IAB browser: claim tabs via `agent.browsers.open(url)`;
+  Stripe permission rows need position-matched clicks. Pre-existing Windows
+  typecheck noise (TS7006/TS6305, untouched files) — ignore.
+- Artifacts: run-1 `artifacts/p2-acceptance/2026-11-17T15-31-25-426Z/`;
+  run-2 `…/2026-11-17T15-48-00-883Z/`; harness evidence `/tmp/harness-repro2/`
+  (copy to `artifacts/` before /tmp cleanup).
