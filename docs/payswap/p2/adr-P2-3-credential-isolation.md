@@ -29,51 +29,64 @@ boundary. Electron 44's os_crypt scheme does not either.
 
 ## 2. Decision
 
-**Deny-restricted agent child processes** (equivalent isolation per the TL's
-"or equivalent" clause), implemented in two independently landable layers:
+**First attempt (2026-11-18) — deny-restricted agent child processes — REJECTED by
+live Windows privilege reality.** Implementation detail: `CreateRestrictedToken`
+works, but `CreateProcessAsUser` with the derived restricted token fails with
+**win32 1314 (ERROR_PRIVILEGE_NOT_HELD)** — SeIncreaseQuotaPrivilege is not held by
+a non-elevated desktop process (Windows 11 26200 default token), and the documented
+alternatives (`CreateProcessWithTokenW`) need SeImpersonatePrivilege — likewise not
+held. Undocumented workarounds (NtSetInformationProcess ProcessAccessToken swap) are
+against the repo's documented-API discipline. The helper binary retains the
+`--harden-path` / `--harden-child` / `--spawn-restricted` modes as the probe
+instrumentation, but the restricted-token spawn layer cannot ship.
 
-### Layer 1 — deny-protected credential paths
+**Accepted design — dedicated-identity custodian helper** (the TL's Option A,
+realized without a permanent Windows service install):
 
-The desktop main owns the PSP credential material and marks every path carrying it
-with an explicit **deny ACE for an app-private restricting SID** (`S-1-5-21-0-0-0-<app-fixed-rid>`,
-syntactically valid, authorization-only):
+### Layer 1 — one-time elevated provisioning (operator-gated, UAC step)
 
-- `%APPDATA%/ZCode Dev/session/Local State` (os_crypt master key)
-- `<dataRoot>/.zcode/v2/payswap-psp-safe-storage-key`
-- `<dataRoot>/.zcode/v2/credentials.json`
+A local account `payswap-broker` (random 32-char password, generated at provision
+time, stored **only** in the helper-readable provisioned store whose DACL grants
+just that account + SYSTEM). Provisioning = one elevated `net user /add` +
+password hand-off; never repeated.
 
-Deny ACEs apply to any token carrying that SID **as a restricting SID**; the desktop
-main's own (unrestricted) token is unaffected, so all legitimate host-side reads keep
-working unchanged.
+### Layer 2 — custodian helper = the ONLY reader/decryptor
 
-### Layer 2 — restricted-token spawn for model-controlled children
+The existing payswap-broker-peer helper gains `--custodian` mode: it calls
+`LogonUser("payswap-broker", …)` (no caller privilege required for
+LOGON32_LOGON_BATCH/INTERACTIVE with explicit credentials — verified against the
+Win32 contract) and impersonates, then:
 
-Every model-controlled process tree root — the agent CLI spawned by the host
-(`ZCodeAgentProcessManager`), and the MCP/tool children it spawns — is created via
-`CreateRestrictedToken` + `CreateProcessAsUser` (a new mode on the existing C#
-payswap helper binary) carrying the app-private restricting SID. Restriction
-**inherits** to all descendants, so one root site covers Bash/node-repl/MCP/tool
-children. Restriction can only be added, never removed, by the restricted process
-itself; minting a clean token requires TCB privileges the child does not have.
+- reads the PSP wrapped-key + `credentials.json` slots (DACLS re-keyed: grant
+  `payswap-broker` + SYSTEM only, **revoke Lenovo read**),
+- derives the cipher, performs the Stripe read-back itself (the four categories
+  + account evidence),
+- returns **redacted projections only** over the existing authenticated
+  reader-bridge/relay channel (D14.8 image-path gate machinery).
 
-### Layer 3 — behavioral regression fence
+The desktop main never holds — not even as ciphertext — the PSP credential: the
+store file is unreadable to Lenovo/model processes by DACL, and the plaintext
+exists only inside the impersonated helper process.
 
-- The adversarial probe (and additional child variants: PowerShell/.NET, arbitrary
-  same-user children) must be **BLOCKED at file read** — the acceptance criterion is
-  `isolation-probe.cjs` exit 0.
-- A New Task four-category read must still succeed **through the broker** after the
-  isolation lands (the lawful narrow path must keep working; only the raw
-  credential face is cut off).
-- The full five-stage runner + 13-step receipt re-run on the isolated build.
+### Layer 3 — adversarial acceptance (unchanged, sharpened)
+
+- `scripts/payswap/security/isolation-probe.cjs` GREEN: same-user child is blocked
+  at file read (DACLS deny Lenovo outright — stronger than the restricted-token
+  design's conditional protection).
+- The helper's authenticated channel stays hash/image-gated (D14.8) so model-side
+  processes cannot drive the custodian directly.
+- New Task four-category read re-proved through the custodian; full five-stage
+  runner + 13-step receipt re-run on the isolated build.
 
 ## 3. Alternatives considered
 
 | Option | Assessment |
 |---|---|
-| Dedicated Windows service identity (plan §4 Option A) | Strongest on paper; rejected for now — requires admin elevation to install, and the desktop↔service authentication has the same-user bootstrap problem (a pipe ACL keyed on SID cannot distinguish the desktop from a same-user model process; per-boot secret exchange is interceptable at spawn). Recorded as the escalation path if the restricted-token boundary is ever bypassed. |
-| AppContainer for agent children | Insufficient alone — the child keeps the user SID, and default DACLs granting the user would still admit it; would additionally break normal tool networking/file behavior. |
-| In-memory-only credentials (never at rest) | Does not survive restart-persistence (receipt step 6/7 requires the stored credential); moves, not removes, the decryption surface. |
-| Encrypt with a hardware-bound key (TPM) | Protects at-rest against OTHER machines, not other same-user processes; does not address the finding. |
+| Restricted-token agent children (first attempt) | REJECTED live: `CreateProcessAsUser` needs SeIncreaseQuotaPrivilege (win32 1314 on 26200); `CreateProcessWithTokenW` needs SeImpersonatePrivilege; both absent from non-elevated desktop processes. Undocumented NtSetInformationProcess token-swap rejected on documented-API discipline. |
+| Full Windows service (permanent install) | Heavier than the custodian helper for the same guarantee (the custodian impersonates a dedicated identity per-call instead of a service hosting it permanently); no service-control-manager surface, no install-time service ACLs. Escalation path if the LogonUser-based custodian proves fragile. |
+| AppContainer for agent children | Insufficient alone (child keeps user SID; default DACLs granting the user still admit it) and cripples normal tool behavior (loopback/network denied). |
+| In-memory-only credentials (never at rest) | Breaks receipt steps 6/7 (restart persistence); moves the surface. |
+| TPM-bound encryption | Protects against other machines, not same-user processes. |
 
 ## 4. Consequences
 

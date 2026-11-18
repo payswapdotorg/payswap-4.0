@@ -65,6 +65,9 @@ namespace PayswapBrokerPeerHelper
                     DescribeSecurity();
                     return 0;
                 }
+                if (HasArgument(args, "--harden-path")) return HardenPath(args);
+                if (HasArgument(args, "--spawn-restricted")) return SpawnRestricted(args);
+                if (HasArgument(args, "--harden-child")) return HardenChild(args);
                 return RunRelay(args);
             }
             catch
@@ -675,6 +678,378 @@ namespace PayswapBrokerPeerHelper
                         ((int)rule.PipeAccessRights).ToString() + "|" +
                         (rule.AccessControlType == AccessControlType.Allow ? "allow" : "deny"));
                 }
+            }
+        }
+
+        // ------------------------------------------------------------------
+        // ADR-P2-3：凭据路径 deny-ACE 加固 + 受限令牌 spawn（P2-Windows 阻断项的强制面）。
+        // stdout 纪律与 RunRelay 同族：只输出稳定判定行（harden:ok/violated/error、
+        // "pid exit"），绝不含令牌/路径外泄面。受限令牌构造 = 经典 Chrome-sandbox
+        // 原语：CreateRestrictedToken 的 restricting 集含用户自身 + Everyone（第二
+        // 访问检查镜像正常授予）+ 应用固定 deny SID（deny ACE 只在受保护路径上成立）。
+        // ------------------------------------------------------------------
+
+        private const string PayswapIsolationSidString = "S-1-5-21-3057928939-948576043-2919049624-49667";
+
+        private const uint TokenAssignPrimary = 0x0001;
+        private const uint TokenDuplicate = 0x0002;
+        private const uint TokenQuery = 0x0008;
+        private const uint TokenAdjustPrivileges = 0x0020;
+        private const uint CreateRestrictedTokenDisableMaxPrivilege = 0x00000001;
+        private const uint SecurityIdentificationLevel = 1;
+        private const uint TokenTypePrimary = 1;
+        private const uint CreateProcessNoWindow = 0x08000000;
+        private const uint WaitInfinite = 0xFFFFFFFF;
+        private const uint SePrivilegeEnabled = 0x00000002;
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct LUID
+        {
+            public uint LowPart;
+            public int HighPart;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct LUID_AND_ATTRIBUTES
+        {
+            public LUID Luid;
+            public uint Attributes;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct TOKEN_PRIVILEGES
+        {
+            public uint PrivilegeCount;
+            public LUID_AND_ATTRIBUTES Privileges;
+        }
+
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool LookupPrivilegeValue(string lpSystemName, string lpName, out LUID lpLuid);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool AdjustTokenPrivileges(IntPtr TokenHandle, bool DisableAllPrivileges, ref TOKEN_PRIVILEGES NewState, uint BufferLength, IntPtr PreviousState, IntPtr ReturnLength);
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct STARTUPINFO
+        {
+            public uint cb;
+            public string lpReserved;
+            public string lpDesktop;
+            public string lpTitle;
+            public uint dwX;
+            public uint dwY;
+            public uint dwXCountChars;
+            public uint dwYCountChars;
+            public uint dwFillAttribute;
+            public uint dwFlags;
+            public ushort wShowWindow;
+            public ushort cbReserved2;
+            public IntPtr lpReserved2;
+            public IntPtr hStdInput;
+            public IntPtr hStdOutput;
+            public IntPtr hStdError;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct PROCESS_INFORMATION
+        {
+            public IntPtr hProcess;
+            public IntPtr hThread;
+            public uint dwProcessId;
+            public uint dwThreadId;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SID_AND_ATTRIBUTES
+        {
+            public IntPtr Sid;
+            public uint Attributes;
+        }
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool OpenProcessToken(IntPtr ProcessHandle, uint DesiredAccess, out IntPtr TokenHandle);
+
+        /// ADR-P2-3：启用自身令牌上的 SeIncreaseQuotaPrivilege（默认持有但禁用；
+        /// CreateProcessAsUser 的主令牌配额检查需要它，无需提权 —— 已持有即启用）。
+        private static void EnableQuotaPrivilege(IntPtr tokenHandle)
+        {
+            LUID luid;
+            if (!LookupPrivilegeValue(null, "SeIncreaseQuotaPrivilege", out luid))
+                throw new InvalidOperationException("lookup-privilege");
+            var newState = new TOKEN_PRIVILEGES();
+            newState.PrivilegeCount = 1;
+            newState.Privileges.Luid = luid;
+            newState.Privileges.Attributes = SePrivilegeEnabled;
+            if (!AdjustTokenPrivileges(tokenHandle, false, ref newState, 0, IntPtr.Zero, IntPtr.Zero))
+                throw new InvalidOperationException("adjust-privilege");
+        }
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool DuplicateTokenEx(IntPtr ExistingTokenHandle, uint DesiredAccess, IntPtr TokenAttributes, uint ImpersonationLevel, uint TokenType, out IntPtr NewTokenHandle);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool CreateRestrictedToken(IntPtr ExistingTokenHandle, uint Flags, uint DisableSidCount, IntPtr DisableSids, uint DeletePrivilegeCount, IntPtr DeletePrivileges, uint RestrictingSidCount, IntPtr RestrictingSids, out IntPtr NewTokenHandle);
+
+        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+        private static extern bool CreateProcessAsUser(IntPtr hToken, string lpApplicationName, string lpCommandLine, IntPtr lpProcessAttributes, IntPtr lpThreadAttributes, bool bInheritHandles, uint dwCreationFlags, IntPtr lpEnvironment, string lpCurrentDirectory, ref STARTUPINFO lpStartupInfo, out PROCESS_INFORMATION lpProcessInformation);
+
+        [DllImport("advapi32.dll", SetLastError = true)]
+        private static extern bool ConvertStringSidToSid(string StringSid, out IntPtr Sid);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern uint WaitForSingleObject(IntPtr hHandle, uint dwMilliseconds);
+
+        [DllImport("kernel32.dll", SetLastError = true)]
+        private static extern bool GetExitCodeProcess(IntPtr hProcess, out uint lpExitCode);
+
+        [DllImport("kernel32.dll")]
+        private static extern IntPtr LocalFree(IntPtr hMem);
+
+        /// ADR-P2-3 Layer 1：对 --v2 指向的数据根 v2 目录（credentials.json、
+        /// payswap-psp-safe-storage-key）追加应用固定 SID 的 deny ACE（Read 拒绝，
+        /// 目录继承）。幂等：已存在即跳过。stdout 单行判定；exit 0 = 加固成立或
+        /// 已成立，2 = 违约（对抗链恢复成立），3 = 参数/环境错误。
+        private static int HardenPath(string[] args)
+        {
+            Dictionary<string, string> parsed = ParseArguments(args);
+            string v2Root = RequireArgument(parsed, "--v2");
+            if (!Directory.Exists(v2Root)) throw new InvalidDataException();
+
+            var sid = new SecurityIdentifier(PayswapIsolationSidString);
+            int locked = 0;
+            string[] targets = new string[]
+            {
+                Path.Combine(v2Root, "credentials.json"),
+                Path.Combine(v2Root, "payswap-psp-safe-storage-key"),
+            };
+            foreach (string target in targets)
+            {
+                if (!File.Exists(target)) continue; // 撤销态：文件缺席 = 天然阻断，无需 ACE。
+                FileSecurity security = File.GetAccessControl(target);
+                bool present = false;
+                foreach (FileSystemAccessRule existing in security.GetAccessRules(true, false, typeof(SecurityIdentifier)))
+                {
+                    if (existing.AccessControlType == AccessControlType.Deny &&
+                        existing.IdentityReference.Value == PayswapIsolationSidString)
+                    {
+                        present = true;
+                        break;
+                    }
+                }
+                if (!present)
+                {
+                    var rule = new FileSystemAccessRule(
+                        sid,
+                        FileSystemRights.Read | FileSystemRights.ListDirectory,
+                        InheritanceFlags.None,
+                        PropagationFlags.None,
+                        AccessControlType.Deny);
+                    security.AddAccessRule(rule);
+                    File.SetAccessControl(target, security);
+                }
+                locked++;
+            }
+            Console.Out.WriteLine("harden:ok locked=" + locked);
+            return 0;
+        }
+
+        /// ADR-P2-3 Layer 2：--spawn-restricted <image> [childArgs…]。
+        /// CreateRestrictedToken（restricting = 用户 SID + Everyone + 应用固定 deny SID；
+        /// DISABLE_MAX_PRIVILEGE）→ CreateProcessAsUser → 等待退出 → stdout "pid exit"。
+        /// exit 0 = 成功（child 退出码见 stdout）；2 = spawn 失败。
+        private static int SpawnRestricted(string[] args)
+        {
+            int imageIndex = -1;
+            for (int i = 0; i < args.Length; i++)
+            {
+                if (args[i] == "--spawn-restricted") { imageIndex = i + 1; break; }
+            }
+            if (imageIndex < 0 || imageIndex >= args.Length) throw new InvalidDataException();
+            string image = args[imageIndex];
+            string childArgs = string.Empty;
+            if (imageIndex + 1 < args.Length)
+            {
+                var parts = new List<string>(args.Length);
+                for (int i = imageIndex + 1; i < args.Length; i++) parts.Add(args[i]);
+                childArgs = string.Join(" ", parts.ToArray());
+            }
+
+            IntPtr tokenHandle = IntPtr.Zero;
+            IntPtr duplicateHandle = IntPtr.Zero;
+            IntPtr restrictedHandle = IntPtr.Zero;
+            IntPtr processHandle = IntPtr.Zero;
+            IntPtr threadHandle = IntPtr.Zero;
+            IntPtr userSidPtr = IntPtr.Zero;
+            IntPtr everyoneSidPtr = IntPtr.Zero;
+            IntPtr denySidPtr = IntPtr.Zero;
+            try
+            {
+                IntPtr currentProcess = System.Diagnostics.Process.GetCurrentProcess().Handle;
+                if (!OpenProcessToken(currentProcess, TokenAssignPrimary | TokenDuplicate | TokenQuery | TokenAdjustPrivileges, out tokenHandle))
+                    throw new InvalidOperationException("open-token");
+                EnableQuotaPrivilege(tokenHandle);
+
+                if (!DuplicateTokenEx(tokenHandle, TokenAssignPrimary | TokenDuplicate | TokenQuery, IntPtr.Zero, SecurityIdentificationLevel, TokenTypePrimary, out duplicateHandle))
+                    throw new InvalidOperationException("duplicate-token");
+
+                var identity = WindowsIdentity.GetCurrent();
+                string userSid = identity.User.Value;
+                string everyoneSid = new SecurityIdentifier(WellKnownSidType.WorldSid, null).Value;
+
+                if (!ConvertStringSidToSid(userSid, out userSidPtr)) throw new InvalidOperationException("user-sid");
+                if (!ConvertStringSidToSid(everyoneSid, out everyoneSidPtr)) throw new InvalidOperationException("everyone-sid");
+                if (!ConvertStringSidToSid(PayswapIsolationSidString, out denySidPtr)) throw new InvalidOperationException("deny-sid");
+
+                var sidArray = new SID_AND_ATTRIBUTES[3];
+                sidArray[0].Sid = userSidPtr; sidArray[0].Attributes = 0;
+                sidArray[1].Sid = everyoneSidPtr; sidArray[1].Attributes = 0;
+                sidArray[2].Sid = denySidPtr; sidArray[2].Attributes = 0;
+
+                var handle = GCHandle.Alloc(sidArray, GCHandleType.Pinned);
+                try
+                {
+                    IntPtr sidArrayPtr = handle.AddrOfPinnedObject();
+                    if (!CreateRestrictedToken(duplicateHandle, CreateRestrictedTokenDisableMaxPrivilege, 0, IntPtr.Zero, 0, IntPtr.Zero, (uint)sidArray.Length, sidArrayPtr, out restrictedHandle))
+                        throw new InvalidOperationException("restricted-token");
+                }
+                finally
+                {
+                    handle.Free();
+                }
+
+                var si = new STARTUPINFO();
+                si.cb = (uint)Marshal.SizeOf(typeof(STARTUPINFO));
+                PROCESS_INFORMATION pi;
+                string commandLine = "\"" + image + "\"" + (childArgs.Length > 0 ? " " + childArgs : string.Empty);
+                if (!CreateProcessAsUser(restrictedHandle, image, commandLine, IntPtr.Zero, IntPtr.Zero, false, CreateProcessNoWindow, IntPtr.Zero, null, ref si, out pi))
+                    throw new InvalidOperationException("create-process win32=" + Marshal.GetLastWin32Error());
+
+                processHandle = pi.hProcess;
+                threadHandle = pi.hThread;
+                Console.Out.WriteLine(pi.dwProcessId);
+                WaitForSingleObject(processHandle, WaitInfinite);
+                uint exitCode;
+                if (!GetExitCodeProcess(processHandle, out exitCode)) exitCode = 0;
+                Console.Out.WriteLine(exitCode);
+                return 0;
+            }
+            catch (InvalidOperationException e)
+            {
+                Console.Error.WriteLine("spawn-restricted:" + e.Message);
+                Console.Out.WriteLine("-1 -1");
+                return 2;
+            }
+            finally
+            {
+                if (processHandle != IntPtr.Zero) CloseHandle(processHandle);
+                if (threadHandle != IntPtr.Zero) CloseHandle(threadHandle);
+                if (restrictedHandle != IntPtr.Zero) CloseHandle(restrictedHandle);
+                if (duplicateHandle != IntPtr.Zero) CloseHandle(duplicateHandle);
+                if (tokenHandle != IntPtr.Zero) CloseHandle(tokenHandle);
+                if (userSidPtr != IntPtr.Zero) LocalFree(userSidPtr);
+                if (everyoneSidPtr != IntPtr.Zero) LocalFree(everyoneSidPtr);
+                if (denySidPtr != IntPtr.Zero) LocalFree(denySidPtr);
+            }
+        }
+
+        /// ADR-P2-3 Layer 1 验证：--harden-child --node <node.exe> --v2 <v2 根>。
+        /// 受限令牌下运行对抗链（master key → file key → enc:v1 槽），stdout 单行 JSON；
+        /// HardenPath 侧用 node 退出码/输出判定。exit 0 = 链被阻断；2 = 链恢复成立。
+        private static int HardenChild(string[] args)
+        {
+            Dictionary<string, string> parsed = ParseArguments(args);
+            string nodePath = RequireArgument(parsed, "--node");
+            string v2Root = RequireArgument(parsed, "--v2");
+
+            string childSource =
+                "const fs = require('fs');\n" +
+                "const crypto = require('crypto');\n" +
+                "const v2 = process.argv[2];\n" +
+                "const out = { locked: false, chain: false, slot: false, reason: '' };\n" +
+                "try {\n" +
+                "  fs.accessSync(v2 + '/credentials.json', fs.constants.R_OK);\n" +
+                "  const creds = JSON.parse(fs.readFileSync(v2 + '/credentials.json', 'utf8'));\n" +
+                "  const slot = Object.keys(creds).find(k => k.startsWith('payswap:psp:stripe:') && k.endsWith(':api-key'));\n" +
+                "  if (slot && typeof creds[slot] === 'string' && creds[slot].startsWith('enc:v1:')) {\n" +
+                "    const wrapped = fs.readFileSync(v2 + '/payswap-psp-safe-storage-key');\n" +
+                "    const body = wrapped.slice(3);\n" +
+                "    out.locked = false; out.chain = true; out.slot = true; out.reason = 'full-chain-readable';\n" +
+                "  } else { out.locked = false; out.chain = false; out.reason = 'slot-absent'; }\n" +
+                "} catch (e) {\n" +
+                "  out.locked = true; out.chain = false; out.slot = false; out.reason = String(e.code || e.message).slice(0, 60);\n" +
+                "}\n" +
+                "process.stdout.write(JSON.stringify(out));\n";
+
+            string childPath = Path.Combine(Path.GetTempPath(), "payswap-isolation-child-" + Guid.NewGuid().ToString("N") + ".cjs");
+            File.WriteAllText(childPath, childSource);
+            try
+            {
+                var si = new STARTUPINFO();
+                si.cb = (uint)Marshal.SizeOf(typeof(STARTUPINFO));
+                PROCESS_INFORMATION pi;
+                string commandLine = "\"" + nodePath + "\" --enable-source-maps \"" + childPath + "\" \"" + v2Root + "\"";
+                IntPtr tokenHandle = IntPtr.Zero;
+                IntPtr duplicateHandle = IntPtr.Zero;
+                IntPtr restrictedHandle = IntPtr.Zero;
+                IntPtr processHandle = IntPtr.Zero;
+                IntPtr threadHandle = IntPtr.Zero;
+                IntPtr userSidPtr = IntPtr.Zero;
+                IntPtr everyoneSidPtr = IntPtr.Zero;
+                IntPtr denySidPtr = IntPtr.Zero;
+                try
+                {
+                    IntPtr currentProcess = System.Diagnostics.Process.GetCurrentProcess().Handle;
+                    if (!OpenProcessToken(currentProcess, TokenAssignPrimary | TokenDuplicate | TokenQuery | TokenAdjustPrivileges, out tokenHandle))
+                        throw new InvalidOperationException("open-token");
+                    EnableQuotaPrivilege(tokenHandle);
+                    if (!DuplicateTokenEx(tokenHandle, TokenAssignPrimary | TokenDuplicate | TokenQuery, IntPtr.Zero, SecurityIdentificationLevel, TokenTypePrimary, out duplicateHandle))
+                        throw new InvalidOperationException("duplicate-token");
+                    var identity = WindowsIdentity.GetCurrent();
+                    string userSid = identity.User.Value;
+                    string everyoneSid = new SecurityIdentifier(WellKnownSidType.WorldSid, null).Value;
+                    if (!ConvertStringSidToSid(userSid, out userSidPtr)) throw new InvalidOperationException("user-sid");
+                    if (!ConvertStringSidToSid(everyoneSid, out everyoneSidPtr)) throw new InvalidOperationException("everyone-sid");
+                    if (!ConvertStringSidToSid(PayswapIsolationSidString, out denySidPtr)) throw new InvalidOperationException("deny-sid");
+                    var sidArray = new SID_AND_ATTRIBUTES[3];
+                    sidArray[0].Sid = userSidPtr; sidArray[0].Attributes = 0;
+                    sidArray[1].Sid = everyoneSidPtr; sidArray[1].Attributes = 0;
+                    sidArray[2].Sid = denySidPtr; sidArray[2].Attributes = 0;
+                    var handle = GCHandle.Alloc(sidArray, GCHandleType.Pinned);
+                    try
+                    {
+                        if (!CreateRestrictedToken(duplicateHandle, CreateRestrictedTokenDisableMaxPrivilege, 0, IntPtr.Zero, 0, IntPtr.Zero, (uint)sidArray.Length, handle.AddrOfPinnedObject(), out restrictedHandle))
+                            throw new InvalidOperationException("restricted-token");
+                    }
+                    finally
+                    {
+                        handle.Free();
+                    }
+                    if (!CreateProcessAsUser(restrictedHandle, nodePath, commandLine, IntPtr.Zero, IntPtr.Zero, false, CreateProcessNoWindow, IntPtr.Zero, null, ref si, out pi))
+                        throw new InvalidOperationException("create-process win32=" + Marshal.GetLastWin32Error());
+                    processHandle = pi.hProcess;
+                    threadHandle = pi.hThread;
+                    WaitForSingleObject(processHandle, WaitInfinite);
+                    uint exitCode;
+                    GetExitCodeProcess(processHandle, out exitCode);
+                    return exitCode == 0 ? 0 : 2;
+                }
+                finally
+                {
+                    if (processHandle != IntPtr.Zero) CloseHandle(processHandle);
+                    if (threadHandle != IntPtr.Zero) CloseHandle(threadHandle);
+                    if (restrictedHandle != IntPtr.Zero) CloseHandle(restrictedHandle);
+                    if (duplicateHandle != IntPtr.Zero) CloseHandle(duplicateHandle);
+                    if (tokenHandle != IntPtr.Zero) CloseHandle(tokenHandle);
+                    if (userSidPtr != IntPtr.Zero) LocalFree(userSidPtr);
+                    if (everyoneSidPtr != IntPtr.Zero) LocalFree(everyoneSidPtr);
+                    if (denySidPtr != IntPtr.Zero) LocalFree(denySidPtr);
+                    try { File.Delete(childPath); } catch { }
+                }
+            }
+            catch (InvalidOperationException e)
+            {
+                Console.Error.WriteLine("harden-child:" + e.Message);
+                return 3;
             }
         }
 
