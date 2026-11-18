@@ -416,3 +416,47 @@ message listener, minter-catch log) were used to bisect and are stripped.
    with `--manual-evidence` (the conversational arms above are the live half).
 2. Evidence register §7+ + roadmap P2 flip + reviewed merge.
 3. Operator-controlled: rotate the recovered test key (P0 note, outstanding).
+
+---
+
+# TL REVIEW ROUND-TRIP (2026-11-18 late — owner decision + hardening opened)
+
+> Responds to the TL's post-continuation review. Verdict honored: P2-Windows stays
+> `in_progress`; the same-user credential recovery is a **formal blocker**.
+
+## Owner decision (recorded)
+
+**Hardening = P2 blocker** (not an exception). Design: **ADR-P2-3**
+(`adr-P2-3-credential-isolation.md`) — deny-restricted agent children
+(app-private restricting SID via CreateRestrictedToken, inherited by all
+model-controlled descendants) + deny ACE on the three credential paths; the
+service-identity option is recorded as the escalation path. The visible RED
+gate: `scripts/payswap/security/isolation-probe.cjs` (exit 1 = law violated,
+exit 0 = hardening acceptance criterion; deliberately outside CI).
+
+## Delivered this round
+
+- `66a65222` §10.1 — recovered key **rotated** (old 401 `api_key_expired`; new key
+  all-five-endpoints 200; show-once value never entered chat).
+- Post-rotation conversational proof: four categories answered with the rotated
+  key (audit dispatched peerPid:1396).
+- `e41f1a85` TL §3-B/C regression protection (see its message).
+- `4233cec3` CI typecheck fix (helper → real MessagePortMain signature; type-only
+  electron import; full `pnpm typecheck` chain green).
+- `248963be` §9.1 formal runner + §10 completion; `9dabf63a` §9 evidence.
+- RED security gate + ADR-P2-3 + call-site AST contract test (3/3) + sanitized
+  stage logs tracked (the only key-shaped string in run artifacts = the e2e
+  spec's public fixture, verified) — this commit.
+- PR cleanups: PR #46 superseded (closed, points at #47); PR #47 description
+  refreshed to the final state.
+
+## Outstanding (unchanged — owner decision makes #1 the active blocker)
+
+1. **Credential-boundary hardening per ADR-P2-3** (restricted-token children +
+   deny ACEs + probe GREEN + re-prove New Task read) — the P2-Windows closer.
+2. Independent TL review of PR #47 (CI: gates/gates-windows/desktop-e2e ×2/
+   roadmap-integrity green on `4233cec3`+; gates-macos long-running, not a
+   P2-Windows gate).
+3. At merge: roadmap P2-Windows flip from the merged state (register law).
+4. Separate tracks: New Task enablement preflight UX; panel ui/initialize
+   handshake; stale-connection-row cleanup in the isolated home (cosmetic).
