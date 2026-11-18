@@ -108,6 +108,7 @@
   "packages/desktop/test/payswap-reader-bridge-entry.test.ts",
   "packages/desktop/test/payswap-reader-bridge-relay.test.ts",
   "packages/desktop/test/payswapReaderBridgeSpawnOptions.test.ts",
+  "packages/desktop/test/payswapReaderBridgeCallSite.test.ts",
   "packages/desktop/test/payswapBrokerPeerHelperSupply.test.ts",
   "packages/desktop/test/permissionInteractionId.test.ts",
   "packages/desktop/test/placeholderProducerDetection.test.ts",

@@ -1,0 +1,65 @@
+[runner] step: real-Electron safeStorage DPAPI probe
+
+PAYSWAP_SAFE_STORAGE_PROBE {"harness":"payswap-safe-storage-probe","platform":"win32","electron":"44.7.0","node":"24.21.0","isEncryptionAvailable":true,"roundTrip":"ok","backendSelected":null}
+
+[runner] step: production P2 law battery (vitest --project engineering, CI-canonical, win32)
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.4 [39m[90mC:/Users/Lenovo/Documents/Qoder/2026-11-16/1c553c72/payswap-4.0[39m
+
+(node:20156) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ [32m✓[39m [30m[42m engineering [49m[39m packages/services/test/payswap-account-service.test.ts [2m([22m[2m20 tests[22m[2m)[22m[33m 453[2mms[22m[39m
+(node:14680) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ [32m✓[39m [30m[42m engineering [49m[39m packages/desktop/test/payswap-account-runtime-wiring.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 182[2mms[22m[39m
+(node:11864) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ [32m✓[39m [30m[42m engineering [49m[39m packages/services/test/payswap-stripe-read-back.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 231[2mms[22m[39m
+(node:17484) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ [32m✓[39m [30m[42m engineering [49m[39m packages/services/test/payswap-account-data.test.ts [2m([22m[2m20 tests[22m[2m)[22m[32m 163[2mms[22m[39m
+(node:22340) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ [32m✓[39m [30m[42m engineering [49m[39m packages/services/test/payswap-account-runtime.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 74[2mms[22m[39m
+(node:22744) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ [32m✓[39m [30m[42m engineering [49m[39m packages/services/test/payswap-credential-security.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 93[2mms[22m[39m
+ [32m✓[39m [30m[42m engineering [49m[39m packages/desktop/test/payswap-psp-key-store.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 50[2mms[22m[39m
+(node:16184) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ [32m✓[39m [30m[42m engineering [49m[39m packages/desktop/test/payswap-account-connection-ipc.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 69[2mms[22m[39m
+(node:6572) ExperimentalWarning: SQLite is an experimental feature and might change at any time
+(Use `node --trace-warnings ...` to show where the warning was created)
+ [32m✓[39m [30m[42m engineering [49m[39m packages/desktop/test/payswap-reader-bridge-entry.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m [30m[42m engineering [49m[39m packages/ui/test/payswap-connection-ui-presentation.test.ts [2m([22m[2m18 tests[22m[2m)[22m[32m 14[2mms[22m[39m
+ [32m✓[39m [30m[42m engineering [49m[39m packages/desktop/test/payswap-reader-bridge-relay.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 7[2mms[22m[39m
+ [32m✓[39m [30m[42m engineering [49m[39m packages/desktop/test/payswap-psp-warmup.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+ [32m✓[39m [30m[42m engineering [49m[39m packages/desktop/test/payswap-psp-storage-backend-policy.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 4[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m13 passed[39m[22m[90m (13)[39m
+[2m      Tests [22m [1m[32m129 passed[39m[22m[90m (129)[39m
+[2m   Start at [22m 20:14:34
+[2m   Duration [22m 28.62s[2m (transform 10.14s, setup 260ms, import 24.45s, tests 1.36s, environment 1ms)[22m
+
+
+[runner] step: harness platform-gate regression (node --test)
+✔ linux: real keychain backend passes and is recorded (2.7202ms)
+✔ linux: basic_text (hardcoded password) fails closed (0.8079ms)
+✔ linux: unknown backend fails closed (0.3168ms)
+✔ linux: expected-backend override is honored (kwallet5 leg) (0.1627ms)
+✔ linux: default expectation is gnome_libsecret (0.0963ms)
+✔ linux: missing Linux-only API fails closed (pre-Electron-15 runtime shape) (0.1879ms)
+✔ win32: DPAPI availability gates the check — Linux-only API is NEVER called (regression row) (0.1903ms)
+✔ win32: isEncryptionAvailable() === false fails closed (0.1755ms)
+✔ darwin: Keychain availability gates the check — Linux-only API is NEVER called (regression row) (0.1217ms)
+✔ darwin: isEncryptionAvailable() === false fails closed (0.2851ms)
+✔ unsupported platform fails closed (policy law 3) (0.1536ms)
+✔ win32: an expectedBackend value is not consumed and never invents a backend name (0.0777ms)
+ℹ tests 12
+ℹ suites 0
+ℹ pass 12
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 147.7165

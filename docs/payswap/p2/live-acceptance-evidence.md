@@ -441,3 +441,30 @@ typed refusal（四类别逐条 unavailable，模型如实转述，零即兴）�
 - **残余**：架构加固（§10 所述独立保护身份 + 窄 RPC）仍是独立里程碑；
   `docs/payswap/p2/evidence/newtask-2026-11-18/security-probe-result.txt` 的
   RECOVERED 结论在本轮换后仍成立（针对新凭据同链可行），故加固优先级不变。
+
+### §10.2 补全：所有者裁决 + 可见失效安全门（2026-11-18 深夜 —— TL review 复函）
+
+**所有者裁决（TL review §3-A 的分叉已决）**：同用户凭据恢复 = **P2-Windows 阻断项**
+（"Hardening = P2 blocker"），非可接受例外。含义：
+- P2-Windows 保持 `in_progress`，直至凭据边界加固落地并被对抗性证据证明；
+- `docs/payswap/p2/adr-P2-3-credential-isolation.md` = 加固设计（拒绝受限代理子进程
+  + 凭据路径 deny ACE；服务身份方案记录为备选与升级路径）；
+- **可见失效安全门**：`scripts/payswap/security/isolation-probe.cjs`（对抗性同用户
+  node 子进程执行完整恢复链）——当前 **RED**（子进程恢复主键+文件键+槽位明文），
+  探针 exit 0（恢复被阻断）即为加固里程碑的验收判据；有意不入 CI 清单（永久红门
+  不阻断无关工作），按需运行；
+- 路线图行维持 `in_progress`（登记法则：必须自合并态 + CI 证据更新）。
+
+**§3-B 调用点回归测试（TL 要求）落地**：`payswapReaderBridgeCallSite.test.ts`
+（TypeScript AST 源码法则）—— 钉死窗口 host 调用点的顶层参数结构：第 5 参携带
+`buildPayswapReaderBridgeSpawnOptions` 展开、第 4 参不含铸造器字段（缺陷形态的
+负向断言）。3/3 通过，已登记 engineering manifest。
+
+**消毒日志入仓（TL review §4 第三项）**：`evidence/newtask-2026-11-18/final-run-logs/`
+—— secure-storage 全量、stripe-live 全量、build/e2e 裁决尾部 + LOG-MANIFEST-sha256.txt。
+泄漏扫描：run 工件中唯一的密钥形字符串是 e2e spec 的**公开** fixture
+（`sk_test_e5f6a7b8…`，payswap-connection-ui.test.ts 提交在案）—— 非真实秘密。
+
+**PR 清理**：PR #46（p2/environment-readiness-audit）被 PR #47 完全包含
+（#47 领先 20 提交、落后 0）—— 显式关闭 #46 并指向 #47（同一合并路径）；
+PR #47 描述更新为最终状态。
