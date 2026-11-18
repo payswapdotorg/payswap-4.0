@@ -335,3 +335,84 @@ staged pair (`7374217e…`) and injects both keys into the host fork env.
 4. P2 availability work from the review: `alwaysLoad: true` on the PaySwap
    gateway server, New Task enablement/consent preflight, deterministic
    single-account overview resolution (dispatch.ts detail attach).
+
+---
+
+# READER-BRIDGE WIRING FIXED + LIVE NEW TASK FOUR-CATEGORY E2E (2026-11-18 evening)
+
+> Append-only continuation. Branch head: `e017b5a8` → this commit. The §C blocker
+> successor (`not_connected` on every `get_account_overview`) is **root-caused,
+> fixed, and proven live in a real New Task conversation** — including the
+> revoke → typed-refusal arm.
+
+## Root cause 2 (the not_connected wall)
+
+`spawnHostProcess(win, label, initMessage, dependencies, options?)` — the
+window-host call site in `main/index.ts` spread
+`mintPayswapReaderBridgePort` into the **4th argument (dependencies)**, but the
+field lives on `SpawnHostProcessOptions` — the **5th parameter** — which the
+call site populated with `{ taskRealtime }` only. `options.mintPayswap…` was
+therefore always undefined → the minter never ran at spawn → the
+`PayswapReaderBridgePort` message was never posted → the host relay never went
+live → `agentSpawnEnv()` never injected `ZCODE_PAYSWAP_READER_BRIDGE=1` → the
+agent CLI bound no account readers → every `get_account_overview` answered the
+typed `not_connected` refusal. The wire existed on every side but the two ends
+were never joined: silent drop (undeclared field spread into a typed object,
+excess-property check bypassed by the conditional spread).
+
+## Fix
+
+`main/index.ts`: the minter conditional moved out of `dependencies` into the
+5th-argument options object (next to `taskRealtime`). One moved block, nothing
+else. TEMP probes (minter-installed log, spawn-time mint probe, host raw
+message listener, minter-catch log) were used to bisect and are stripped.
+
+## Live evidence (dev desktop, isolated data home `ZCODE_DATA_BASE_DIR`)
+
+1. Boot: `[payswap-reader-bridge-relay] main port attached (reader bridge relay
+   live)` — first occurrence ever on this chain (raw listener confirmed the
+   `payswap-reader-bridge-port` message arrives with `ports: 1`).
+2. Real New Task conversation (GLM-5.3): "Using the PaySwap account overview,
+   show me my connected Stripe account…" → model called
+   `payswap_get_account_overview` → audit `dispatched op:get_account_overview
+   peerPid:<pid>` → **all four categories in one answer** (balance USD
+   $69,854.06 + €147.48; 10 charges 8✅/2❌; 10 customers — sanitized
+   projections, no PII; disputes empty). Deterministic single-account
+   auto-resolve worked (no connectionId passed, one connected account).
+3. Revoke via Settings → Payment connections → Revoke: "Connection revoked.
+   The locally stored secret was deleted." (store row tombstoned `revoked`).
+4. Fresh post-revocation read: typed refusal, all four categories ⛔
+   unavailable — connection revoked; the model reported it honestly and
+   directed re-auth to the UI — **no improvisation, no credential access**.
+5. Evidence: `artifacts/p2-acceptance/2026-11-18-newtask-evidence/`
+   (broker-audit.jsonl, reader-bridge-relay-lines.txt).
+
+## Isolated-home acceptance environment (repeatable)
+
+- Launcher `C:\Users\Lenovo\payswap-dev-launch.cmd` sets
+  `ZCODE_DATA_BASE_DIR=C:\Users\Lenovo\payswap-dev-data` — app data (v2
+  credentials, tasks index, connections store) fully separate from the
+  installed product's `~/.zcode`. Fixes the earlier shared-home incident where
+  dev boots rewrote the product's `credentials.json` and kicked its session.
+- Connection made through the real Settings → Payment connections UI (rk_test
+  key typed via CDP automation, never displayed); S2 opt-in through the real
+  plugin settings toggle (operator consent given in chat).
+
+## New findings (not yet fixed)
+
+- **Panel handshake defect (P3 candidate)**: PaySwap's Wave-1 panels are static
+  HTML skeletons with no client script, but the host's plugin-UI layer now
+  enforces the MCP Apps `ui/initialize` handshake (15 s timeout) — the panel
+  times out ("plugin-ui: ui/initialize handshake timed out"). Panels need the
+  MCP Apps client bootstrap; the TOOL path is unaffected.
+- Stale docstring: `resolveDefaultPeerRelayHelper` "仅 darwin" comment (accepts
+  win32; peer-relay.ts).
+- Desktop-chain operator-wins gap: operator-set supply keys are captured+stripped
+  by desktop main and never forwarded (see 2026-11-18 afternoon note).
+
+## Remaining to P2-Windows closure
+
+1. 13-step manual evidence receipt + final zero-assumption five-stage runner
+   with `--manual-evidence` (the conversational arms above are the live half).
+2. Evidence register §7+ + roadmap P2 flip + reviewed merge.
+3. Operator-controlled: rotate the recovered test key (P0 note, outstanding).

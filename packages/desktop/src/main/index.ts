@@ -1984,11 +1984,6 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
           taskRealtimeBus,
           windowHostProcessMap,
           hostRunningTaskCountMap,
-          // P2.2 slice 9（ADR-P2-2 Addendum B）：reader 桥端口随 spawn 转移到窗口 host
-          // （中继 main 面）。装配未就绪/铸造失败 → 不转移（桥缺席 = fail-closed 缺省）。
-          ...(mintPayswapReaderBridgePortForHost
-            ? { mintPayswapReaderBridgePort: mintPayswapReaderBridgePortForHost }
-            : {}),
           onCuaOperationStateChanged: (source, event) =>
             windowsCuaOperationIndicator.handleState(source, event),
           onCuaOperationStateSourceExited: (source) =>
@@ -2038,6 +2033,14 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
               windowTaskRealtimeHostIdMap.set(win.id, hostId);
             },
           },
+          // P2.2 slice 9（ADR-P2-2 Addendum B）：reader 桥端口铸造走 SpawnHostProcessOptions
+          //（第 5 参）。此前被误 spread 进第 4 参 dependencies（字段不在其类型里，运行期
+          // 被丢弃）—— options 里恒无铸造器，端口从未转移（2026-11-18 live 证实：host
+          // "main port attached" 从不出现 → agent spawn env 无桥标记 → reader 缺席 →
+          // get_account_overview 恒 not_connected）。
+          ...(mintPayswapReaderBridgePortForHost
+            ? { mintPayswapReaderBridgePort: mintPayswapReaderBridgePortForHost }
+            : {}),
         },
       ),
     disposeHostProcess: (child, label, forceKillDelayMs) =>
