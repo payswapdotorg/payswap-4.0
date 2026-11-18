@@ -11,10 +11,11 @@
  * 调用点把它的返回值 spread 进第 5 参 options 对象。本 battery 钉死构造契约：
  * 铸造器在场 → 同一引用携带在 mintPayswapReaderBridgePort 下；缺席 → 空选项。
  */
+import type { MessagePortMain } from "electron";
 import { describe, expect, it } from "vitest";
 import { buildPayswapReaderBridgeSpawnOptions } from "../src/main/payswap/readerBridgeSpawnOptions.js";
 
-const minter = (): unknown => ({});
+const minter = (): MessagePortMain | null => null as unknown as MessagePortMain;
 
 describe("buildPayswapReaderBridgeSpawnOptions", () => {
   it("a present minter is carried verbatim under mintPayswapReaderBridgePort (the 5th-arg SpawnHostProcessOptions contract)", () => {
