@@ -133,14 +133,16 @@ test("official scaffold generates a complete workspace plugin package", async ()
     assert.equal(manifest.name, "fixture-workspace");
     assert.equal(manifest.mcpServers["fixture-workspace"].isolation, "workspace");
     assert.deepEqual(manifest.mcpServers["fixture-workspace"].env, {
-      FIXTURE_FINANCIALWORKSPACE: "${user_config.financialWorkspace}",
+      FIXTURE_FINANCIAL_WORKSPACE: "${user_config.financialWorkspace}",
     });
+    // CamelCase opt-in options split into the plugin's snake-case env namespace
+    // (financialWorkspace -> FIXTURE_FINANCIAL_WORKSPACE, the PAYSWAP_ precedent).
+    const contract = await readFile(join(root, "src", "contract.ts"), "utf8");
+    assert.match(contract, /export const OPT_IN_ENV = "FIXTURE_FINANCIAL_WORKSPACE"/);
     assert.equal(manifest.userConfig.financialWorkspace.default, false);
     assert.equal(manifest.ui.surfaces.length, 2);
     assert.equal(manifest.ui.surfaces[0].availability, "session");
     assert.ok(manifest.ui.surfaces[0].resourceUri.startsWith("ui://fixture-workspace/"));
-    const contract = await readFile(join(root, "src", "contract.ts"), "utf8");
-    assert.match(contract, /export const PLUGIN_ENV_NAMESPACE = "FIXTURE_"/);
     assert.match(contract, /"fixture_get_status",/);
     assert.match(contract, /"not_opted_in"/);
     assert.match(contract, /export const PLUGIN_OUTPUTS/);

@@ -451,7 +451,7 @@ await build({
   logOverride: { "direct-eval": "silent" },
 });
 
-process.stdout.write(${JSON.stringify(`${name}-plugin: built dist/server.mjs\\n`)});
+process.stdout.write(${JSON.stringify(`${name}-plugin: built dist/server.mjs`)} + "\\n");
 `;
 }
 
@@ -516,7 +516,8 @@ function testTemplate(input) {
     lines.push(`        await server.close();`);
     lines.push(`      };`);
     lines.push(`      for (const tool of TOOL_NAMES) {`);
-    lines.push(`        const result = await client.callTool({ name: tool, arguments: {} });`);
+    lines.push(`        // The scaffold schema requires one string field; real schemas replace it.`);
+    lines.push(`        const result = await client.callTool({ name: tool, arguments: { input: "sample" } });`);
     lines.push(`        expect(result.isError).toBeFalsy();`);
     lines.push(`        const text = (result.content as Array<{ type: string; text?: string }>).find(`);
     lines.push(`          (entry) => entry.type === "text",`);
@@ -537,7 +538,7 @@ function testTemplate(input) {
     lines.push(`      await client.close();`);
     lines.push(`      await server.close();`);
     lines.push(`    };`);
-    lines.push(`    const result = await client.callTool({ name: TOOL_NAMES[0], arguments: {} });`);
+    lines.push(`    const result = await client.callTool({ name: TOOL_NAMES[0], arguments: { input: "sample" } });`);
     lines.push(`    const envelope = JSON.parse(`);
     lines.push(`      (result.content as Array<{ type: string; text?: string }>)[0].text as string,`);
     lines.push(`    );`);
@@ -699,7 +700,9 @@ export async function scaffoldOfficialPlugin(options) {
   const optIn = optInKey
     ? {
         key: optInKey,
-        envKey: `${envNamespace}${optInKey.toUpperCase()}`,
+        // PAYSWAP_FINANCIALWORKSPACE is wrong; split camelCase into underscores
+        // (financialWorkspace -> FINANCIAL_WORKSPACE, the official precedent).
+        envKey: `${envNamespace}${optInKey.replace(/([a-z0-9])([A-Z])/gu, "$1_$2").toUpperCase()}`,
       }
     : undefined;
   const refusals = optIn
