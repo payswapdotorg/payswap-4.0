@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import {
@@ -72,6 +73,15 @@ const TID_ROW_REVOKE = "payswap-connection-revoke";
 const TID_LIST_EMPTY = "payswap-connection-list-empty";
 
 const STORAGE_REFUSAL_CODE = "PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE";
+/** ADR-P2-3 custodian fail-closed 拒绝码（win32 托管缺席的 lawful 闭集结局）。 */
+const CUSTODIAN_REFUSAL_CODE = "custodian_unavailable";
+/** ADR-P2-3 custodian 架构判定面：win32 + SYSTEM 托管服务端点在场 = 托管保管。 */
+const CUSTODIAN_ENDPOINT_FILE = "C:\\ProgramData\\payswap\\custodian-endpoint.json";
+const CUSTODIAN_KEY_BLOB_FILE = "C:\\ProgramData\\payswap\\custodian-key.bin";
+
+function custodianBackedAtRest(): boolean {
+  return process.platform === "win32" && existsSync(CUSTODIAN_ENDPOINT_FILE);
+}
 /** 格式合法的假 test 密钥（formatCheck 通过；最终权威是 provider read-back）。 */
 const VALID_FORMAT_TEST_SECRET = `sk_test_${"e5f6a7b8".repeat(6)}`;
 const INVALID_FORMAT_SECRET = "not-a-stripe-key";
@@ -258,9 +268,34 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
       (candidate) =>
         candidate.key === "payswap.connections.result.connected" ||
         (candidate.key === "payswap.connections.refusal.secure_storage_unavailable" &&
-          candidate.code === STORAGE_REFUSAL_CODE),
-      "首次合法 connect 应呈现闭集结局（存储 typed 拒绝或 connected）",
+          candidate.code === STORAGE_REFUSAL_CODE) ||
+        (candidate.key === "payswap.connections.refusal.custodian_unavailable" &&
+          candidate.code === CUSTODIAN_REFUSAL_CODE),
+      "首次合法 connect 应呈现闭集结局（存储 typed 拒绝 / custodian typed 拒绝 / connected）",
     );
+
+    if (notice.code === CUSTODIAN_REFUSAL_CODE) {
+      // ADR-P2-3 fail-closed 的 E2E 形态：win32 custodian-required 且托管缺席
+      //（无服务/注册门拒）= typed 拒绝 —— 绝不静默回退 legacy 存储（拒绝先于
+      // 记录）。托管在场时该拒绝不可达（在 = 装配/门缺陷，测试失败）。
+      if (custodianBackedAtRest()) {
+        throw new Error(
+          "custodian 服务在场却呈现 custodian_unavailable —— provisionDesktopCustodianBridge 装配或服务门缺陷",
+        );
+      }
+      storageUnavailableInEnv = true;
+      // at-rest：拒绝先于记录写 —— 无 PSP 密文、无连接记录。
+      const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
+      if (credentials !== null) {
+        expect(credentials).not.toContain("payswap:psp:");
+        expect(credentials).not.toContain(VALID_FORMAT_TEST_SECRET);
+      }
+      const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
+      if (connections !== null) {
+        expect(connections).not.toContain("stripe");
+      }
+      return;
+    }
 
     if (notice.code === STORAGE_REFUSAL_CODE) {
       if (KEYRING_EXPECTATION === "gnome-libsecret") {
@@ -287,9 +322,13 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
     }
 
     if (KEYRING_EXPECTATION === "absent") {
-      throw new Error(
-        "ZCODE_E2E_KEYRING=absent 腿期望 fallback-only 拒绝（Gate E2 条款本体），但 connect 成功 —— absent 腿里存储不该在场（后端政策缺口或环境漂移）",
-      );
+      // ADR-P2-3 架构分支：win32 custodian 路径不触 OS 钥匙串 —— absent 腿里
+      // 托管在场时 connected 是 lawful 结局（托管保管，不是存储回退）。
+      if (!custodianBackedAtRest()) {
+        throw new Error(
+          "ZCODE_E2E_KEYRING=absent 腿期望 fallback-only 拒绝（Gate E2 条款本体），但 connect 成功 —— absent 腿里存储不该在场（后端政策缺口或环境漂移）",
+        );
+      }
     }
 
     expect(notice.tone).toBe("positive");
@@ -319,15 +358,25 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
     const name = await $('[data-testid="payswap-connection-name"]').getText();
     expect(name).toContain("E2E Stripe");
 
-    // at-rest：连接记录无秘密；凭据 store 是密文（含 connectionId、不含明文）。
+    // at-rest（架构感知）：连接记录无秘密；凭据面按架构分支 —— win32 custodian
+    // 路径 = 本地凭据 store 恰无本连接槽位（托管保管，blob 在场）；legacy 路径 =
+    // 凭据 store 密文（含 connectionId、不含明文）。
     const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
     expect(connections).not.toBeNull();
     expect(connections).toContain(connectionId);
     expect(connections).not.toContain(VALID_FORMAT_TEST_SECRET);
     const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
-    expect(credentials).not.toBeNull();
-    expect(credentials).toContain(connectionId);
-    expect(credentials).not.toContain(VALID_FORMAT_TEST_SECRET);
+    if (custodianBackedAtRest()) {
+      if (credentials !== null) {
+        expect(credentials).not.toContain(connectionId);
+        expect(credentials).not.toContain(VALID_FORMAT_TEST_SECRET);
+      }
+      expect(existsSync(CUSTODIAN_KEY_BLOB_FILE)).toBe(true);
+    } else {
+      expect(credentials).not.toBeNull();
+      expect(credentials).toContain(connectionId);
+      expect(credentials).not.toContain(VALID_FORMAT_TEST_SECRET);
+    }
   });
 
   it("refresh：闭集结局呈现 + 状态一致（read_back_unavailable 不变 / expired 翻牌 / verified）", async function () {
@@ -386,6 +435,10 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
     const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
     if (credentials !== null) {
       expect(credentials).not.toContain(connectionId);
+    }
+    if (custodianBackedAtRest()) {
+      // ADR-P2-3：托管清除走 drop —— SYSTEM blob 必须证实不在（撤销必证实清除）。
+      expect(existsSync(CUSTODIAN_KEY_BLOB_FILE)).toBe(false);
     }
     const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
     expect(connections).toContain(connectionId);

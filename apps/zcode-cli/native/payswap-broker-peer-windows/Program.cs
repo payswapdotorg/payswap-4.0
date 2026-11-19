@@ -1470,14 +1470,18 @@ namespace PayswapBrokerPeerHelper
         }
 
         /** 客户端父进程门（数据操作）：测试缝 = 父映像子串（仅 console 模式可达）；
-            生产 = 精确 registered pid + 父映像 == config electron 全路径 + 进程仍活
-            且映像未变（PID 复用防御 —— OpenProcess+QueryFullProcessImageName 内核事实）。 */
+            生产 = 父进程是「真实 desktop 级客户端」—— 恰配置 electron 全路径映像 +
+            进程活着（OpenProcess+QueryFullProcessImageName 内核事实，PID 复用由映像
+            核验拦截）。registered pid 保持为注册握手的锚与诊断事实；数据操作按
+            desktop 级身份放行 —— 多实例桌面（双窗口 / E2E 顺序引导）各自是同一
+            custodian 的合法客户端，单注册绑定会在实例更替时饿死合法客户端。
+            A4 攻击类全部仍被拦：not-electron / 不同 electron 可执行 / 复制 helper /
+            陈旧 pid（复用者映像不符）—— 门是映像精确性 + 活性，不是 pid 记账。 */
         private static bool IsAuthorizedCustodianParent(int parentPid, string parentImage)
         {
             if (custodianTestGateSubstring != null)
                 return parentImage != null && parentImage.ToLowerInvariant().Contains(custodianTestGateSubstring);
             if (custodianElectronImage == null) return false;
-            if (parentPid != registeredMainPid || registeredMainPid == -1) return false;
             return VerifyProcessImagePath(parentPid, custodianElectronImage);
         }
 
