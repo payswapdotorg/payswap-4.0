@@ -468,3 +468,55 @@ typed refusal（四类别逐条 unavailable，模型如实转述，零即兴）�
 **PR 清理**：PR #46（p2/environment-readiness-audit）被 PR #47 完全包含
 （#47 领先 20 提交、落后 0）—— 显式关闭 #46 并指向 #47（同一合并路径）；
 PR #47 描述更新为最终状态。
+
+## 11. ADR-P2-3 托管边界 —— 加固落地 + 全量验收证据（2026-11-19，native Windows）
+
+**本节取代 §10 的未关闭状态**（§10 的历史发现与裁决记录保留为决策史）。
+
+### §11.1 加固落地（与 ADR-P2-3 §0 修正案一致）
+
+- **P0 消毒**：承载完整操作行（含 PSP 密钥）的 `custodian:op=` 诊断行已废除；
+  服务端一切诊断行为稳定决策事实（pid/原因/长度/结果码/win32 错误码）。
+  永久回归：`custodian-service-probe.cjs` 以合成秘密推送并证明其不可达任何
+  诊断/客户端捕获（21/21，`8da3129b`）。
+- **根因修复**：DPAPI P/Invoke 修复（`DATA_BLOB` 结构指针 —— 旧 `byte[]` 直传
+  使 blob 持久化从未工作过，旧 push 吞错伪装成功）；撤销臂的托管清除真实生效
+  （桥转发进服务 —— 此前恒为 no-op）。
+- **fail-closed**：`credentialCustody:"custodian-required"`（win32）—— 托管缺席
+  = typed `custodian_unavailable` 拒绝；refusing port 无 legacy 写路径（结构保证
+  零 enc:v1 写入）；legacy 键仓预热在托管路径跳过（F5）。
+- **服务边界**：受保护 `svc-bin` 安装（SYSTEM+Admins ACL，启动自检），精确映像门
+  （client helper + parent electron，内核事实），真界管道读写，原子验证式
+  push/drop，有界代理 GET（DNS 瞬断重试 ≤2）。
+
+### §11.2 服务级活体证据（`evidence/custodian-2026-11-19/EVIDENCE.md`）
+
+服务模式 register→push→/v1/balance 200→/v1/account 200 = 4/4；同用户读 blob =
+EPERM；服务重启 → blob 自举恢复密钥（3/3 无重推）；撤销证实清除（blob 不在 +
+读取 typed no-key）；红队 0 FAIL（报告入仓）。
+
+### §11.3 隔离探针 GREEN（meaningful-green）
+
+`isolation-probe.cjs` 重构（`bca1faea`）：前置条件（blob+端点+diag 新鲜凭据在场）
+使空洞 GREEN 不可能；敌意同用户子进程 = 完整历史链（master key → file key →
+全部 enc:v1 槽）+ blob 读取 + 活管道 get + 复制 helper 注册 —— 全部被拒/阻断；
+新鲜密钥 digest 与一切可恢复材料比对（零交集）；历史死键墓碑显式记录。
+
+### §11.4 五阶段 + 13 步回执（final head）
+
+- 四阶段单会话全绿（`2026-11-19T18-08-15-560Z` 工件 + summary.json +
+  MANIFEST-sha256.txt）：windows-build / windows-secure-storage（含托管探针电池 +
+  活隔离探针）/ windows-desktop-e2e（7/7 臂）/ stripe-live（真 UI 旅程 + 生产链
+  live harness）全 PASS；canonical 零假设五阶段复跑见本轮 artifacts。
+- **13 步交互回执**：`evidence/newtask-2026-11-19/manual-new-task-evidence.md`
+  （13/13 PASS + 全项 attestation + 14 项消毒截图/文本工件，SHA-256 清单入仓）。
+  四分类对话读经真实 PaySwap 插件 MCP 工具（Gateway 内 `Payswap get account
+  overview`），真 Stripe 数据（余额/10 charges/10 customers/disputes 空），
+  模型零密钥暴露；撤销后读取 = typed 拒绝（kind: revoked）。
+
+### §11.5 P2-Linux 状态（诚实）
+
+linux-build / linux-secure-storage / linux-desktop-e2e = PASS（§8 记录）；
+stripe-live + conversation = 操作者受控门未过：受限键向 Linux 验收机的供给 +
+Stripe 账户 onboarding 身份段（/v1/account `requirements` 截至 2026-11-19 仍缺席，
+capabilities 在场）。Windows 证据绝不替代 Linux 验收。
