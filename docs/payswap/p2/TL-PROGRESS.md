@@ -607,3 +607,31 @@ absence: the push handler writes it in a try/catch whose Diag will say which.
   custodian path is part of the closure evidence after the fix.
 - The dev app renderer occasionally needs the Cancel-auth-gate CDP click after
   restarts (isolated home quirk, cosmetic).
+
+## H-6. HARDENING LANDED (2026-11-19 — this section supersedes H-1..H-5 state)
+
+The takeover handoff above is historical. The hardening milestone's implementation
+is complete and live-verified; see `adr-P2-3-credential-isolation.md` §0 (amended
+architecture) and `evidence/custodian-2026-11-19/EVIDENCE.md` (sanitized live
+evidence + SHA-256 manifest). Commit chain: `8da3129b` (native hardening + probe
+battery) → `1bf1fe27` (TS fail-closed seam) → `014cc2c0` (bridge forwarding +
+A3 batteries) → `972adea7` (live evidence) → `bca1faea` (isolation probe rebuild)
+→ `f7472ff6` (runner wiring). Service re-deployed from the hardened binary
+(svc-bin protected location); service-mode register/push/live-Stripe-get 4/4;
+restart recovery via blob bootstrap 3/3; verified revocation 3/3; console probe
+battery 21/21; isolation probe GREEN (meaningful).
+
+Root causes found on takeover (each previously masked):
+1. DPAPI P/Invoke passed raw bytes where crypt32 expects a DATA_BLOB struct —
+   blob persistence never worked; the old push handler swallowed the failure and
+   acked ok:true from memory (explains the absent blob in H-2).
+2. The desktop assembly never forwarded custodianBridge into the account
+   service — revoke's custody drop was always a silent no-op.
+3. Secret-bearing diagnostic `custodian:op=` (P0) — removed; all diag lines are
+   stable decision facts (permanent regression: custodian-service-probe battery).
+4. Fail-open bridge provisioning (`undefined → legacy enc:v1 path`) — replaced by
+   explicit provisioning states + `credentialCustody: "custodian-required"`
+   refusing port (structural fail-closed, typed `custodian_unavailable`).
+5. `Contains("electron.exe")` gates → exact-image kernel-fact gates; unbounded
+   pipe reads → real deadlines; push/drop ack without persistence → verify-before-ack;
+   service binary in user-writable location → protected svc-bin + self-check.

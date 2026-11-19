@@ -1,12 +1,106 @@
 # ADR-P2-3 — PSP credential isolation from model-controlled processes
 
-- Status: **accepted as the P2-Windows blocker plan** (owner disposition 2026-11-18:
-  "Hardening = P2 blocker" — recorded in `live-acceptance-evidence.md` §10.2)
+- Status: **accepted — SYSTEM custodian service architecture (amended 2026-11-19;
+  live-verified on this machine)**. Owner disposition 2026-11-18: "Hardening =
+  P2 blocker" (recorded in `live-acceptance-evidence.md` §10.2). The §2 first
+  attempt (restricted-token children) was REJECTED live; the §2 "Layer 1-3"
+  LogonUser-per-call design below was likewise **superseded** by the SYSTEM
+  service — it is retained as decision history only, not as the shipped design.
 - Supersedes: the 2026-11-17-era framing that placed the same-user DPAPI boundary
   outside P2 (§10.2 of the evidence register supersedes that statement)
-- Enforcement gate: `scripts/payswap/security/isolation-probe.cjs` — **visible RED**
-  until this ADR's acceptance criteria hold; the milestone is DONE exactly when the
-  probe exits 0
+- Enforcement gates: `scripts/payswap/security/custodian-service-probe.cjs`
+  (protocol battery: diag hygiene, exact gates, deadlines, durable custody,
+  client contract) + `scripts/payswap/security/isolation-probe.cjs`
+  (meaningful-green adversarial acceptance: fresh credential in custody, at-rest
+  recovery blocked, unauthorized RPC refused) — the milestone is DONE exactly
+  when both exit 0 on the final head
+
+## 0. Amendment 2026-11-19 — the shipped architecture (SYSTEM custodian service)
+
+**Decision:** the PSP credential lives ONLY inside a demand-start Windows service
+running as LOCAL SYSTEM (`PayswapCustodianSvc`), which holds the key in memory and
+in a SYSTEM-DPAPI-wrapped blob; the desktop main reaches it exclusively through a
+gated named-pipe protocol; every fallback to the legacy user-readable credential
+store is structurally removed on Windows (`credentialCustody: "custodian-required"`).
+
+### A0.1 Components (as implemented)
+
+1. **Service** (`apps/zcode-cli/native/payswap-broker-peer-windows/Program.cs`,
+   custodian region): installed by the helper's `--svc-install` (elevated) which
+   copies the binary to `C:\ProgramData\payswap\svc-bin\` (explicit ACLs:
+   SYSTEM+Administrators only, inheritance off — a user-writable location is
+   rejected as a SYSTEM service host; SvcRun self-checks image location + ACL at
+   start), writes the exact-identity config (electron image, client-helper image,
+   user SID), and registers via `sc create/start`. Service-mode refuses
+   `--test-gate` outright (the console seam cannot reach SYSTEM).
+2. **Protocol** (`payswap-custodian-v1` named pipe): per-start token handshake
+   (endpoint file `C:\ProgramData\payswap\custodian-endpoint.json`, SYSTEM + user
+   RW), kernel-fact gates only — client pid via `GetNamedPipeClientProcessId`,
+   client image == configured helper image (exact), parent image == configured
+   electron image (exact, via `OpenProcess`+`QueryFullProcessImageName`), data ops
+   additionally require the registered main pid with live re-verification
+   (PID-reuse defense). Registration = exact electron-image anchor (the
+   `Contains("electron.exe")` gate is abolished); rebind allowed only through the
+   same full gate. All reads/writes bounded (Task.WaitAny deadlines); replies
+   wait (bounded) for pipe drain so `Disconnect` cannot race away a reply.
+3. **Custody** (durable semantics): push = validate shape (64..512 printable
+   ASCII) → SYSTEM-DPAPI protect → atomic blob write (tmp + Replace/Move) →
+   readback decrypt + byte-verify → SYSTEM-only ACL → only then ack ok:true;
+   drop = memory clear → delete → verify absent → ack ok:true. Any failure =
+   typed ok:false (the client exit-code contract 0/70/71/72 makes unconfirmed
+   ops throw in the TS bridge). Bootstrap restores the key from the blob across
+   service restarts (`bootstrap-key-restored`).
+4. **Bounded read proxy**: five-path allowlist (`/v1/balance|/v1/charges|
+   /v1/customers|/v1/disputes|/v1/account`), key only ever placed in the
+   Authorization header inside the service, `Proxy = null` + TLS 1.2 explicit,
+   30s read/write timeouts.
+5. **Diagnostics**: sanitized decision facts only (pid/reason/length/result
+   code/win32 error code) — no tokens, no operation payloads, no exception
+   messages; 1 MB rotation. The secret-bearing `custodian:op=` line is gone.
+6. **Desktop seam** (`packages/desktop/src/main/payswap/custodianClient.ts`):
+   `provisionDesktopCustodianBridge()` returns active (bridge) or inactive with an
+   explicit reason; liveness = successful register handshake (kernel pipe+token+
+   gate facts), never a stale endpoint file; verified replies; one fully-gated
+   re-register retry for service-restart recovery.
+7. **Fail-closed runtime** (`packages/services/src/payswap/runtime.ts` +
+   `accountService.ts`): `credentialCustody: "custodian-required"` (win32) — with
+   no bridge, the credential port is a refusing port (`custodian_unavailable`
+   typed refusal; no legacy write path exists at all — the enc:v1 slot cannot be
+   written even when the custodian is missing/broken); delete-only legacy access
+   keeps revocation working and cleans pre-policy residue. The bridge is
+   forwarded into the account service (a pre-existing omission that made the
+   revoke-time custody drop a silent no-op is fixed); an unconfirmed custody drop
+   makes revoke a typed refusal on an already-revoked record.
+8. **Connection UI**: `custodian_unavailable` refusal code surfaced with i18n
+   strings (code-keyed, never message-matched).
+
+### A0.2 Why this design (vs §2 history)
+
+- The restricted-token design (§2 first attempt) is impossible on non-elevated
+  desktops (win32 1314). The LogonUser-per-call design (§2 "accepted") was
+  superseded: a dedicated-identity custodian still leaves the wrapped material
+  readable to any same-user process holding the DACL-granted file, and per-call
+  impersonation cannot persist the key across restarts without re-deriving from
+  those files. The SYSTEM service moves custody entirely out of the user's
+  reach: the user-readable artifact set no longer contains (or can unwrap) the
+  credential at all.
+- Proven live on this machine (see
+  `evidence/custodian-2026-11-19/EVIDENCE.md`): service-mode register → push →
+  live Stripe 200s (4/4); same-user read of the blob = EPERM; service restart →
+  blob bootstrap restores the key (3/3, no re-push); verified revocation (blob
+  absent, post-drop read = typed no-key); console probe battery 21/21;
+  isolation probe GREEN (fresh-key digest absent from all user-readable
+  material, unauthorized RPC refused, copied-helper registration refused).
+
+### A0.3 Honest boundary statement (unchanged in spirit)
+
+- The service boundary defends files + RPC; memory-read of the desktop main by a
+  same-user process remains a same-trust-boundary breakout of a different threat
+  class (tracked in the hardening milestone).
+- The endpoint file is readable by the user by design (pipe + per-start token);
+  it grants nothing by itself — the gates are kernel process facts.
+- Revocation requires the custodian service to be alive to confirm the drop; a
+  failed drop surfaces as a typed refusal (never a fake revoked confirmation).
 
 ## 1. Context
 
