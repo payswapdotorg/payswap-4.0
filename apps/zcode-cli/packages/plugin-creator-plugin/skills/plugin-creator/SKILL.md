@@ -1,13 +1,34 @@
 ---
 name: plugin-creator
-description: Create or update ZCode plugin source and a local test marketplace, then guide the user to add, install, update and try it in the app. Use for new plugins or changes to an existing plugin's capabilities, manifest or local distribution.
+description: Create or update ZCode plugin source and a local test marketplace, then guide the user to add, install, update and try it in the app. Also creates official built-in or workspace plugins for the ZCode host repo itself: packaging, official registration, host service integration, UI surfaces and production launch tests. Use for new plugins or changes to an existing plugin's capabilities, manifest or local distribution.
 ---
 
 # Plugin Creator
 
-Deliver implemented plugin source, a local dev marketplace catalog, and precise UI instructions for the user to add the market, install/update the plugin and try it. Use ZCode manifests.
+Deliver implemented plugin source, a local dev marketplace catalog, and precise UI instructions for the user to add the market, install/update the plugin and try it. For plugins destined to ship inside the ZCode host repo, deliver the official package, registration and launch-test wiring instead. Use ZCode manifests.
 
 The current handoff is manual. Do not register markets, install/update/enable plugins, or publish as part of this skill. Ordinary Desktop users are not expected to have a global `zcode` CLI or `node` command. Use existing file tools when helper runtimes are unavailable; do not ask users to install development tooling to complete the UI steps. A skill reference alone has no plugin requirements: ask what the plugin should do before generating files.
+
+## 0. Classify the request — three creation profiles
+
+Pick exactly one profile before generating anything; record the choice and the reasons in the delivery.
+
+| Profile | Choose when | Deliverable |
+| --- | --- | --- |
+| **1 — Local plugin** | The plugin is for the user's own use or testing, distributed via a local dev marketplace. | Plugin source + local marketplace catalog + manual UI handoff (sections 1–6). |
+| **2 — Official built-in plugin** | The plugin ships inside the ZCode host repo for all users but holds no host-domain state: skills, commands, docs, or an MCP server talking to external services with user-provided config. | Plugin package + official definition registration + build + launch-test wiring (sections 7). |
+| **3 — Official workspace plugin** | Profile 2 AND the plugin must read or act on host-owned domain state (accounts, documents, financials, device access, workspace data). | Everything in Profile 2 plus the host-service boundary, typed contracts, security review and the full acceptance chain (sections 7–9). |
+
+Decision rules:
+
+- "Official" means the plugin lives in the host repo (`apps/zcode-cli/packages/<name>-plugin`) and is registered in `bootstrap/src/app/official-plugin-definitions.ts` — not a marketplace listing.
+- Requests naming a host domain (payments/accounts/documents/desktop control) are Profile 3 even if the user says "just a plugin".
+- When unclear whether host services are needed, inspect the workspace first (section 0a) and choose the least-privileged profile that satisfies the request; record what would upgrade the classification.
+- Upgrading Profile 2 → 3 later is a planned change (contract file first); do not silently grow a plugin into Profile 3.
+
+### 0a. Security and consent review (run before implementing Profiles 2/3)
+
+Read [workspace-plugin-security.md](references/workspace-plugin-security.md) and answer, in writing, before code: credential handling (the plugin process must work with zero credentials of its own), opt-in requirement (sensitive domains need a `userConfig` boolean defaulting to `false` and `defaultEnabled: false`), read-only vs privileged tools, UI surfaces as informational only (approvals are host-rendered), the plugin's own env namespace, and which tests will prove the model cannot bypass the boundary. Record unresolved decisions explicitly; choose repository-consistent defaults (opt out of new privileges). Never generate a credential-bearing plugin server when the architecture calls for a host-managed credential boundary — stage typed refusals instead.
 
 ## 1. Define the outcome and source
 
@@ -56,3 +77,29 @@ Reply in the user's language with:
 - Explicit status: market awaiting manual addition, plugin awaiting installation/update, and trial pending, unless completion has been observed or reported by the user. Mark an existing but unverified installation as unverified.
 
 If the user has not completed the UI steps, stop with a usable handoff rather than performing them automatically or claiming success. For a reported error, keep the source, inspect the error and correct the relevant source/catalog issue. Public release remains separate from local testing.
+
+## 7. Official plugin package and registration (Profiles 2 and 3)
+
+Work inside the host repo checkout. Read [official-plugin-lifecycle.md](references/official-plugin-lifecycle.md) first — it is the authoritative end-to-end path with citations; [official-plugin-definition.md](references/official-plugin-definition.md) covers every registration field and the consent laws.
+
+1. **Scaffold.** In `apps/zcode-cli/packages/`, generate the package with `scripts/scaffold-official-plugin.mjs <name> --tools <t1,t2,…> [--surfaces id:Title|zh,…] [--opt-in <option>] [--env-namespace <NS>] [--definition-out <file>]`. It produces the repo-conventional package (manifest with `mcpServers`/`ui.surfaces`/`userConfig`, `src/contract.ts` as single source of truth, typed-refusal server, informational panels, `main()` entry, esbuild build, vitest acceptance tests) and the `OfficialPluginDefinition` block. An official plugin never ships an empty tool list; every generated tool answers a typed envelope until its real handler is wired.
+2. **Implement.** Replace the typed-refusal handlers with the real capability through the host boundary (Profile 3: [host-broker-integration.md](references/host-broker-integration.md)); extend `src/contract.ts`, never a second source of truth. Reuse existing host infrastructure (brokers, permission/session context, shared packages) before proposing new machinery.
+3. **Register.** Insert the definition into `OFFICIAL_PLUGIN_DEFINITIONS` (`bootstrap/src/app/official-plugin-definitions.ts`), keeping `package.json` version = manifest version = definition version, `requiredSeedPaths` pinning every runtime artifact, and `componentTypes: ["ui"]` exactly when `ui.surfaces` is declared. Sensitive workspace plugins keep `defaultEnabled: false`; `alwaysLoad: true` is never user consent.
+4. **Build and audit.** `pnpm install && pnpm --filter @zcode/<name>-plugin build`, then `node <skill-root>/scripts/official-plugin-audit.mjs <plugin-path> <repo-root>` — fix every error it reports (registration, version triangle, seed paths/build outputs, ui surface rules, `main()` export, empty tools, env boundaries) before running tests.
+5. **Test.** Follow [production-launch-testing.md](references/production-launch-testing.md): package vitest suite, bootstrap mechanical tests (`plugins.test.ts`), a real `bootstrap/tests/<name>-launch-path.test.ts` and a real `bootstrap/tests/<name>-host-launch.test.ts`. No mocked launch acceptance; no empty tool lists reported as done.
+6. **UI surfaces (if any).** Follow [ui-surface-integration.md](references/ui-surface-integration.md): manifest-declared, mcp-app MIME resources, static informational skeletons until real data lands, seed paths pinning panel assets.
+
+Do not rewrite host machinery (seed, resolver, dispatch) for a new plugin unless a cited gap exists — propose it as a recorded decision instead.
+
+## 8. Profile 3 acceptance chain
+
+A Profile 3 plugin is done only when all of these are real:
+
+- Typed contract tests pin tool list, refusal taxonomy arms, and envelope separation ([payswap-reference-pattern.md](references/payswap-reference-pattern.md) maps each to the PaySwap test that proves it).
+- Security boundary tests: authoritative plugin id in resolved env, refusals in both opt-in arms on real processes, panels carrying no data while opted out, and — where broker credentials exist — impostor/stale-credential rejection.
+- Production build + official seeding + production host launch tests execute verbatim resolved commands (Layer 5).
+- A real user-journey acceptance prompt (enable → opt-in → representative task) is handed to the user; mark it pending until observed.
+
+## 9. Updating an existing official plugin
+
+Edit the original package; increment all three versions together (package.json, manifest, definition). Bump `version` even when only `requiredSeedPaths` content changes — the seed cache is version-addressed. Re-run the audit and the launch tests. Never edit installed caches; never re-scaffold implemented source. For distribution or release questions beyond the repo, that is a separate workflow from this skill.

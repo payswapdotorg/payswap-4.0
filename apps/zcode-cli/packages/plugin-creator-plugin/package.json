@@ -1,6 +1,6 @@
 {
   "name": "@zcode/plugin-creator-plugin",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "description": "Built-in ZCode plugin authoring skill and scaffolding helpers.",
   "license": "MIT",

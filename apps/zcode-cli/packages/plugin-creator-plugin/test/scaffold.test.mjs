@@ -80,7 +80,7 @@ test("rejects invalid identifiers, escaping marketplace sources, placeholders an
     manifest.skills = "../outside";
     await writeFile(manifestPath, JSON.stringify(manifest));
     const errors = await preflightPlugin(plugin);
-    assert(errors.some((e) => e.includes("TODO")));
+    assert(errors.some((e) => e.includes("placeholder")));
     assert(errors.some((e) => /outside|escape/.test(e)));
     if (process.platform !== "win32") {
       await mkdir(join(root, "actual"));
