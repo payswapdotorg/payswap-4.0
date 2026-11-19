@@ -102,3 +102,16 @@ Pre-push hook runs `verify:pre-push` (worktree/lint/schema/architecture/affected
 - Stripe restricted keys are show-once; the dashboard's "Copy key" on old keys does NOT reveal them. The current key is in the env file — do not lose it (or mint a new one with exactly the five Read permissions; the wizard: Create secret key → Custom permissions → Read on Accounts/Balance/Charges and Refunds/Customers/Payment Disputes).
 - Gmail (plus-alias delivery) is the recovery path for both password reset and 2FA setup emails — the inbox tab is `mail.google.com/mail/u/0`.
 - Scope law: `getOverviewData` evidence capture requires BOTH `capabilities` (non-empty) AND `requirements` (object with `currently_due`/`past_due` arrays) — all-or-nothing by contract (`packages/services/src/payswap/providers/stripe/readBackAccount.ts`). Do not weaken it.
+
+---
+
+## ADDENDUM (2026-11-19 — read TL-PROGRESS.md "TAKEOVER HANDOFF" section first)
+
+The P2-Windows functional acceptance (§9/§9.1) is complete; the credential-boundary
+hardening (ADR-P2-3, owner disposition: hardening = P2-Windows blocker) is
+mid-implementation — the custodian SYSTEM service is installed and RUNNING, the
+console-mode protocol test is GREEN, but the service-mode read chain fails at one
+diagnosed point. The takeover entry point is TL-PROGRESS.md
+"⚠️ TAKEOVER HANDOFF — CUSTODIAN SERVICE" (H-1..H-5: live state, the diagnosed
+open point, exact next steps). This legacy handoff file's §5 list predates the
+custodian work and does not reflect it.
