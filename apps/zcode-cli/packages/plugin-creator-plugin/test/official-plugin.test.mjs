@@ -229,10 +229,27 @@ test("official audit passes a clean registered fixture and enforces the official
     delete manifest2.mcpServers["fixture-workspace"].env.OUTSIDE_NAMESPACE;
     await writeFile(manifestPath, JSON.stringify(manifest2, null, 2));
 
-    // alwaysLoad is not consent.
+    // alwaysLoad is not consent — the error fires when the server does NOT
+    // consume the opt-in env (the scaffolded fixture consumes it by design,
+    // so the negative case removes the env wiring first).
+    const savedOptInEnv = manifest2.mcpServers["fixture-workspace"].env.FIXTURE_FINANCIAL_WORKSPACE;
+    delete manifest2.mcpServers["fixture-workspace"].env.FIXTURE_FINANCIAL_WORKSPACE;
     manifest2.mcpServers["fixture-workspace"].alwaysLoad = true;
     await writeFile(manifestPath, JSON.stringify(manifest2, null, 2));
     assert.match(await errorsOf(), /alwaysLoad/);
+    manifest2.mcpServers["fixture-workspace"].env.FIXTURE_FINANCIAL_WORKSPACE = savedOptInEnv;
+    delete manifest2.mcpServers["fixture-workspace"].alwaysLoad;
+    await writeFile(manifestPath, JSON.stringify(manifest2, null, 2));
+
+    // ADR-P2-3 payswap precedent: alwaysLoad + default-off opt-in is lawful when
+    // the SERVER consumes the opt-in via its env (consent enforced server-side);
+    // the error is reserved for residency without server-side consent evidence.
+    manifest2.mcpServers["fixture-workspace"].alwaysLoad = true;
+    manifest2.mcpServers["fixture-workspace"].env.FIXTURE_FINANCIAL_WORKSPACE =
+      "${user_config.financialWorkspace}";
+    await writeFile(manifestPath, JSON.stringify(manifest2, null, 2));
+    assert.doesNotMatch(await errorsOf(), /alwaysLoad/);
+    delete manifest2.mcpServers["fixture-workspace"].env.FIXTURE_FINANCIAL_WORKSPACE;
     delete manifest2.mcpServers["fixture-workspace"].alwaysLoad;
     await writeFile(manifestPath, JSON.stringify(manifest2, null, 2));
 

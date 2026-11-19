@@ -515,9 +515,27 @@ export async function auditOfficialPlugin(input) {
         `${where}.env has keys but src/contract.ts does not pin PLUGIN_ENV_NAMESPACE (precedent: PAYSWAP_* / ANDROID_PLUGIN_* / IOS_SIM_*)`,
       );
     }
-    if (rawServer.alwaysLoad === true && Object.values(userConfig).some((option) => isRecord(option) && option.default === false)) {
+    // ADR-P2-3 先例（payswap e017b5a8，2026-11-18 review §3/§5）：alwaysLoad 只
+    // 决定「插件 enabled 后工具是否常驻」（UX 选择），永不构成 consent。因此：
+    //  - alwaysLoad + 默认关闭的 opt-in user_config + **server env 恰消费该
+    //    opt-in**（服务端强制同意门的证据，如 PAYSWAP_FINANCIAL_WORKSPACE =
+    //    ${user_config.financialWorkspace}）= lawful 组合（consent 在 server 侧
+    //    强制，residency 不绕过它）；
+    //  - alwaysLoad + opt-in 而 server **不消费** opt-in = flag（consent 只存在于
+    //    注册层，residency 让服务器在未同意态也常驻）。
+    const optInKeys = Object.entries(userConfig)
+      .filter(([, option]) => isRecord(option) && option.default === false)
+      .map(([key]) => key);
+    const serverConsumesOptIn =
+      optInKeys.length > 0 &&
+      optInKeys.some((key) =>
+        Object.values(rawServer.env ?? {}).some(
+          (value) => typeof value === "string" && value.includes(`user_config.${key}`),
+        ),
+      );
+    if (rawServer.alwaysLoad === true && optInKeys.length > 0 && !serverConsumesOptIn) {
       errors.push(
-        `${where}: alwaysLoad:true together with an opt-in gate — alwaysLoad is not user consent; keep the default-off registration`,
+        `${where}: alwaysLoad:true together with an opt-in gate the server does not consume — alwaysLoad is not user consent; keep the default-off registration or wire the opt-in into the server env (precedent: PAYSWAP_FINANCIAL_WORKSPACE)`,
       );
     }
     if (rawServer.alwaysLoad === true) {
