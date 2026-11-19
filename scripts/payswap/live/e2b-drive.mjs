@@ -299,8 +299,20 @@ async function main() {
   const verdicts = [];
 
   for (const arm of arms) {
-    console.log(`[e2b-drive] === arm: ${arm}（新沙箱 —— 1h TTL，一臂一箱） ===`);
+    // TTL：缺省 1h（既定纪律 —— 一臂一箱，跑完即取件）。实测 2026-11-19：e2e 臂
+    // 的 clone+mega-setup+wdio(electron/chrome 拉取+spec) 在 aise-android-station
+    // 上超过 1h —— 沙箱 TTL 先于 runner 的 25min 上限耗尽（TimeoutError）。允许
+    // 操作员经 PAYSWAP_E2B_TTL_HOURS 提额（不改一臂一箱纪律；工件取回与泄漏
+    // 自检不变）。
+    const ttlHours = Number.parseInt(process.env.PAYSWAP_E2B_TTL_HOURS ?? "1", 10);
+    const ttlMs = Number.isFinite(ttlHours) && ttlHours > 0 ? ttlHours * 60 * 60_000 : 60 * 60_000;
+    console.log(`[e2b-drive] === arm: ${arm}（新沙箱 —— TTL ${ttlMs / 60_000}min，一臂一箱） ===`);
     const sandbox = template ? await Sandbox.create(template) : await Sandbox.create();
+    try {
+      await sandbox.setTimeout(ttlMs);
+    } catch (error) {
+      console.log(`[e2b-drive] TTL 提额失败（继续用模板缺省 TTL）: ${String(error).slice(0, 120)}`);
+    }
     if (template) console.log(`[e2b-drive] template: ${template}`);
     try {
       console.log(`[e2b-drive] sandbox ${sandbox.sandboxId} — cloning + mega-setup`);
@@ -334,8 +346,11 @@ async function main() {
       // 运行器退出码先记录、不判定 —— 判定以取回并验证过的工件为准
       // （RESULT 文件 + 结构化互证；完整性不足时以 EXIT_INTEGRITY 报错）。
       const result = await sandbox.commands.run(`cd /workspace/payswap && ${runner}`, {
+        // 40min：wdio 首跑含 electron/chrome 拉取 + gnome-keyring 自证 + spec；
+        // 2026-11-19 实测 25min 上限对 e2e 臂过紧（沙箱 1h TTL 的教训之外的第二
+        // 个预算约束）。
         envs: { ZCODE_E2E_STRIPE_LIVE_KEY: liveKey },
-        timeoutMs: 25 * 60_000,
+        timeoutMs: 40 * 60_000,
       });
       console.log(`[e2b-drive] ${arm} runner exit=${result.exitCode}`);
 

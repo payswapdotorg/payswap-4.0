@@ -70,14 +70,14 @@ function record(name, passed, detail) {
 }
 
 function startConsoleServer(options) {
-  // options: { testGate?: string, blob?: string, diag?: string }
+  // options: { testGate?: string, blob?: string, diag?: string, image?: string }
   // 每 server 独立管道名 —— 同名管道被 server1 占用时 server2 无法监听（客户端
   // 会带着 server2 的 token 连上 server1 → token-mismatch EOF，伪 70）。
   const uniquePipe = pipeName + "-" + crypto.randomBytes(3).toString("hex");
   const args = [
     "--svc-console",
     "--image",
-    "C:\\nonexistent\\electron.exe",
+    options.image || "C:\\nonexistent\\electron.exe",
     "--pipe",
     uniquePipe,
     "--endpoint",
@@ -206,6 +206,151 @@ async function batteryDiagHygiene() {
 }
 
 // ---------------------------------------------------------------------------
+// Battery 5 — F6 impersonation (model-controlled same-user process launches the
+// EXACT configured electron image with an attacker-controlled entry script and
+// drives the genuine helper). Law: while a genuine desktop main is REGISTERED
+// and alive, the impersonator must be refused at registration AND at data ops
+// (first-alive-wins + registered-pid binding). A re-registration after the
+// genuine main dies is expected to SUCCEED — that race window is the documented
+// residual (ADR §A0.3), asserted here so it cannot silently change.
+// ---------------------------------------------------------------------------
+async function batteryImpersonationF6() {
+  const ELECTRON =
+    process.env.PAYSWAP_CUSTODIAN_ELECTRON ||
+    path.join(repoRoot, "node_modules", "electron", "dist", "electron.exe");
+  if (!fs.existsSync(ELECTRON)) {
+    record("f6:electron-present", false, "electron image missing — battery skipped");
+    return;
+  }
+  // Server WITHOUT --test-gate: production gates (exact electron image + first-
+  // alive-wins + registered-pid data binding). --image pins the REAL electron
+  // image so the genuine-looking impersonator passes the image layer.
+  const server = startConsoleServer({ image: ELECTRON });
+  const endpoint = waitForEndpoint(server.endpointFile);
+  if (endpoint === null) {
+    record("f6:server-start", false, "endpoint never appeared");
+    server.child.kill();
+    return;
+  }
+
+  const idleMain = path.join(workDir, "idle-main.cjs");
+  fs.writeFileSync(
+    idleMain,
+    `
+const { spawnSync } = require("node:child_process");
+const HELPER = ${JSON.stringify(HELPER)};
+const ep = ${JSON.stringify(server.endpointFile)};
+const r = spawnSync(HELPER, ["--endpoint-file", ep, "--custodian-register"], { encoding: "utf8", windowsHide: true });
+console.log("IDLE-REGISTER exit=" + r.status);
+setInterval(() => {}, 60000);
+`,
+  );
+  // the idle main registers through the genuine helper (parent = electron image)
+  const idleChild = spawn(ELECTRON, [idleMain], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  let idleOut = "";
+  idleChild.stdout.on("data", (d) => (idleOut += d));
+  const idleReady = await (async () => {
+    const deadline = Date.now() + 30000;
+    while (Date.now() < deadline) {
+      if (idleOut.includes("IDLE-REGISTER")) return idleOut.includes("exit=0");
+      await wait(300);
+    }
+    return false;
+  })();
+  record("f6:genuine-registration-established", idleReady, idleOut.trim().slice(0, 60));
+  if (!idleReady) {
+    idleChild.kill();
+    server.child.kill();
+    return;
+  }
+
+  // the impersonator: same configured image, attacker-controlled entry script
+  const evilMain = path.join(workDir, "evil-main.cjs");
+  fs.writeFileSync(
+    evilMain,
+    `
+const { spawnSync } = require("node:child_process");
+const HELPER = ${JSON.stringify(HELPER)};
+const ep = ${JSON.stringify(server.endpointFile)};
+function run(args, stdin) {
+  const r = spawnSync(HELPER, ["--endpoint-file", ep, ...args], { encoding: "utf8", windowsHide: true, ...(stdin !== undefined ? { input: stdin } : {}) });
+  return { code: r.status, out: (r.stdout || "").trim() };
+}
+const reg = run(["--custodian-register"]);
+const push = run(["--custodian-push"], "rk_f6probe_" + "0".repeat(70) + "\\n");
+const get = run(["--custodian-get", "--path", "/v1/balance"]);
+console.log("EVIL " + JSON.stringify({ register: reg, push, get }));
+process.exit(0);
+`,
+  );
+
+  const evilChild = spawn(ELECTRON, [evilMain], { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  let evilOut = "";
+  evilChild.stdout.on("data", (d) => (evilOut += d));
+  await (async () => {
+    const deadline = Date.now() + 45000;
+    while (Date.now() < deadline) {
+      if (evilOut.includes("EVIL ") || evilChild.exitCode !== null) return;
+      await wait(300);
+    }
+  })();
+  const evilLine = evilOut.split("\n").find((l) => l.startsWith("EVIL "));
+  if (!evilLine) {
+    record("f6:impersonator-ran", false, "evil main produced no result: " + evilOut.slice(0, 120));
+    idleChild.kill();
+    evilChild.kill();
+    server.child.kill();
+    return;
+  }
+  const evil = JSON.parse(evilLine.slice(5).replace(/\r/g, ""));
+  record(
+    "f6:impersonator-register-refused-while-genuine-alive",
+    evil.register.code === 70 && evil.register.out === "",
+    "exit=" + evil.register.code + " (in-registered main alive → rebind refused)",
+  );
+  record(
+    "f6:impersonator-push-refused-while-genuine-alive",
+    evil.push.code === 70,
+    "exit=" + evil.push.code + " (parent pid != registered pid)",
+  );
+  record(
+    "f6:impersonator-get-refused-while-genuine-alive",
+    evil.get.code === 70,
+    "exit=" + evil.get.code,
+  );
+
+  // documented residual: after the genuine main dies, a fresh electron main's
+  // registration SUCCEEDS (the rebind path — also the legitimate restart path,
+  // and the race window an impersonator could win at that instant). Asserted
+  // here so the residual cannot silently change in either direction.
+  idleChild.kill();
+  await wait(1500);
+  const rebornMain = path.join(workDir, "reborn-main.cjs");
+  fs.writeFileSync(
+    rebornMain,
+    `
+const { spawnSync } = require("node:child_process");
+const HELPER = ${JSON.stringify(HELPER)};
+const ep = ${JSON.stringify(server.endpointFile)};
+const r = spawnSync(HELPER, ["--endpoint-file", ep, "--custodian-register"], { encoding: "utf8", windowsHide: true });
+console.log("REBORN-REGISTER exit=" + r.status);
+process.exit(0);
+`,
+  );
+  const reborn = spawnSync(ELECTRON, [rebornMain], { encoding: "utf8", windowsHide: true, timeout: 30000 });
+  const rebornOk = (reborn.stdout || "").includes("REBORN-REGISTER exit=0");
+  record(
+    "f6:residual-rebind-after-genuine-death-expected",
+    rebornOk,
+    "fresh electron main rebinds once the registered main is dead (race window — must stay visible, not silently change)",
+  );
+
+  evilChild.kill();
+  server.child.kill();
+}
+
+
+// ---------------------------------------------------------------------------
 // Battery 2 — A4 exact identity gates (no console seam = exact image laws)
 // ---------------------------------------------------------------------------
 async function batteryExactGates() {
@@ -329,6 +474,7 @@ async function main() {
     await batteryExactGates();
     await batteryDeadlines();
     await batteryDurableCustody();
+    await batteryImpersonationF6();
   } finally {
     // never leave probe artifacts behind (unless debugging a failure)
     if (!process.env.PAYSWAP_CUSTODIAN_PROBE_KEEP) {

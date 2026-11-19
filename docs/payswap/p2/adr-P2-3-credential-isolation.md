@@ -207,3 +207,40 @@ exists only inside the impersonated helper process.
    milestone's acceptance gate, with the PowerShell variant added to the probe.
 5. Re-prove: New Task four-category read + five-stage runner + 13-step receipt on
    the isolated build; update evidence register §10 with the GREEN probe output.
+
+### A0.4 Amendment 2026-11-19 (post-merge review follow-up) — F6 impersonation gap closed
+
+The independent review's F6 finding was **confirmed by live execution** before
+fixing: a same-user process launching the *configured* electron image with an
+attacker-controlled entry script and driving the genuine helper reached full
+custody control (register/push/get/drop all accepted) under the multi-instance
+relaxation. Fixed by:
+
+1. **First-alive-wins registration** — rebind is refused while the registered
+   desktop main is alive and matches the configured image; rebind only after the
+   registered main dies (the legitimate app-restart path). The desktop is a
+   single-instance process by law (`requestSingleInstanceLock`), so this binds
+   the service to the one genuine desktop instance.
+2. **Registered-pid data gate restored** — data operations require the parent
+   helper's parent pid to be exactly the registered main pid (image + alive
+   kernel checks unchanged). The impersonating electron is a different pid →
+   refused at every data operation.
+
+The F6 attack is now a **permanent probe battery case** (console mode, production
+gates, no test seam: `f6:impersonator-{register,push,get}-refused-while-genuine-alive`;
+battery 26/26) and was re-executed live against the redeployed SYSTEM service:
+**all four attack ops refused** while the genuine main was alive
+(`evidence/custodian-2026-11-19/f6-live-result.json`; test script kept as
+`f6-live-impersonation-test.cjs`). The genuine flow re-verified 4/4 after the fix.
+
+**Honest residual (asserted in the battery, must stay visible)**: at the instant
+the registered main dies (app exit / service restart), a fresh electron main
+rebinds — first-come-first-served. An impersonator winning that race gets the
+custody channel **until its own process dies**, and the genuine desktop's
+subsequent connections fail typed (`custodian_unavailable`) — loud, visible
+breakage, never silent impersonation. Command-line pinning was evaluated and
+rejected (self-PEB-rewrite spoofs it). The complete fix is OS-level separation of
+model-controlled children (AppContainer spawn for agent processes) — tracked as
+the follow-up Windows security task; until then the same-trust-boundary breakout
+class (debug-injecting the genuine main, winning the restart race) remains
+documented rather than solved.

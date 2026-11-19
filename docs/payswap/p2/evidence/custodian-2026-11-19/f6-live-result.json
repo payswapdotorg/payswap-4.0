@@ -1,0 +1,45 @@
+{
+ "results": [
+  {
+   "name": "register (attacker electron rebinds while genuine alive)",
+   "attackSucceeded": false
+  },
+  {
+   "name": "push (attacker took custody)",
+   "attackSucceeded": false
+  },
+  {
+   "name": "get (attacker used custody for a provider read)",
+   "attackSucceeded": false
+  },
+  {
+   "name": "drop (attacker destroyed custody)",
+   "attackSucceeded": false
+  }
+ ],
+ "out": {
+  "pid": 16880,
+  "image": "c:\\users\\lenovo\\source\\repos\\payswap-4.0\\node_modules\\electron\\dist\\electron.exe",
+  "register": {
+   "exit": 70,
+   "reply": "",
+   "err": "custodian_client:gate-refused"
+  },
+  "push": {
+   "exit": 70,
+   "reply": "",
+   "err": "custodian_client:gate-refused"
+  },
+  "get": {
+   "exit": 70,
+   "stripeStatus": null,
+   "err": "custodian_client:gate-refused"
+  },
+  "drop": {
+   "exit": 70,
+   "reply": "",
+   "err": "custodian_client:gate-refused"
+  }
+ },
+ "rebornOk": true
+}
