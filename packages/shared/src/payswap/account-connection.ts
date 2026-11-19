@@ -390,6 +390,7 @@ export const payswapAccountRefusalSchema = z
       "unknown_connection",
       "read_back_unavailable",
       PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE_CODE,
+      PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE,
     ]),
     message: z.string().min(1),
   })

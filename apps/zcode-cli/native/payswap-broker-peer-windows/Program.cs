@@ -1438,12 +1438,14 @@ namespace PayswapBrokerPeerHelper
             catch { return null; }
         }
 
-        /** 密钥形状法则（push 与 bootstrap 共用 —— 单一事实源）：64..512 可打印
-            ASCII（Stripe 受限键形态；无控制字符/空白 —— 带这些字符的输入不是
-            provider 密钥，fail-closed）。 */
+        /** 密钥形状法则（push 与 bootstrap 共用 —— 单一事实源）：32..512 可打印
+            ASCII（provider 密钥形态 —— 下界对齐账户服务 formatCheck 可接受的
+            最短形态：E2E 合成键 56 字符、真实受限键 107 字符；上界防滥用）。
+            服务端形状检查是纵深防御 —— 身份门才是主边界；provider 语义权威在
+            账户服务的 formatCheck/read-back（TS 侧）。 */
         private static bool IsPlausibleSecretKey(string value)
         {
-            if (value == null || value.Length < 64 || value.Length > 512) return false;
+            if (value == null || value.Length < 32 || value.Length > 512) return false;
             foreach (char c in value)
             {
                 if (c < 0x21 || c > 0x7E) return false;
