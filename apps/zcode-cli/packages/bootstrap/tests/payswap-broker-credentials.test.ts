@@ -5,8 +5,10 @@ import {
   buildZCodeToolEnvPassthroughEnv,
   getCapturedPayswapBrokerCredentials,
   readCapturedPayswapBrokerCredentials,
+  readCapturedPayswapBrokerHelperSupply,
   readZCodeToolEnvPassthroughEnv,
   resetCapturedPayswapBrokerCredentialsForTest,
+  resetCapturedPayswapBrokerHelperSupplyForTest,
   sanitizeZCodeRuntimeEnv,
   sanitizeZCodeRuntimeEnvInPlace,
   shouldCaptureZCodeToolEnvPassthroughKey,
@@ -18,6 +20,8 @@ import {
   mintBrokerBootState,
   parsePublicKeyBase64,
   PAYSWAP_BROKER_ENV_KEYS,
+  PAYSWAP_BROKER_HELPER_PATH_ENV_KEY,
+  PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY,
   PAYSWAP_BROKER_HOST_ID_ENV_KEY,
   PAYSWAP_BROKER_INSTANCE_ID_ENV_KEY,
   PAYSWAP_BROKER_SOCKET_ENV_KEY,
@@ -738,6 +742,51 @@ describe("payswap broker credential tuple in runtimeEnv (contract §4.3/§4.4)",
     });
     for (const key of PAYSWAP_BROKER_ENV_KEYS) expect(sanitized[key]).toBeUndefined();
     expect(sanitized.SOME_SIBLING_KEY).toBe("keep-me");
+  });
+
+  it("helper supply keys (D13.9 host-only) capture before strip and read at the boot boundary — half/illegal supply fails closed", () => {
+    const original = {
+      [PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]: process.env[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY],
+      [PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]: process.env[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY],
+    };
+    resetCapturedPayswapBrokerHelperSupplyForTest();
+    try {
+      const helperPath = "C:/bundled-tools/win32-x64/payswap-broker-peer/payswap-broker-peer-helper.exe";
+      const helperSha256 = "c".repeat(64);
+      process.env[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY] = helperPath;
+      process.env[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY] = helperSha256;
+      sanitizeZCodeRuntimeEnvInPlace(process.env);
+      // 双表纪律不变：两键从任何子进程可见 env 剔除。
+      expect(process.env[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]).toBeUndefined();
+      expect(process.env[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]).toBeUndefined();
+      // 宿主边界快照可读（lazy boot 的 relay 解析消费面）。
+      expect(readCapturedPayswapBrokerHelperSupply()).toEqual({
+        [PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]: helperPath,
+        [PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]: helperSha256,
+      });
+      // tool-env passthrough 不得复活任何 PAYSWAP_BROKER_* 键（双表纪律）。
+      const toolEnv = buildZCodeToolEnvPassthroughEnv({ ...process.env });
+      expect(toolEnv[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]).toBeUndefined();
+      expect(toolEnv[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]).toBeUndefined();
+      // 半供给（path 单键）→ 快照清空 fail-closed。
+      resetCapturedPayswapBrokerHelperSupplyForTest();
+      process.env[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY] = helperPath;
+      delete process.env[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY];
+      sanitizeZCodeRuntimeEnvInPlace(process.env);
+      expect(readCapturedPayswapBrokerHelperSupply()).toBeNull();
+      // 非法 sha 形状 → 快照清空 fail-closed。
+      resetCapturedPayswapBrokerHelperSupplyForTest();
+      process.env[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY] = helperPath;
+      process.env[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY] = "z".repeat(64);
+      sanitizeZCodeRuntimeEnvInPlace(process.env);
+      expect(readCapturedPayswapBrokerHelperSupply()).toBeNull();
+    } finally {
+      resetCapturedPayswapBrokerHelperSupplyForTest();
+      for (const [key, value] of Object.entries(original)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
   });
 
   it("tool-env passthrough cannot restore any PAYSWAP_BROKER_* key (§4.3(1) rev 2a — the two-list discipline)", () => {

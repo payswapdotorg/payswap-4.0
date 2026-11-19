@@ -1,0 +1,4 @@
+8cf3374a12da663683f43b86a4dc12a40e5d53982baaaed386749475cfe4c860 *final-run-summary.json
+9dbf3359877e9dca507ddcdabfb7490b8d488a4fb3c2f6f98120fd9eb77b6639 *final-run-MANIFEST-sha256.txt
+40d79a46b20f0c46825557e29e950537b6e7b63970e05a48d09319a8805e778b *manual-new-task-evidence.md
+73b85de48a664493118a77ee3e5c14a7b70b4eb6f4b890983a1c748bbae4d931 *security-probe-result.txt

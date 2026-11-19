@@ -466,6 +466,42 @@ describe.skipIf(process.platform !== "linux")("P1.4 Step 4 — broker spawn wiri
   );
 });
 
+describe("P1.4 Step 4 — broker spawn wiring idle-timeout passthrough (all platforms, pure seam)", () => {
+  it(
+    "idleTimeoutMs option forwards to the boot seam (2026-11-17 native-Windows live: the 30s default idle-close rotates the broker instanceId mid-conversation while the MCP child env keeps the mint-time tuple — every post-idle call dies with instance_mismatch 'broker restarted')",
+    async () => {
+      let receivedIdleTimeoutMs: number | undefined;
+      let receivedIdleTimeoutDefault: number | undefined;
+      const coordinator = createPayswapBrokerCoordinator({
+        liveStateReader: liveStateOptedIn,
+        idleTimeoutMs: 3_600_000,
+        boot: async (options) => {
+          receivedIdleTimeoutMs = options.idleTimeoutMs;
+          throw new Error("probe-stop");
+        },
+        onWiringError: () => {},
+      });
+      activeCoordinators.push(coordinator);
+      const surfaces = makeSurfaces();
+      await coordinator.injectBrokerCredentials(surfaces.configuredServers, surfaces.pluginServers, { workspaceKey: "ws-test" });
+      expect(receivedIdleTimeoutMs).toBe(3_600_000);
+      // 缺省：不传 → boot 选项不带该键（boot 层落到 30s 缺省，语义不变）。
+      const defaultCoordinator = createPayswapBrokerCoordinator({
+        liveStateReader: liveStateOptedIn,
+        boot: async (options) => {
+          receivedIdleTimeoutDefault = options.idleTimeoutMs;
+          throw new Error("probe-stop");
+        },
+        onWiringError: () => {},
+      });
+      activeCoordinators.push(defaultCoordinator);
+      await defaultCoordinator.injectBrokerCredentials(surfaces.configuredServers, surfaces.pluginServers, { workspaceKey: "ws-test" });
+      expect(receivedIdleTimeoutDefault).toBeUndefined();
+    },
+    20000,
+  );
+});
+
 describe("P1.4 Step 4 — live state from config (pure, all platforms)", () => {
   it("reads pluginEnabled and financialWorkspace from the merged config shape (§7.3 live read)", () => {
     // 默认：未启用（payswap 的 defaultEnabled=false）+ 未 opt-in。

@@ -39,9 +39,12 @@ import {
   payswapConnectionRecordSchema,
   payswapPspSecretCredentialKey,
   payswapReadonlyCategoryResultSchemas,
+  PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE,
   PAYSWAP_READONLY_CATEGORIES,
   PAYSWAP_STRIPE_AUTH_SPEC,
   projectPayswapConnectionStatus,
+  createPayswapCustodianUnavailableError,
+  isPayswapCustodianUnavailableError,
   type PayswapAccountDataReadPort,
   type PayswapAccountReadBackOutcome,
   type PayswapAccountReadBackPort,
@@ -64,9 +67,55 @@ export interface PayswapAccountCredentialPort {
   delete(key: string): Promise<void>;
 }
 
+/**
+ * ADR-P2-3 custodian 桥（可选注入）：在位时密钥只入托管（SYSTEM 服务内存 + 其
+ * SYSTEM-DPAPI blob），main 不持明文、不落 enc:v1 槽。语义：
+ *   - push = credentialPort.save 的托管形态（connect 时恰一次）；
+ *   - load = 占位标记（"custodian-managed"）—— 读取经 apiClient 标记路由进托管
+ *     有界代理（服务端补真 Bearer）；
+ *   - drop = revoke 时清托管（内存 + blob 全删）。
+ */
+export interface PayswapCustodianBridge {
+  push(key: string): Promise<void>;
+  get(path: string): Promise<{ status: number; body: string }>;
+  drop(): Promise<void>;
+}
+
+export const CUSTODIAN_SECRET_MARKER = "custodian-managed";
+
+/** 再导出（custodian typed 错误属于账户服务词汇面 —— desktop 桥/runtime 共用）。 */
+export { createPayswapCustodianUnavailableError };
+
+/**
+ * ADR-P2-3 fail-closed 凭据端口（custodian-required 且托管缺席）：load/save 一律
+ * typed 拒绝（`custodian_unavailable`）—— 结构与行为双保证：本端口没有任何
+ * legacy 存储依赖，不存在可写的 enc:v1 槽。delete 例外地转发 legacy 删除
+ *（调用方注入 deleteOnlyDelete —— 只删不写的单向破坏操作）：撤销必须永远可用
+ *（法则 4），并顺手清理策略切换前残留的 legacy 键；它不可能引入写入回退。
+ */
+export function createCustodianRequiredRefusingCredentialPort(options: {
+  /** legacy 凭据服务的 delete 面（仅撤销清理；load/save 永不触达）。 */
+  deleteOnlyDelete(key: string): Promise<void>;
+}): PayswapAccountCredentialPort {
+  const refuse = (): never => {
+    throw createPayswapCustodianUnavailableError(
+      "The PaySwap credential custodian is required on this platform but is not available " +
+        "(not installed, not running, or registration was refused). No legacy credential " +
+        "storage is used; set up the custodian service or reconnect to proceed.",
+    );
+  };
+  return {
+    load: async () => refuse(),
+    save: async () => refuse(),
+    delete: (key) => options.deleteOnlyDelete(key),
+  };
+}
+
 export interface PayswapAccountServiceDependencies {
   /** 凭据 store 端口（真实装配 = LocalCredentialService；PSP 键级政策在彼处）。 */
   credentialPort: PayswapAccountCredentialPort;
+  /** ADR-P2-3 custodian 桥（缺席 = 既有直接路径不变）。 */
+  custodianBridge?: PayswapCustodianBridge;
   /** 连接记录 store（非秘密元数据；本模块是唯一写者）。 */
   connectionStore: PayswapConnectionRecordStore;
   /** 注册的 provider 认证规格（缺省 = [Stripe]；P3 起 per-provider 追加）。 */
@@ -123,6 +172,7 @@ export function createPayswapAccountService(
   dependencies: PayswapAccountServiceDependencies,
 ): PayswapAccountService {
   const credentialPort = dependencies.credentialPort;
+  const custodianBridge = dependencies.custodianBridge;
   const connectionStore = dependencies.connectionStore;
   const authSpecs = dependencies.authSpecs ?? [PAYSWAP_STRIPE_AUTH_SPEC];
   const readBackAccount = dependencies.readBackAccount;
@@ -137,6 +187,32 @@ export function createPayswapAccountService(
         payswapPspSecretCredentialKey(record.providerId, record.connectionId, secretKind),
       );
     }
+  }
+
+  /**
+   * ADR-P2-3 revoke 臂：清托管（内存 + blob 全删）。托管清除失败（blob 删除不可
+   * 证实）= typed `custodian_unavailable` 拒绝 —— 记录已是 revoked（法则 4 先于
+   * 清除），但绝不把「保管未证实清除」伪装成成功撤销（A3.6：撤销必须证实）。
+   */
+  async function dropCustodyOrRefuse(): Promise<
+    { kind: "refused"; refusal: PayswapAccountRefusal } | undefined
+  > {
+    if (custodianBridge === undefined) return undefined;
+    try {
+      await custodianBridge.drop();
+    } catch (error) {
+      if (isPayswapCustodianUnavailableError(error)) {
+        return refused(
+          PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE,
+          "The connection record is revoked, but the credential custodian could not be " +
+            "cleared (" +
+            error.message +
+            "); retry revoke until the custody drop is confirmed.",
+        );
+      }
+      throw error;
+    }
+    return undefined;
   }
 
   return {
@@ -202,6 +278,11 @@ export function createPayswapAccountService(
         if (isPayswapPspSecureStorageUnavailableError(error)) {
           return refused(PAYSWAP_ACCOUNT_SECURE_STORAGE_REFUSAL_CODE, error.message);
         }
+        // ADR-P2-3 fail-closed：custodian-required 的托管缺席/拒绝 = typed 拒绝
+        //（绝不静默回退 legacy 存储 —— 拒绝先于记录，未触任何 store）。
+        if (isPayswapCustodianUnavailableError(error)) {
+          return refused(PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE, error.message);
+        }
         throw error;
       }
       // 补偿：记录写失败 → 尽力删除已存秘密（不留无记录的孤儿 PSP 密文），原错误上抛。
@@ -225,6 +306,8 @@ export function createPayswapAccountService(
       if (record.status === "revoked") {
         // 幂等：已撤销连接的重复撤销不抛错；补清可能残留的秘密（删键对缺失键安全）。
         await deleteSecrets(record).catch(() => undefined);
+        const dropOutcome = await dropCustodyOrRefuse();
+        if (dropOutcome !== undefined) return dropOutcome;
         return { kind: "revoked", connection: projectPayswapConnectionStatus(record) };
       }
       // 先标 revoked（任何中间态绝不留下失真的 connected），再删秘密。
@@ -235,6 +318,8 @@ export function createPayswapAccountService(
       };
       await connectionStore.upsert(revoked);
       await deleteSecrets(record);
+      const dropOutcome = await dropCustodyOrRefuse();
+      if (dropOutcome !== undefined) return dropOutcome;
       return { kind: "revoked", connection: projectPayswapConnectionStatus(revoked) };
     },
 

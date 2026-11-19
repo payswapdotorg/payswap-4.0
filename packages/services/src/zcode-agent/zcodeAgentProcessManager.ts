@@ -18,6 +18,11 @@ import {
   ZCODE_PROCESS_DIAGNOSTIC_STACK_MAX_CHARS,
 } from "@zcode/shared/process-diagnostic";
 import {
+  PAYSWAP_BROKER_HELPER_PATH_ENV_KEY,
+  PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY,
+} from "@zcode/shared/payswap";
+import { readCapturedPayswapBrokerHelperSupply } from "@zcode/shared/runtime-env";
+import {
   ZCODE_AGENT_RUNTIME,
   ZCODE_AGENT_PROVIDER,
   ZCODE_RUNTIME_ENV_KEY,
@@ -38,6 +43,34 @@ import type { ZCodeAgentPresentationSurface } from "./zcodeAgentPresentationSurf
 import { shouldSpawnInDetachedProcessGroup } from "../process/processTreeTerminator.js";
 import type { RuntimeProcessLifecycleReporter } from "../process/runtimeProcessLifecycle.js";
 import { buildAgentWorkspaceIdentityEnv } from "../runtime-tools/agentProxyEnv.js";
+
+/**
+ * D13.9 host→agent helper 供给转发（ADR-15 D15.3 的 host 半边消费位）。
+ *
+ * host 自身 init 的 runtime-tools 清洗（initializeRuntimeProcessEnv →
+ * sanitizeZCodeRuntimeEnvInPlace）按双表纪律对本进程 process.env **先捕获后剔除**
+ * PAYSWAP_BROKER_* —— 转发因此必须优先读 capture-before-strip 快照
+ * （readCapturedPayswapBrokerHelperSupply）；process.env 只作未清洗面（remote 形态等
+ * 不跑 host init 清洗的进程）的回退。2026-11-18 native-Windows live 实测：直接读
+ * process.env 的转发在 dev 桌面链恒空（hop-1 桌面注入已证实成功、host init 已捕获），
+ * agent 侧 capture 无料可用 → lazy boot 的 relay 解析永远拿不到两键 → win32 永远
+ * degraded_refusing（插件桥 instance_mismatch 的根因）。键不在场 → 空透传，行为不变。
+ * 快照由 shared 层保证形状（两键齐备 + sha256 形状合法才构成快照）。
+ */
+export function resolvePayswapBrokerHelperForwardEnv(
+  processEnv: NodeJS.ProcessEnv,
+): Record<string, string> {
+  const captured = readCapturedPayswapBrokerHelperSupply();
+  if (captured !== null) return captured;
+  const helperPath = processEnv[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]?.trim();
+  const helperSha256 = processEnv[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]?.trim();
+  return helperPath && helperSha256
+    ? {
+        [PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]: helperPath,
+        [PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]: helperSha256,
+      }
+    : {};
+}
 
 export interface ZCodeAgentCommand {
   /** 本地配套 CLI bundle 的存储专用 Worker 入口；远端/自定义命令不推断能力。 */
@@ -1187,6 +1220,14 @@ export class ZCodeAgentProcessManager {
         [ZCODE_RUNTIME_ENV_KEY]: runtimeEnv,
         ...spawnEnv,
         ...effectiveCommand.env,
+        // D13.9 helper 供给键（host-only 运维面：二进制位置 + 期望 SHA-256，非秘密）在
+        // host→agent 边界定向转发：桌面 main 把 digest 验证过的两键注入 host env
+        // （brokerPeerHelperSupply），host init 清洗先捕获后剔除（capture-before-strip
+        // 快照），agent（app-server）恰是 boot 消费者（lazy boot 的 relay 解析需要两键，
+        // 其 CLI 入口 main.ts 已把快照回注 process.env）。转发读快照优先、process.env
+        // 回退 —— 键面恰好终止于 boot 消费进程，绝不进孙进程 env。键不在场（remote
+        // 形态等）→ 空透传，行为不变。
+        ...resolvePayswapBrokerHelperForwardEnv(process.env),
         // 生成文件根目录由执行端 Host 唯一决定，保证 Agent 写入与 Host 读取授权一致。
         [GEN_UI_OUTPUT_ROOT_ENV]: join(getAppConfigDir(), GEN_UI_OUTPUT_DIRECTORY),
         // 身份/隔离语义使用 workspaceIdentity；cwd 继续使用 workspacePath。

@@ -3,7 +3,11 @@ import { createConfig, resolvePath } from "@zcode/adapters/config";
 import type { McpElicitationPort, McpNotificationPort } from "@zcode/contracts";
 import { createNodeModelSelectionFacade } from "@zcode/provider-node";
 import { createNodeLoggerFactory } from "@zcode/adapters/logging";
-import { createPayswapBrokerCoordinator, createPayswapStdioBridgePort } from "./payswap-broker/index.js";
+import {
+  PAYSWAP_BROKER_HOST_SESSION_IDLE_TIMEOUT_MS,
+  createPayswapBrokerCoordinator,
+  createPayswapStdioBridgePort,
+} from "./payswap-broker/index.js";
 import {
   createPayswapReaderBridgeClient,
   PAYSWAP_READER_BRIDGE_NOTIFICATION_METHOD,
@@ -308,7 +312,19 @@ export async function runZCodeProtocolAgent(
               activePayswapReaderBridgeClient.accountDetailReader(connectionId),
           }
         : {}),
-    });
+      // 长会话宿主：同 create-app —— broker 存活期 = 进程存活期（idle 轮换 = 元组过期）。
+  idleTimeoutMs: PAYSWAP_BROKER_HOST_SESSION_IDLE_TIMEOUT_MS,
+  // §11(3) 操作员可见：boot 裁决与 ingress 审计进宿主日志（桌面协议面 —— 与 create-app 同款）。
+  auditSink: (event) => {
+    logger.info("[payswap-broker-audit]", { event: "payswap_broker.audit", ...event });
+  },
+  onWiringError: (wiringError) => {
+    logger.error(
+      "[payswap-broker] wiring error (fail-safe degraded):",
+      wiringError instanceof Error ? wiringError : new Error(String(wiringError)),
+    );
+  },
+});
     mcpConnectionPool =
       configResult.config.features.mcp === false
         ? undefined

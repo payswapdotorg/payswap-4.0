@@ -171,7 +171,13 @@ export function createStripeAccountReadBackPort(
 /**
  * 从 /v1/account 载荷捕获能力证据（doc 04 §1.2）：`capabilities`（name →
  * active/inactive/pending）+ `requirements`（currently_due/past_due 计数摘要 +
- * disabled_reason）。全有或全无：任一半畸形/缺席 → null（调用方省略 evidence）。
+ * disabled_reason）。半区内全有或全无；半区之间：
+ * - `requirements` **整个缺席**（standard 账户受限键自读的 wire 真实形态 ——
+ *   ADR-P2-1 修订 2026-11-17，live 实证 acct_1FPs7UAkPdhgtN6I）→ 显式 null
+ *   （provider 缺席证据，绝不捏造零值）；
+ * - `requirements` 在场但畸形 → null evidence（fail-closed，payload 与声明契约
+ *   不符，不带病采信任何半区）；
+ * - `capabilities` 缺席/空/畸形 → null evidence（无能力证据可采）。
  */
 function captureCapabilityEvidence(body: unknown): PayswapAccountCapabilityEvidence | null {
   const raw = body as {
@@ -189,19 +195,28 @@ function captureCapabilityEvidence(body: unknown): PayswapAccountCapabilityEvide
     capabilities.push({ name, status });
   }
   const requirements = raw.requirements;
-  if (typeof requirements !== "object" || requirements === null) return null;
-  const dueCount = (value: unknown): number | null =>
-    Array.isArray(value) ? value.length : null;
-  const currentlyDueCount = dueCount(requirements.currently_due);
-  const pastDueCount = dueCount(requirements.past_due);
-  if (currentlyDueCount === null || pastDueCount === null) return null;
-  const disabledReason =
-    typeof requirements.disabled_reason === "string" && requirements.disabled_reason.trim().length > 0
-      ? requirements.disabled_reason
-      : null;
+  let requirementsSummary: PayswapAccountCapabilityEvidence["requirements"];
+  if (requirements === undefined) {
+    requirementsSummary = null;
+  } else {
+    if (typeof requirements !== "object" || requirements === null) return null;
+    const dueCount = (value: unknown): number | null =>
+      Array.isArray(value) ? value.length : null;
+    const currentlyDueCount = dueCount(requirements.currently_due);
+    const pastDueCount = dueCount(requirements.past_due);
+    if (currentlyDueCount === null || pastDueCount === null) return null;
+    requirementsSummary = {
+      disabledReason:
+        typeof requirements.disabled_reason === "string" && requirements.disabled_reason.trim().length > 0
+          ? requirements.disabled_reason
+          : null,
+      currentlyDueCount,
+      pastDueCount,
+    };
+  }
   const evidence = {
     capabilities,
-    requirements: { disabledReason, currentlyDueCount, pastDueCount },
+    requirements: requirementsSummary,
   };
   const parsed = payswapAccountCapabilityEvidenceSchema.safeParse(evidence);
   return parsed.success ? parsed.data : null;

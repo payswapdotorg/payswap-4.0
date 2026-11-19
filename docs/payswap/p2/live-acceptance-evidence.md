@@ -127,3 +127,396 @@ fail-loud 修补验证（原件为根目录结构化编译 + 手工 sed）；(c)
 
 加固不改变 §1 已登记事实与 §2 哈希基准；重建工具链「尚未重跑」的边界
 （§4 末段）保持不变。
+
+## 7. 环境就绪审计（2026-11-17，TL Linux 沙箱 —— Linux 补充证据，非 Windows 验收）
+
+> 审计与整改全文见 [environment-readiness-report.md](environment-readiness-report.md)；
+> 交接执行手册见 [ENVIRONMENT-READINESS-HANDOFF.md](ENVIRONMENT-READINESS-HANDOFF.md)。
+> 本节只登记**实际执行过**的命令与结局；不重复里程碑状态裁决（roadmap 仍为唯一
+> 权威）。**明确非声明**：本节无任何 Windows 证明、无任何真实 Stripe 调用（TL
+> 环境无键 —— §7.4）、无任何秘密面。
+
+### 7.1 审计环境与基线
+
+- 环境：TL Linux 沙箱（Debian 13 trixie 容器，内核 5.10.134，x86_64，headless：
+  `DISPLAY`/`WAYLAND_DISPLAY` 空，2 vCPU / 4.1 GB RAM）。**非**原生 Windows/WSL2。
+- 基线：`main` @ `8d595ed32cd48858ecfe3f0b32f6cc4996caa93d`（PR #44），工作树干净。
+- 工具版本：node v24.22.3、git 2.47.3、pnpm 10.33.2（corepack 安装 —— 审计时
+  缺席，属环境配置项非仓库缺陷）。
+
+### 7.2 harness 平台缺陷的确认与收口（本 PR）
+
+- **确认**：`scripts/payswap/live/main.cjs` 步骤 1 无条件调用
+  `safeStorage.getSelectedStorageBackend()` —— Electron 的 Linux-only API（源码
+  `#if BUILDFLAG(IS_LINUX)` 编译期裁剪）；win32 运行时上方法不存在 → `TypeError`
+  → live harness 在原生 Windows 无法起步。生产键仓（`pspCredentialKeyStore.ts`）
+  的同名查询本就按平台门住（`pspSafeStorageBackendPolicy` 法则 2）—— 缺陷纯
+  harness 侧；伴生死缺省值（win32→"dpapi"，无 API 可比较）一并移除。
+- **收口**：`scripts/payswap/live/safe-storage-backend-gate.cjs`（平台感知门；
+  linux=后端名闭集 / win32=DPAPI 可用性 / darwin=Keychain 可用性 / 其余
+  fail-closed；不发明 Windows 后端名 API）+ `main.cjs` 步骤 1 改用该门（Linux
+  行为逐字节保持）+ `safe-storage-backend-gate.test.mjs`（12 行回归矩阵 ——
+  win32/darwin 以 throwing spy 钉死「永不调用 Linux-only API」）+ CI 挂载
+  （`payswap-roadmap.yml` 新步骤）。
+- **新增工具链**（Windows 验收执行面）：`scripts/payswap/preflight-env.cjs`（预检
+  + 五分类可执行裁决）、`scripts/payswap/electron-safe-storage-probe.cjs`（真
+  Electron DPAPI/Keychain/Libsecret 探针）、`scripts/payswap/windows/run-p2-acceptance.cjs`
+  （五分类验收 runner：PASS/FAIL/BOUNDARY/SKIP/MANUAL-PENDING 闭集；SKIP 永不让
+  run 变绿；键值落盘前置换 + 工件字节级泄漏自检 + SHA-256 manifest）。
+
+### 7.3 实际执行的命令与结局（全部 Linux 沙箱；TL 环境补充证据）
+
+| 命令 | 退出码 | 结果 |
+|---|---|---|
+| `git clone https://github.com/payswapdotorg/payswap-4.0.git`（匿名） | 0 | 365 MB 工作副本 |
+| `git rev-parse HEAD` / `git status --short` | 0 | `8d595ed3…`；干净 |
+| `corepack prepare pnpm@10.33.2 --activate` | 0 | `pnpm 10.33.2` |
+| `pnpm install --frozen-lockfile` | 0 | 58.3 s；node-pty Linux 重建完成 |
+| `pnpm lint` | 0 | 0 errors（97 条既有 warnings —— 门只看 errors） |
+| `node scripts/architecture/architecture-check.mjs check` | 0 | violations 0 |
+| `node scripts/payswap/validate-roadmap.mjs` | 0 | 单一权威 roadmap 通过 |
+| `node --test scripts/payswap/validate-roadmap.test.mjs` | 0 | 全绿 |
+| `node --test scripts/payswap/live/safe-storage-backend-gate.test.mjs`（新） | 0 | **12/12** |
+| `pnpm exec vitest run --project engineering packages/desktop/test/payswap-psp-key-store.test.ts packages/desktop/test/payswap-psp-storage-backend-policy.test.ts packages/desktop/test/payswap-account-runtime-wiring.test.ts packages/desktop/test/payswap-account-connection-ipc.test.ts packages/desktop/test/payswap-psp-warmup.test.ts packages/desktop/test/payswap-reader-bridge-entry.test.ts` | 0 | **42/42** |
+| `node scripts/payswap/preflight-env.cjs`（沙箱自跑） | 1 | **按设计 fail-closed**（pnpm 当时缺席/磁盘 7.6 GB 低于 8 GB 线/electron 当时未装 —— hint 逐项给出；Windows 分类 N/A、stripe-live GATED） |
+| `node scripts/payswap/windows/run-p2-acceptance.cjs --dry-run`（沙箱） | 2 | **按设计不转绿**：五分类全 SKIP（Linux + 无键），汇总表明示 NOT GREEN |
+| `node scripts/payswap/windows/run-p2-acceptance.cjs --stage bogus` | 3 | 用法错误路径正确 |
+| `curl -sS -o /dev/null -w '%{http_code}' https://api.stripe.com/v1/balance` | 0 | `401`（无认证预期应答 —— 可达性） |
+| `node --check`（新/改 .cjs × 4：gate、main、preflight、probe、runner） | 0 | 语法面通过 |
+
+消毒工件（仓内登记，SHA-256 基准）：
+
+- `evidence/environment-readiness/preflight-linux-2026-11-17.json` ——
+  SHA-256 `bfa1a0e8e1bb3385da1ecae5693577df3752d0dd543890a622809c15dc7ba179`
+- `evidence/environment-readiness/runner-dryrun-summary-linux-2026-11-17.json` ——
+  SHA-256 `814cd7ae7d774e30ad35f2f9e026f3519e3de7fc1a243fb8728b09bec92a980a`
+- （两件的生成时刻为整改工作树（本 PR 内容）；工件内 `commit` 字段为当时 HEAD
+  `8d595ed3`，如实录。）
+
+### 7.4 如实边界（本节证据**不**构成的事项）
+
+- 原生 Windows 验收（DPAPI/桌面/E2E/对话面）：**未执行** —— TL 沙箱结构性
+  BLOCKED；待本地 Windows agent 按 handoff 执行 `windows-build` →
+  `windows-secure-storage` → `windows-desktop-e2e` → `stripe-live` →
+  `conversation-acceptance`，证据回传后在本登记面开 §8（Windows）小节。
+- 真实 Stripe 调用：**未执行**（TL 环境无 `ZCODE_E2E_STRIPE_LIVE_KEY`；聊天转录
+  非合格秘密通道 —— 键须在验收机本地经 0600 env 文件供给）。
+- §1.3 的账户激活边界**保持不变**：四类别数据落地仍待 Stripe 邮箱验证激活；
+  激活后 `stripe-live` 分类复跑即本登记面的终局运行。
+- P2 里程碑状态：**不变**（roadmap P2 行保持 `in_progress` —— 环境就绪 ≠ P2
+  完成）。
+
+
+## 8. P2-Linux 腿 —— TL Linux 沙箱五分类验收运行（2026-11-17，Linux 补充证据）
+
+> 本节登记 **P2-Linux 里程碑分解后**的 Linux 腿验收执行：环境、命令、结局与
+> 如实边界。状态裁决仍在 roadmap 的 P2-Linux 行（唯一权威）。
+
+### 8.1 运行环境与基线
+
+- 环境：TL Linux 沙箱（Debian 13 trixie 容器，内核 5.10.134，x86_64，headless；
+  2 vCPU / 4GiB cgroup / 0 swap）。**真 Linux 桌面腿** = Xvfb :99（runner 命令
+  生命周期内自持）+ dbus-run-session + gnome-keyring 48 Secret Service（
+  `org.freedesktop.secrets` 会话总线在场自证，缺席即 FATAL）+ Electron
+  `--password-store=gnome-libsecret`；栈来自 debs 前缀解包
+  （`PAYSWAP_LINUX_LEG_STACK`，leg-stack.cjs 统一解析）。
+- 工具：Node 24.22.3、pnpm 10.33.2、git 2.47.3、Electron 44.7.0（repo 钉版）、
+  chromedriver 152.0.7977.82（Electron↔Chromium 152.0.7977.130 的兼容回退版，
+  `chromedriver-preflight.mjs` 解析 + `CHROMEDRIVER_PATH` 注入）。
+- 基线：分支 `p2/acceptance-runner-fail-closed` @ `a6b94740d1961f3890be38dba011af86fc879428`（含 E2B 侧
+  修复合并 `57669794`、构建开关 `1bd675dd`、Linux 执行面与里程碑拆分提交）。
+- 命令：`PAYSWAP_LINUX_LEG_STACK=<prefix> node scripts/payswap/linux/run-p2-acceptance.cjs`
+  （单次完整 run、零假设 —— 唯一能把退出码打到 0 的形态）。
+
+### 8.2 结局（词汇闭集：PASS/FAIL/BOUNDARY/SKIP/MANUAL-PENDING）
+
+| 阶段 | 结局 | 证据要点 |
+|---|---|---|
+| linux-build | **PASS** | frozen install（exit 0）+ e2e-report build:node + `@zcode/desktop...` 全链构建 + E2E store-bridge renderer（编译标记断言过）。内存受限形态（`ZCODE_DESKTOP_BUILD_SOURCEMAPS=off`；完整生产 sourcemap 面在该 4GiB cgroup 实测 OOM —— SIGKILL at anon-rss 3347MB，sourcemap 合并为 native 内存，堆上限无效；开关登记于 vite.config.ts 与提交 `1bd675dd`） |
+| linux-secure-storage | **PASS** | 显示腿内真 Electron 探针：`backendSelected=gnome_libsecret`、`isEncryptionAvailable=true`、`roundTrip=ok`；P2 法则电池 13 套件 **129/129**（CI 同款调用面）；harness 平台门回归 **12/12**（Linux 后端名闭集钉死） |
+| linux-desktop-e2e | **PASS** | `payswap-connection-ui` spec **7/7、首过率 100%**（真窗口/真 ipcMain/真 store 文件；四个存储臂在真 gnome_libsecret 后端上执行：connected + at-rest 密文、refresh 闭集、revoke 删除、损坏键真实重启 → typed 存储 refusal） |
+| stripe-live | **SKIP** | `ZCODE_E2E_STRIPE_LIVE_KEY` 缺席（本环境无键；聊天转录非合格秘密通道 —— 键须在验收机本地经 0600 env 文件供给）。preflight 裁决 GATED，runner 诚实 SKIP |
+| conversation-acceptance | **SKIP** | 依赖 stripe-live（对话面需已连接的真账户） |
+
+**run 退出码 = 2**（SKIP 永不转绿；`--allow-skip` 只记录承认）。**不是 P2-Linux
+终局证据** —— 终局 = 五分类全 PASS（stripe-live 携 `RESULT_E2E=0`、
+`RESULT_HARNESS=0`）+ 13 步回执严格校验。剩余两阶段被两个操作者控制步门控
+（键供给 + 账户 onboarding 身份段 —— 精确动作与复跑命令见
+[LINUX-P2-CLOSURE-HANDOFF.md](LINUX-P2-CLOSURE-HANDOFF.md)）。
+
+### 8.3 消毒工件（SHA-256 基准；secretPresent=false —— 本 run 无键材料）
+
+工件目录 `artifacts/p2-acceptance-linux/2026-11-17T18-00-57-381Z/`：
+
+- `summary.json` —— SHA-256 `4914af6eeaae859276cd1c61f010a1c511b4e2a597eaeff0bddd7ed189831408`
+- `MANIFEST-sha256.txt` —— SHA-256 `5aa32b8bc1aa098aca9fb31122ac1cd99edc37351df51c62c712fdcba652cdac`（8 文件清单；
+  复核一致）
+- `preflight.json` —— SHA-256 `92d8cf836b7850d190411b73c27d8c8372b05df701886ae4822b14d2150684eb`
+- `linux-build/linux-build.log` —— SHA-256 `1f9f2ec5bf9f92a5c71b45c53d19d72e424d52a051b3888f426fcf27f8631f1d`
+- `linux-secure-storage/linux-secure-storage.log` —— SHA-256 `76c9aa7f92b40ec8e78f2901dfa3ee18fd8f9b2b093542d040bd9e60eaba3e05`
+- `linux-secure-storage/probe.log` —— SHA-256 `6f3ab1c5d8dfdd64df577ae7f0fc74c32d851ded35040eb19a040bbf7ecf7a24`
+- `linux-desktop-e2e/linux-desktop-e2e.log` —— SHA-256 `81ce3040946531c61bb603ffc61a21710ededd1f36e0c1d1117d7432715d43d5`
+- `linux-desktop-e2e/wdio-connection-ui.log` —— SHA-256 `b18dc0e9b3170f527bbf1eec803752fa2ca49027f9532134da10d8649078d878`
+- `linux-desktop-e2e/chromedriver-preflight.log` —— SHA-256 `cd4285b1ad154306aadbc993cd510789f47529fad5dbcf7a7eeb0e69d21eaa98`
+
+### 8.4 如实边界（本节证据不构成的事项）
+
+- 真实 Stripe 调用：**未执行**（无键）。§1 的 2026-11-14 E2B 双复现
+  （live spec 3/3 + harness 步骤 1–8）仍是本腿的既有 live 证据；激活/键边界
+  见 §1.3 与 LINUX-P2-CLOSURE-HANDOFF.md §1。
+- 交互式 New Task 13 步回执：**未执行**（依赖真键真账户）。
+- P2-Linux 里程碑状态：**不变**（roadmap P2-Linux 行 `in_progress`；本节是
+  可独立执行半边的执行证据，非关闭登记）。
+- Windows 腿：本节无任何 Windows 证明（见 P2-Windows 行与
+  ENVIRONMENT-READINESS-HANDOFF.md）。
+
+### 8.5 沙箱回收后零假设复跑（可复现性补强，2026-11-17T18:25:49Z）
+
+> 同一 TL Linux 沙箱在会话间隔后经历了**进程全面回收**（文件系统保留、
+> Xvfb/D-Bus/keyring 等一切运行时进程不在）—— 复跑证明验收腿可从该冷态
+> **原地重建**，且基线推进到将合入的 HEAD。
+
+- **基线**：分支 `p2/acceptance-runner-fail-closed` @
+  `80c42ba1a7c263479f283aad99b968344d6347d8`（= §8 登记运行之后的两提交：
+  §8 证据登记 `2c086515` + runner lint `80c42ba1`；即待合入面本身）。
+- **命令**：与 §8.1 相同（`PAYSWAP_LINUX_LEG_STACK=<prefix> node
+  scripts/payswap/linux/run-p2-acceptance.cjs`），单次完整、零假设
+  （`assumedStagesPassed: []`）、`dryRun: false`、`secretPresent: false`。
+- **结局**：与 §8.2 逐字一致 —— linux-build **PASS** / linux-secure-storage
+  **PASS**（探针 `gnome_libsecret` + `isEncryptionAvailable=true` +
+  `roundTrip=ok`；法则电池 **129/129**；平台门 12/12）/ linux-desktop-e2e
+  **PASS**（`payswap-connection-ui` **7/7**，七臂逐条 ✓）/ stripe-live
+  **SKIP** / conversation-acceptance **SKIP**。耗时 18:25:49Z→18:31:28Z
+  （≈5.6 分钟，与 §8 运行同量级）。
+- **消毒工件**：`artifacts/p2-acceptance-linux/2026-11-17T18-25-49-176Z/`，
+  MANIFEST 8 文件复核一致 —— `MANIFEST-sha256.txt` SHA-256
+  `4a8671de5be1d1ef9136af270d76312df5f1d4dd31bea6cc8c66f90877a5ce2c`；
+  `summary.json` SHA-256
+  `2d53db0392af994e5990260f7add4109f94f4d04669fd5d5c5aa286574259c18`；
+  `preflight.json` SHA-256
+  `8179e4a0077330916305cebc422a3bfc696a70087a5dfc720200e2d0fb8b43b4`
+  （阶段日志八文件清单见该 run 自身的 MANIFEST，逐项 OK）。
+- **运维观察（2026-11-17 深夜更正：runner 无缺陷，根因在外层）**：本节初版
+  曾把「manifest 落盘后 runner 退出相位被残留子句柄拖住」登记为疑似 runner
+  缺陷。后续四次受控复跑（storage/e2e 两阶段 × 文件重定向/直连管道两形态）
+  + 一次带仪表的完整零假设直连管道复跑（时间线 + 进程快照落盘取证）证明：
+  **runner 在全部形态下干净退出**（完整 run 335 秒 rc=2，退出时刻进程快照
+  零残留，shell 全部后续命令执行完毕）——挂起发生在 TL 沙箱**工具外层**
+  （大体积输出直连管道时外层的 EOF 判定），与 runner 无关。已登记的正确
+  用法本就是文件重定向形态（§4 备忘与交接文档的命令面）；无需 runner 改动。
+- **二次回收复跑（wipe→bundle 恢复→零假设 run，2026-11-17T19:15:25Z）**：
+  沙箱再次回收且本次**清空了 repo 工作树**（文件系统保留其余目录）；从交付
+  bundle 恢复分支 @ `5bdd6900` 后完整零假设 run 再次全绿 —— build/storage/e2e
+  **PASS** + 两操作者门控阶段诚实 **SKIP**，manifest 8/8 OK（`summary.json`
+  SHA-256 `fcc631bb18cdd2633b22c6eb5a82a41a6e9eb1e9737000088f4d2e6b0652f106`；
+  工件 `artifacts/p2-acceptance-linux/2026-11-17T19-15-25-296Z/`）。交付
+  bundle 的可恢复性由此实证。
+- **边界不变**：本节仍是可独立执行半边的证据 —— 键供给与账户 onboarding
+  身份段两操作者控制步（LINUX-P2-CLOSURE-HANDOFF.md §1）未变，P2-Linux
+  状态裁决仍以 roadmap 的 P2-Linux 行为准。
+
+## 9. P2-Windows 腿 —— 真实 New Task 四分类会话证据（2026-11-18，native Windows）
+
+> 本节是 P2-Windows 的**会话半边**新证据：不是 runner 阶段产物，而是真实桌面应用
+> 内的 New Task 对话（模型 = GLM-5.3，Z.ai Start Plan）。运行环境为**隔离数据根**
+> （`ZCODE_DATA_BASE_DIR=C:\Users\Lenovo\payswap-dev-data` —— 与已安装产品的
+> `~/.zcode` 完全分离；该分离本身源于 2026-11-18 的共享凭据文件踩踏事故，见
+> TL-PROGRESS.md）。测试分支状态：`p2/acceptance-runner-fail-closed` @ `15d1eca6`。
+
+**先决修复（同分支三提交，TL 已复核）**：`feb6837f`（broker helper 供给快照转发
+→ boot `peer_verified`）、`e017b5a8`（gateway `alwaysLoad` + 单账户确定性消歧）、
+`15d1eca6`（reader 桥端口铸造器移入 `SpawnHostProcessOptions` 第 5 参 → host 中继
+首次 live）。
+
+| 证据臂 | 结果 | 审计/工件 |
+|---|---|---|
+| broker boot（无操作者 env 注入） | `peer_verified`，`helperSupplyPresent {true,true}` | `evidence/newtask-2026-11-18/broker-audit.jsonl` |
+| relay 挂接 | `[payswap-reader-bridge-relay] main port attached (reader bridge relay live)`（首次出现） | `evidence/newtask-2026-11-18/reader-bridge-relay-lines.txt` |
+| 四分类会话读 | 模型调用 `payswap_get_account_overview`（无 connectionId）→ `dispatched op:get_account_overview peerPid:5488` → **四类别同答全 ok**（余额 USD 69,854.06 + EUR 147.48；10 笔支付对象 8✅/2❌；10 条脱敏客户投影——零 PII；争议空） | 会话转录摘录 + 审计行，已消毒入库 |
+| 撤销（步骤 12） | Settings → Payment connections → Revoke → "Connection revoked. The locally stored secret was deleted."（store 行 `status=revoked`，updatedAt 2026-11-18T18:54:09.236Z） | 同上转录文件 |
+| 撤销后读（步骤 13） | typed refusal：四类别逐条 unavailable — connection revoked；模型如实转述并将再授权指向 UI —— **零即兴、零凭据触达** | 同上转录文件 |
+
+**消毒证据（已入仓，SHA-256 复核清单）**：
+`docs/payswap/p2/evidence/newtask-2026-11-18/MANIFEST-sha256.txt` —
+`broker-audit.jsonl`
+`a9601e3242390433098b968fe3614b0e3802c9d515a62d4e4e466ca94c49a05f`；
+`reader-bridge-relay-lines.txt`
+`fc60368147a9b509e398f971fd5ad9c5d1d84ca5a46d19260a4baff43e13f2ed`；
+`newtask-conversation-redacted.md`
+`31af44246ad38ef462ce3d1244b18623cc67da61d03571244d9a8a7402a56841`。
+
+**单账户消歧契约（TL review §C 修正后）**：省略 connectionId 时仅 `status
+"connected"` 行参与消歧（恰一行 → detail 同答；零/多行 → 无 detail）；
+revoked/expired 行永远保留在清单投影里。混合状态 battery 见
+`payswap-broker-dispatch.test.ts`（27 通过）。
+
+**边界声明**：本节证明的是**真实会话半边**（New Task → 插件工具 → broker →
+reader 桥 → 账户服务 → provider 只读）。P2-Windows 的形式裁决仍差：13 步手工
+回执 + 五阶段 runner `--manual-evidence`（§4 形态）+ 本节的独立复核。roadmap
+P2-Windows 行维持 `in_progress` 直至 §10 的安全项与上述门全部通过。
+
+## 10. 凭据安全状态（2026-11-18，如实声明 —— 未关闭）
+
+**历史暴露的遏制（部分完成，操作者步未完成）**：
+- 恢复面为 `acct_1FPs7UAkPdhgtN6I`（Cattyz）的 `rk_test_*` 只读受限键（API 复核：
+  capabilities 13 项）。该键仍以 0600 ACL 存于
+  `C:\Users\Lenovo\.payswap-live.env`（owner-only，继承已断）。
+- **轮换尚未执行**：受限键无法经 API 自铸（无管理能力）——轮换必须在 Cattyz
+  dashboard（ekontetevi@gmail.com 登录）删除旧键并铸造新键；属操作者控制步。
+  轮换后须更新 `~/.payswap-live.env` 并重跑会话臂以绑定新键。
+- 已检面：当日 CLI 审计日志与工作区转录的密钥形模式清扫为 0 命中（2026-11-18）。
+
+**复发防护（架构性）——如实声明：尚未解决**。本分支三提交均未改变
+"同用户任意进程可解密 DPAPI 包裹的 PSP 凭据" 的 Windows 事实模型
+（Electron safeStorage/DPAPI 明示不防同用户进程）。2026-11-18 会话未发生凭据
+恢复**不构成**能力消失的证明。既定缓解（TL 复述）= PSP 凭据读取移入独立保护
+身份（专用服务账户/service SID 或 AppContainer 模型侧限制）+ 窄 RPC 面 ——
+登记为独立里程碑（安全加固），不并入 P2-Windows 形式裁决的既有门；P2 关闭时
+本节按上表如实转述，不宣称已防护。
+
+**回归保护增量（TL review §3 B 已落地）**：`e41f1a85` —— reader 桥第 5 参契约
+battery、混合状态消歧 battery、alwaysLoad 双层断言。
+
+### §9.1 形式验收运行补全（同日稍晚 —— TL closure mission Priority 3）
+
+**零假设五阶段运行 + 13 步手工回执（全 PASS，exit 0）**：测试 SHA
+`9dabf63ab39034dc523f5826efafd3cde3185a5a`（win32 10.0.26200，node 24.14.0）。
+
+| 阶段 | 裁决 |
+|---|---|
+| windows-build | PASS（install + build:bootstrap，exit 0） |
+| windows-secure-storage | PASS（DPAPI probe + 法则电池） |
+| windows-desktop-e2e | PASS |
+| stripe-live | PASS |
+| conversation-acceptance | **PASS（13 步手工回执经严格校验）** |
+
+工件：`artifacts/p2-acceptance/2026-11-18T20-12-16-275Z/`（summary.json +
+MANIFEST-sha256.txt 10/10 复核一致）。人工回执副本（消毒）+
+最终 summary/manifest 已入仓：`docs/payswap/p2/evidence/newtask-2026-11-18/`
+（`manual-new-task-evidence.md`、`final-run-summary.json`、
+`final-run-MANIFEST-sha256.txt`、更新后的 `MANIFEST-sha256.txt`）。
+
+13 步回执要点（全 PASS，attestation：operator = Lenovo/payswapdotorg continuation
+agent；winver `Microsoft Windows [Version 10.0.26200.9974]`；SHA = 测试提交）：
+连接（真实 UI + 真键）→ at-rest 检查（`enc` 前缀包裹 blob，137 B 密文，
+v2 全树零键明文形）→ 刷新免重输 → 全退出重启后连接持久 + 再刷新 → New Task
+四分类会话（审计 `dispatched op:get_account_overview peerPid:1940`）→ 转录/日志
+零密钥材料零 PII → Revoke（"locally stored secret was deleted"）→ 撤销后读 =
+typed refusal（四类别逐条 unavailable，模型如实转述，零即兴）。
+
+### §10 补全：凭据安全验证探针（TL closure mission Priority 1 —— 如实声明）
+
+**探针问题**：同用户、非 Electron 的普通进程能否恢复一份新鲜的 PSP 凭据？
+**结果：能（RECOVERED）** —— 完整链已实证（全部格式来自仓内公开代码，键明文
+零打印零落盘）：
+1. `%APPDATA%/ZCode Dev/session/Local State` 的 `os_crypt.encrypted_key`
+   （"DPAPI" 前缀 283 B）→ 普通 .NET DPAPI unprotect → **32 字节主键恢复**；
+2. `v2/payswap-psp-safe-storage-key`（"v10" Chromium os_crypt blob）→ 主键
+   AES-256-GCM 解包 → **64-hex 文件键恢复**；
+3. 新鲜连接的 `enc:v1:` 槽位 → sha256(file-key) → AES-256-GCM → **受限键明文
+   恢复（107 字符，形状确认后立即丢弃）**。
+
+探针全程只读键材料；演示后新鲜槽位即刻撤销（密文删除）。完整记录：
+`docs/payswap/p2/evidence/newtask-2026-11-18/security-probe-result.txt`。
+
+**结论（与 TL 复核 §3-A 一致，且加强）**：P2-Windows 的凭据边界在当前架构下
+**不**阻断同用户模型侧进程 —— Electron 44 的 os_crypt/DPAPI 方案不改变同用户
+边界。遏制（轮换）仍是操作者 dashboard 步；架构加固（计划 §4：独立保护身份 +
+窄 RPC 面）按独立里程碑推进。P2-Windows 关闭时按本节如实转述。
+
+### §10.1 补全：恢复键轮换完成（2026-11-18 深夜 —— TL closure mission Priority 1 遏制步闭环）
+
+- **操作**：Stripe dashboard（acct_1FPs7UAkPdhgtN6I，test mode）→ 受限键
+  "PaySwap P2 read-only acceptance" → **Expire key**（旧值 `rk_test_…aabJ` 即刻失效）；
+  同页新建受限键 "PaySwap P2 read-only acceptance (rotated 2026-11-18)" ——
+  权限=五读族（Core / Balance / Charges and Refunds / Customers / Payment Disputes
+  各 Read + Connect→Accounts Read），无过期日。
+- **验证（API 实测）**：新键 → `/v1/balance`、`/v1/charges`、`/v1/customers`、
+  `/v1/disputes`、`/v1/account` 全 **HTTP 200**；旧键 → **HTTP 401
+  `api_key_expired`**。
+- **交付**：新键直接写入 `C:\Users\Lenovo\.payswap-live.env`（dashboard 显示的
+  show-once 值经页面 DOM 捕获直写文件，**未进入聊天转录**；ACL =
+  owner-only，继承已断）。会话转录中因 dashboard 复制单元格渲染曾短暂出现
+  旧键全值 —— 该值现已失效，风险随轮换闭合。
+- **残余**：架构加固（§10 所述独立保护身份 + 窄 RPC）仍是独立里程碑；
+  `docs/payswap/p2/evidence/newtask-2026-11-18/security-probe-result.txt` 的
+  RECOVERED 结论在本轮换后仍成立（针对新凭据同链可行），故加固优先级不变。
+
+### §10.2 补全：所有者裁决 + 可见失效安全门（2026-11-18 深夜 —— TL review 复函）
+
+**所有者裁决（TL review §3-A 的分叉已决）**：同用户凭据恢复 = **P2-Windows 阻断项**
+（"Hardening = P2 blocker"），非可接受例外。含义：
+- P2-Windows 保持 `in_progress`，直至凭据边界加固落地并被对抗性证据证明；
+- `docs/payswap/p2/adr-P2-3-credential-isolation.md` = 加固设计（拒绝受限代理子进程
+  + 凭据路径 deny ACE；服务身份方案记录为备选与升级路径）；
+- **可见失效安全门**：`scripts/payswap/security/isolation-probe.cjs`（对抗性同用户
+  node 子进程执行完整恢复链）——当前 **RED**（子进程恢复主键+文件键+槽位明文），
+  探针 exit 0（恢复被阻断）即为加固里程碑的验收判据；有意不入 CI 清单（永久红门
+  不阻断无关工作），按需运行；
+- 路线图行维持 `in_progress`（登记法则：必须自合并态 + CI 证据更新）。
+
+**§3-B 调用点回归测试（TL 要求）落地**：`payswapReaderBridgeCallSite.test.ts`
+（TypeScript AST 源码法则）—— 钉死窗口 host 调用点的顶层参数结构：第 5 参携带
+`buildPayswapReaderBridgeSpawnOptions` 展开、第 4 参不含铸造器字段（缺陷形态的
+负向断言）。3/3 通过，已登记 engineering manifest。
+
+**消毒日志入仓（TL review §4 第三项）**：`evidence/newtask-2026-11-18/final-run-logs/`
+—— secure-storage 全量、stripe-live 全量、build/e2e 裁决尾部 + LOG-MANIFEST-sha256.txt。
+泄漏扫描：run 工件中唯一的密钥形字符串是 e2e spec 的**公开** fixture
+（`sk_test_e5f6a7b8…`，payswap-connection-ui.test.ts 提交在案）—— 非真实秘密。
+
+**PR 清理**：PR #46（p2/environment-readiness-audit）被 PR #47 完全包含
+（#47 领先 20 提交、落后 0）—— 显式关闭 #46 并指向 #47（同一合并路径）；
+PR #47 描述更新为最终状态。
+
+## 11. ADR-P2-3 托管边界 —— 加固落地 + 全量验收证据（2026-11-19，native Windows）
+
+**本节取代 §10 的未关闭状态**（§10 的历史发现与裁决记录保留为决策史）。
+
+### §11.1 加固落地（与 ADR-P2-3 §0 修正案一致）
+
+- **P0 消毒**：承载完整操作行（含 PSP 密钥）的 `custodian:op=` 诊断行已废除；
+  服务端一切诊断行为稳定决策事实（pid/原因/长度/结果码/win32 错误码）。
+  永久回归：`custodian-service-probe.cjs` 以合成秘密推送并证明其不可达任何
+  诊断/客户端捕获（21/21，`8da3129b`）。
+- **根因修复**：DPAPI P/Invoke 修复（`DATA_BLOB` 结构指针 —— 旧 `byte[]` 直传
+  使 blob 持久化从未工作过，旧 push 吞错伪装成功）；撤销臂的托管清除真实生效
+  （桥转发进服务 —— 此前恒为 no-op）。
+- **fail-closed**：`credentialCustody:"custodian-required"`（win32）—— 托管缺席
+  = typed `custodian_unavailable` 拒绝；refusing port 无 legacy 写路径（结构保证
+  零 enc:v1 写入）；legacy 键仓预热在托管路径跳过（F5）。
+- **服务边界**：受保护 `svc-bin` 安装（SYSTEM+Admins ACL，启动自检），精确映像门
+  （client helper + parent electron，内核事实），真界管道读写，原子验证式
+  push/drop，有界代理 GET（DNS 瞬断重试 ≤2）。
+
+### §11.2 服务级活体证据（`evidence/custodian-2026-11-19/EVIDENCE.md`）
+
+服务模式 register→push→/v1/balance 200→/v1/account 200 = 4/4；同用户读 blob =
+EPERM；服务重启 → blob 自举恢复密钥（3/3 无重推）；撤销证实清除（blob 不在 +
+读取 typed no-key）；红队 0 FAIL（报告入仓）。
+
+### §11.3 隔离探针 GREEN（meaningful-green）
+
+`isolation-probe.cjs` 重构（`bca1faea`）：前置条件（blob+端点+diag 新鲜凭据在场）
+使空洞 GREEN 不可能；敌意同用户子进程 = 完整历史链（master key → file key →
+全部 enc:v1 槽）+ blob 读取 + 活管道 get + 复制 helper 注册 —— 全部被拒/阻断；
+新鲜密钥 digest 与一切可恢复材料比对（零交集）；历史死键墓碑显式记录。
+
+### §11.4 五阶段 + 13 步回执（final head）
+
+- 四阶段单会话全绿（`2026-11-19T18-08-15-560Z` 工件 + summary.json +
+  MANIFEST-sha256.txt）：windows-build / windows-secure-storage（含托管探针电池 +
+  活隔离探针）/ windows-desktop-e2e（7/7 臂）/ stripe-live（真 UI 旅程 + 生产链
+  live harness）全 PASS；canonical 零假设五阶段复跑见本轮 artifacts。
+- **13 步交互回执**：`evidence/newtask-2026-11-19/manual-new-task-evidence.md`
+  （13/13 PASS + 全项 attestation + 14 项消毒截图/文本工件，SHA-256 清单入仓）。
+  四分类对话读经真实 PaySwap 插件 MCP 工具（Gateway 内 `Payswap get account
+  overview`），真 Stripe 数据（余额/10 charges/10 customers/disputes 空），
+  模型零密钥暴露；撤销后读取 = typed 拒绝（kind: revoked）。
+
+### §11.5 P2-Linux 状态（诚实）
+
+linux-build / linux-secure-storage / linux-desktop-e2e = PASS（§8 记录）；
+stripe-live + conversation = 操作者受控门未过：受限键向 Linux 验收机的供给 +
+Stripe 账户 onboarding 身份段（/v1/account `requirements` 截至 2026-11-19 仍缺席，
+capabilities 在场）。Windows 证据绝不替代 Linux 验收。

@@ -17,7 +17,8 @@
       "env": {
         "PAYSWAP_FINANCIAL_WORKSPACE": "${user_config.financialWorkspace}"
       },
-      "isolation": "workspace"
+      "isolation": "workspace",
+      "alwaysLoad": true
     }
   },
   "ui": {

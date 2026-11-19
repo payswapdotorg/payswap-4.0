@@ -76,3 +76,6 @@ export {
   type PayswapReaderBridgeMessagePortFace,
   type PayswapReaderBridgeServePortFace,
 } from "./accountReaderBridgeEntry.js";
+// 回归保护：铸造器必须经本构造进入 SpawnHostProcessOptions（第 5 参）—— 2026-11-18
+// 参数位错置缺陷的防复发面（electron-free，可被 main 单测直接覆盖）。
+export { buildPayswapReaderBridgeSpawnOptions } from "./readerBridgeSpawnOptions.js";

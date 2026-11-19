@@ -294,6 +294,8 @@ import {
   installPluginSandboxHost,
 } from "./pluginSandbox/index.js";
 import { installDesktopPayswapApproval, installDesktopPayswapConnections } from "./payswap/index.js";
+import { provisionDesktopCustodianBridge } from "./payswap/custodianClient.js";
+import { buildPayswapReaderBridgeSpawnOptions } from "./payswap/readerBridgeSpawnOptions.js";
 
 registerLocalMediaPreviewScheme(protocol, [
   PLUGIN_SANDBOX_PRIVILEGED_SCHEME,
@@ -1984,11 +1986,6 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
           taskRealtimeBus,
           windowHostProcessMap,
           hostRunningTaskCountMap,
-          // P2.2 slice 9（ADR-P2-2 Addendum B）：reader 桥端口随 spawn 转移到窗口 host
-          // （中继 main 面）。装配未就绪/铸造失败 → 不转移（桥缺席 = fail-closed 缺省）。
-          ...(mintPayswapReaderBridgePortForHost
-            ? { mintPayswapReaderBridgePort: mintPayswapReaderBridgePortForHost }
-            : {}),
           onCuaOperationStateChanged: (source, event) =>
             windowsCuaOperationIndicator.handleState(source, event),
           onCuaOperationStateSourceExited: (source) =>
@@ -2038,6 +2035,12 @@ function createWindowInstance(startupBootstrap: StartupWindowBootstrap = {}) {
               windowTaskRealtimeHostIdMap.set(win.id, hostId);
             },
           },
+          // P2.2 slice 9（ADR-P2-2 Addendum B）：reader 桥端口铸造走 SpawnHostProcessOptions
+          //（第 5 参）。此前被误 spread 进第 4 参 dependencies（字段不在其类型里，运行期
+          // 被丢弃）—— options 里恒无铸造器，端口从未转移（2026-11-18 live 证实：host
+          // "main port attached" 从不出现 → agent spawn env 无桥标记 → reader 缺席 →
+          // get_account_overview 恒 not_connected）。回归保护：buildPayswapReaderBridgeSpawnOptions。
+          ...buildPayswapReaderBridgeSpawnOptions(mintPayswapReaderBridgePortForHost),
         },
       ),
     disposeHostProcess: (child, label, forceKillDelayMs) =>
@@ -2190,9 +2193,28 @@ app.whenReady().then(async () => {
   // fail-closed，不可信发送者 typed unauthorized_origin，载荷不解析）。预热在设置
   // 引导（setDataBaseDir）之后进行 —— 键文件路径解析依赖 CLI 数据根（ADR-P2-2
   // 附录 C pin）。连接 UI 住设置页 payswap 分区（桌面专属）。
+  // ADR-P2-3 fail-closed 装配：Windows = custodian-required（托管缺席/门拒 =
+  // typed `custodian_unavailable` 拒绝 —— 绝不静默回退 legacy enc:v1 槽）；
+  // 其余平台 = 既有平台特定架构（legacy 直接路径不变）。桥只在注册握手成功
+  // 时注入（活性 = 服务真活着，不是陈旧端点文件）。
+  const custodianProvisioning = provisionDesktopCustodianBridge();
+  if (custodianProvisioning.state === "inactive") {
+    logger.warn(
+      "[payswap] custodian provisioning inactive (" +
+        custodianProvisioning.reason +
+        "): " +
+        custodianProvisioning.detail,
+    );
+  }
   const payswapConnectionsInstallation = installDesktopPayswapConnections({
     getMainWindowFrameUrl: () =>
       getApplicationWindowsExcludingCuaIndicator()[0]?.webContents.getURL() ?? "",
+    runtimeDependencies: {
+      ...(custodianProvisioning.state === "active"
+        ? { custodianBridge: custodianProvisioning.bridge }
+        : {}),
+      credentialCustody: process.platform === "win32" ? "custodian-required" : "legacy",
+    },
     onWarmupError: (error) => {
       logger.warn("[payswap] connection key warmup failed (fail-safe, empty env):", error);
     },

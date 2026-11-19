@@ -182,8 +182,11 @@ export {
 //（ZCODE_PAYSWAP_PSP_KEY —— Gate E2 的 desktop-writer → services-reader 契约）。
 export {
   createPayswapAccountRuntime,
+  createPayswapCustodianUnavailableError,
+  createCustodianRequiredRefusingCredentialPort,
   type PayswapAccountRuntime,
   type PayswapAccountRuntimeDependencies,
+  type PayswapCustodianBridge,
 } from "#src/payswap/index.js";
 export { createBroadcastService } from "./broadcast/broadcastService.js";
 export { createZCodeAgentService } from "./zcode-agent/zcodeAgentService.js";

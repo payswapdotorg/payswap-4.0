@@ -29,6 +29,7 @@ export {
   type PayswapLiveStateReader,
 } from "./dispatch.js";
 export {
+  PAYSWAP_BROKER_HOST_SESSION_IDLE_TIMEOUT_MS,
   createPayswapBrokerCoordinator,
   createSingleSessionScopeResolver,
   readPayswapLiveStateFromConfig,

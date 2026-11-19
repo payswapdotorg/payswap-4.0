@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import {
   TID_SETTINGS_PAGE,
@@ -62,6 +63,14 @@ const LIVE_DISPLAY_NAME = "P2 Live E2E";
 const paths = getE2EAppDataPaths();
 const CONNECTIONS_STORE_FILE = join(paths.appDataDir, "payswap-connections.json");
 const CREDENTIALS_STORE_FILE = join(paths.appDataDir, "credentials.json");
+// ADR-P2-3 custodian 架构判定面：win32 + SYSTEM 托管服务端点在场 = 托管保管
+//（本地凭据 store 恰无本连接槽位；密钥在 SYSTEM blob + 服务内存）。
+const CUSTODIAN_ENDPOINT_FILE = "C:\\ProgramData\\payswap\\custodian-endpoint.json";
+const CUSTODIAN_KEY_BLOB_FILE = "C:\\ProgramData\\payswap\\custodian-key.bin";
+
+function custodianBackedAtRest(): boolean {
+  return process.platform === "win32" && existsSync(CUSTODIAN_ENDPOINT_FILE);
+}
 
 interface RpcResponse {
   ok: boolean;
@@ -258,15 +267,28 @@ describe("P2 live E2E 验收臂（真实受限只读键 × 真实连接 UI × �
     ).getAttribute("data-mode");
     expect(mode).toBe("test");
 
-    // at-rest：连接记录含 connectionId、无键明文；凭据 store 密文含 connectionId、无键明文。
+    // at-rest（架构感知）：连接记录含 connectionId、无键明文；凭据面按架构
+    // 分支 —— win32 custodian 路径 = 托管保管（credentials.json 恰无本连接的
+    // enc:v1 槽 —— 结构 fail-closed；SYSTEM blob 在场）；legacy 路径 = 凭据
+    // store 密文含 connectionId。两分支都无键明文。
     const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
     expect(connections).not.toBeNull();
     expect(connections).toContain(connectionId);
     assertNoLiveSecret(connections, "connections store");
     const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
-    expect(credentials).not.toBeNull();
-    expect(credentials).toContain(connectionId);
-    assertNoLiveSecret(credentials, "credentials store");
+    if (custodianBackedAtRest()) {
+      if (credentials !== null) {
+        expect(credentials).not.toContain(connectionId);
+        assertNoLiveSecret(credentials, "credentials store (custodian path: no slot)");
+      }
+      expect(
+        existsSync(CUSTODIAN_KEY_BLOB_FILE),
+      ).toBe(true);
+    } else {
+      expect(credentials).not.toBeNull();
+      expect(credentials).toContain(connectionId);
+      assertNoLiveSecret(credentials, "credentials store");
+    }
   });
 
   it("live refresh：真实 provider 读回（api.stripe.com）→ verified；状态保持 connected", async () => {
@@ -309,7 +331,8 @@ describe("P2 live E2E 验收臂（真实受限只读键 × 真实连接 UI × �
       { timeout: 15_000, timeoutMsg: "live revoke 后行状态应为 revoked" },
     );
 
-    // at-rest：delete-local-only —— 凭据 store 中该连接的 PSP 键已删除；记录仍在（终态）。
+    // at-rest：delete-local-only —— 凭据面该连接的 PSP 键已删除；记录仍在（终态）。
+    // custodian 架构：托管清除走 drop —— SYSTEM blob 必须证实不在（撤销必证实）。
     const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
     if (credentials !== null) {
       expect(credentials).not.toContain(connectionId);
@@ -318,6 +341,11 @@ describe("P2 live E2E 验收臂（真实受限只读键 × 真实连接 UI × �
     const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
     expect(connections).toContain(connectionId);
     expect(connections).toContain('"revoked"');
+    if (custodianBackedAtRest()) {
+      expect(
+        existsSync(CUSTODIAN_KEY_BLOB_FILE),
+      ).toBe(false);
+    }
     assertNoLiveSecret(connections, "connections store (post-revoke)");
   });
 });

@@ -82,6 +82,10 @@ export interface PayswapBrokerAuditEvent {
   op: string | null;
   /** §5.2 已验证的对端 pid（验证失败前为 null）。 */
   peerPid: number | null;
+  /** boot 行专用（optional）：degraded 原因 + 供给键在场性二分（2026-11-17 live 诊断）。
+   *  其它行不带 —— optional 保证既有 sink 消费者形状不变。 */
+  reason?: string;
+  helperSupplyPresent?: { path: boolean; sha256: boolean };
 }
 
 export type PayswapBrokerMode = "peer_verified" | "degraded_refusing";

@@ -1598,6 +1598,8 @@ const enUS: Record<string, string> = {
     "The provider could not be reached to verify the credentials. The connection status is unchanged.",
   "payswap.connections.refusal.secure_storage_unavailable":
     "Secure credential storage is unavailable on this device, so no payment secret can be stored. Enable the OS keychain (safeStorage) and try again.",
+  "payswap.connections.refusal.custodian_unavailable":
+    "The PaySwap credential custodian service is not available, so payment secrets cannot be stored or used on this device. Install or start the custodian service and try again.",
   "payswap.connections.channel_error.malformed_request":
     "The request was rejected before it reached the connection service.",
   "payswap.connections.channel_error.internal_error":

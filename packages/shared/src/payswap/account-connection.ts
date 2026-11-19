@@ -239,6 +239,13 @@ export type PayswapCapabilityStatus = z.infer<typeof payswapCapabilityStatusSche
  * the account's actual state, never from hardcoded claims」）。`requirements` 是
  * 去标识摘要：due 数组只保留计数（currently_due/past_due 的元素是 provider 的
  * requirement id —— 非秘密，但计数已足够 P2 的能力面；后续里程碑需要明细时再扩）。
+ *
+ * `requirements: null` 是**显式的 provider 缺席证据**（ADR-P2-1 修订 2026-11-17）：
+ * Stripe 对 standard 账户的受限键自读（/v1/account 与 /v1/accounts/{id}）返回
+ * `capabilities` 但**整个省略 `requirements` 字段**（live 实证 acct_1FPs7UAkPdhgtN6I）。
+ * 缺席 ≠ 捏造零值 —— null 表示「provider 本次读回未暴露 requirements」，
+ * capabilities 半区仍全部来自 provider（evidence, never claims 不变；present-but-
+ * 畸形的 requirements 仍是全有或全无的 fail-closed）。
  */
 export const payswapAccountCapabilityEvidenceSchema = z
   .object({
@@ -258,7 +265,8 @@ export const payswapAccountCapabilityEvidenceSchema = z
         currentlyDueCount: z.number().int().nonnegative(),
         pastDueCount: z.number().int().nonnegative(),
       })
-      .strict(),
+      .strict()
+      .nullable(),
   })
   .strict();
 export type PayswapAccountCapabilityEvidence = z.infer<
@@ -320,18 +328,48 @@ export function mintPayswapConnectionId(): string {
  * - 存储 fail-closed 逐字复用 Gate E2 常量（addendum §5.2「typed error surfaced
  *   in the connection UI」—— 连接 UI 按 code 分流，永不匹配 message）；
  * - `read_back_unavailable` = 读回无法完成（端口缺席/传输失败/畸形结局/秘密缺失）
- *   —— unknown ≠ expired，状态不变（fail-closed 不猜）。
+ *   —— unknown ≠ expired，状态不变（fail-closed 不猜）；
+ * - `custodian_unavailable` = ADR-P2-3 custodian-required 路径上托管缺席/拒绝
+ *   （服务未安装/未运行/注册或推送被拒）—— 绝不静默回退 legacy 凭据存储；
+ *   连接/撤销按 typed refusal 呈现，操作员处置（装服务/重连）。
  */
 export type PayswapAccountRefusalCode =
   | "validation_failed"
   | "unsupported_provider"
   | "unknown_connection"
   | "read_back_unavailable"
-  | typeof PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE_CODE;
+  | typeof PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE_CODE
+  | typeof PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE;
 
 /** 账户服务存储 fail-closed 拒绝码（Gate E2 常量的单一事实源再导出）。 */
 export const PAYSWAP_ACCOUNT_SECURE_STORAGE_REFUSAL_CODE =
   PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE_CODE;
+
+/** 账户服务 custodian fail-closed 拒绝码（ADR-P2-3 —— 托管缺席的 typed 词）。 */
+export const PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE = "custodian_unavailable" as const;
+
+export interface PayswapAccountCustodianUnavailableError extends Error {
+  code: typeof PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE;
+}
+
+/** custodian 托管缺席 typed 错误（runtime 的 refusing port / custodian 桥抛出）。 */
+export function createPayswapCustodianUnavailableError(
+  message: string,
+): PayswapAccountCustodianUnavailableError {
+  return Object.assign(new Error(message), {
+    code: PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE,
+  });
+}
+
+export function isPayswapCustodianUnavailableError(
+  error: unknown,
+): error is PayswapAccountCustodianUnavailableError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE
+  );
+}
 
 export interface PayswapAccountRefusal {
   readonly code: PayswapAccountRefusalCode;
@@ -352,6 +390,7 @@ export const payswapAccountRefusalSchema = z
       "unknown_connection",
       "read_back_unavailable",
       PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE_CODE,
+      PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE,
     ]),
     message: z.string().min(1),
   })

@@ -48,7 +48,7 @@ export interface PayswapConnectionNotice {
 // i18n key 映射（法则 1/3）
 // ---------------------------------------------------------------------------
 
-/** typed refusal 闭集五码 → 专属 i18n key（Record 全集性 = typecheck 证明）。 */
+/** typed refusal 闭集六码 → 专属 i18n key（Record 全集性 = typecheck 证明）。 */
 export const PAYSWAP_CONNECTION_REFUSAL_I18N_KEYS: Readonly<
   Record<PayswapAccountRefusalCode, string>
 > = {
@@ -58,6 +58,7 @@ export const PAYSWAP_CONNECTION_REFUSAL_I18N_KEYS: Readonly<
   read_back_unavailable: "payswap.connections.refusal.read_back_unavailable",
   PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE:
     "payswap.connections.refusal.secure_storage_unavailable",
+  custodian_unavailable: "payswap.connections.refusal.custodian_unavailable",
 };
 
 /**

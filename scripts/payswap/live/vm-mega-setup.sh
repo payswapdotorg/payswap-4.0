@@ -20,7 +20,14 @@
 
 set -euo pipefail
 
-REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
+REPO_DIR="${REPO_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)}"
+# 2026-11-16 修复：本脚本住 scripts/payswap/live/（三层深）—— 原推导只回退两层，
+# REPO_DIR 落在 <repo>/scripts（pnpm 向上找 workspace 根才侥幸可用 —— 显式路径
+# 步骤同样会错位）。package.json 在场自证 —— 推导错误 fail loud。
+if [ ! -f "$REPO_DIR/package.json" ]; then
+  printf '[vm-mega-setup] FATAL: REPO_DIR 推导错误（无 package.json）: %s\n' "$REPO_DIR" >&2
+  exit 2
+fi
 cd "$REPO_DIR"
 
 log() { printf '[vm-mega-setup] %s\n' "$*"; }

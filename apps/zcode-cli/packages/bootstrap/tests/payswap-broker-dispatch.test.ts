@@ -323,6 +323,27 @@ function overviewProjection(overrides: Partial<PayswapConnectionStatusProjection
   };
 }
 
+/** ADR-P2-1 detail 半的替身（形状与 payswap-account-reader-bridge.test.ts 的 detailArm 同族；四类别全 ok 行）。 */
+function detailArm(): PayswapAccountOverviewDetail {
+  return {
+    kind: "detail",
+    connection: overviewProjection(),
+    evidence: {
+      capabilities: [{ name: "card_payments", status: "active" }],
+      requirements: { disabledReason: null, currentlyDueCount: 0, pastDueCount: 0 },
+    },
+    data: {
+      balance: {
+        status: "ok",
+        data: { available: [{ amount: "700", currency: "usd" }], pending: [] },
+      },
+      payment_objects: { status: "ok", data: [] },
+      customers: { status: "ok", data: [] },
+      disputes: { status: "ok", data: [] },
+    },
+  };
+}
+
 afterEach(async () => {
   for (const child of activeChildren.splice(0)) {
     child.kill("SIGKILL");
@@ -618,6 +639,195 @@ describe("P2.2 slice 3 — account-overview real-data half (pure dispatch, all p
     if (unknown.kind !== "dispatched") return;
     const data = unknown.body.data as { kind: string; refusal?: { code: string } };
     expect(data.refusal?.code).toBe("not_connected");
+  });
+
+  it("deterministic single-account resolution: no connectionId + exactly one connected account + detail reader → the detail rides in the same answer (2026-11-18 review §5)", async () => {
+    const detailTargetCalls: string[] = [];
+    const detail: PayswapAccountOverviewDetail = detailArm();
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => [overviewProjection()],
+      accountDetailReader: (connectionId) => {
+        detailTargetCalls.push(connectionId);
+        return Promise.resolve(detail);
+      },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    expect(result.body.data).toEqual({
+      kind: "overview",
+      connections: [overviewProjection()],
+      account: detail,
+    });
+    expect(detailTargetCalls).toEqual(["conn-overview-1"]);
+  });
+
+  it("multiple connected accounts with no connectionId → sanitized list only (the choices surface); the detail reader is never consulted", async () => {
+    let detailCalls = 0;
+    const connections = [
+      overviewProjection(),
+      overviewProjection({ connectionId: "conn-overview-2", mode: "live", displayName: "Stripe (live)" }),
+    ];
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => connections,
+      accountDetailReader: () => {
+        detailCalls += 1;
+        return Promise.resolve(detailArm());
+      },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    expect(result.body.data).toEqual({ kind: "overview", connections });
+    expect(detailCalls).toBe(0);
+  });
+
+  it("mixed statuses (TL review §C): one connected + one revoked → the connected account auto-resolves and the revoked row stays visible in the list", async () => {
+    const detailTargetCalls: string[] = [];
+    const detail = detailArm();
+    const connections = [
+      overviewProjection({ connectionId: "conn-connected-1", displayName: "Stripe (test)" }),
+      overviewProjection({
+        connectionId: "conn-revoked-1",
+        displayName: "Stripe (revoked)",
+        status: "revoked",
+      }),
+    ];
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => connections,
+      accountDetailReader: (connectionId) => {
+        detailTargetCalls.push(connectionId);
+        return Promise.resolve(detail);
+      },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    expect(result.body.data).toEqual({
+      kind: "overview",
+      connections,
+      account: detail,
+    });
+    // 消歧只看 connected 行：detail 恰好落在唯一 connected 行上，revoked 行不参与。
+    expect(detailTargetCalls).toEqual(["conn-connected-1"]);
+  });
+
+  it("mixed statuses: an expired row alongside a connected row behaves like the revoked row (eligible set = connected only)", async () => {
+    let detailCalls = 0;
+    const connections = [
+      overviewProjection({ connectionId: "conn-connected-1" }),
+      overviewProjection({
+        connectionId: "conn-expired-1",
+        displayName: "Stripe (expired)",
+        status: "expired",
+      }),
+    ];
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => connections,
+      accountDetailReader: () => {
+        detailCalls += 1;
+        return Promise.resolve(detailArm());
+      },
+    });
+    const omitted = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    // 省略 connectionId：恰一个 connected 行 → 自动消歧到它（expired 行不参与）。
+    expect(omitted.kind).toBe("dispatched");
+    if (omitted.kind !== "dispatched") return;
+    const data = omitted.body.data as { connections: unknown[]; account?: unknown };
+    expect(data.connections).toEqual(connections);
+    expect(data.account).toBeDefined();
+    expect(detailCalls).toBe(1);
+    const narrowed = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 2,
+      op: "get_account_overview",
+      params: { connectionId: "conn-expired-1" },
+    });
+    // 显式 connectionId 仍按行收窄（expired 行是本工作区真实存在的记录，如实回答；
+    // detail 对显式请求照旧附带 —— reader 桥对 expired/revoked 行有 typed 臂）。
+    expect(narrowed.kind).toBe("dispatched");
+    if (narrowed.kind === "dispatched") {
+      expect(narrowed.body.data).toEqual({
+        kind: "overview",
+        connections: [connections[1]],
+        account: detailArm(),
+      });
+    }
+  });
+
+  it("only revoked accounts → the sanitized list is the honest answer (no detail attach; nothing eligible to auto-resolve)", async () => {
+    let detailCalls = 0;
+    const connections = [
+      overviewProjection({
+        connectionId: "conn-revoked-1",
+        displayName: "Stripe (revoked)",
+        status: "revoked",
+      }),
+      overviewProjection({
+        connectionId: "conn-revoked-2",
+        displayName: "Stripe (revoked 2)",
+        status: "revoked",
+      }),
+    ];
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => connections,
+      accountDetailReader: () => {
+        detailCalls += 1;
+        return Promise.resolve(detailArm());
+      },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind !== "dispatched") return;
+    expect(result.body.data).toEqual({ kind: "overview", connections });
+    expect(detailCalls).toBe(0);
+  });
+
+  it("a throwing detail reader (single-account auto-resolve arm) is an internal_error bridge failure, same as the explicit-narrow arm", async () => {
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      accountOverviewReader: () => [overviewProjection()],
+      accountDetailReader: () => {
+        throw new Error("detail store exploded");
+      },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "get_account_overview",
+      params: {},
+    });
+    expect(result).toEqual({ kind: "refused", code: "internal_error", retryable: false });
   });
 
   it("a throwing overview reader is an internal_error bridge failure (no detail leaked; §6.3, same class as the live-state reader)", async () => {

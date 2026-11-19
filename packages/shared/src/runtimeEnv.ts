@@ -287,6 +287,47 @@ export function resetCapturedPayswapBrokerCredentialsForTest(): void {
   capturedPayswapBrokerCredentials = undefined;
 }
 
+// ADR-13 D13.9 helper 供给键（host-only 运维面：二进制位置 + 期望 SHA-256）同款
+// capture-before-sanitization。桌面 main 在 host spawn env 里显式下发
+// （brokerPeerHelperSupply 的 digest 验证供给）；CLI 入口的 in-place 清洗把两键从
+// process.env 剔除（双表纪律 —— 不进任何子进程 env），而进程内 lazy boot 的 relay
+// 解析（resolveDefaultPeerRelayHelper 读 process.env）发生在清洗之后：没有本快照，
+// dev 桌面链的 helper 供给永远到不了 boot（win32 fallback 自探针结构性缺席 →
+// degraded_refusing，2026-11-17 native-Windows live 实测）。SEA 链不经此快照
+// （ensureSeaPayswapBrokerPeerHelper 在注入位从 SEA manifest 重注入，operator-wins
+// 顺序：本快照展布在 SEA 注入之后）。捕获条件 = 两键齐备且 sha256 形状合法
+// （与 resolveDefaultPeerRelayHelper 同门槛）；半供给/非法形状 → 快照清空
+// fail-closed；两键全缺 → 快照不动（与五键/CUA 捕获一致）。快照只经
+// readCapturedPayswapBrokerHelperSupply() 暴露给宿主启动边界，绝不写回任何子进程 env。
+const PAYSWAP_BROKER_HELPER_SHA256_SHAPE = /^[0-9a-f]{64}$/;
+
+let capturedPayswapBrokerHelperSupply: { path: string; sha256: string } | undefined;
+
+function capturePayswapBrokerHelperSupply(env: Record<string, string | undefined>): void {
+  const helperPath = env[PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]?.trim();
+  const helperSha256 = env[PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]?.trim();
+  if (!helperPath && !helperSha256) return;
+  capturedPayswapBrokerHelperSupply =
+    helperPath && helperSha256 && PAYSWAP_BROKER_HELPER_SHA256_SHAPE.test(helperSha256)
+      ? Object.freeze({ path: helperPath, sha256: helperSha256.toLowerCase() })
+      : undefined;
+}
+
+/** 宿主启动边界读取（lazy boot 的 relay 供给）；无有效快照 → null。 */
+export function readCapturedPayswapBrokerHelperSupply(): Record<string, string> | null {
+  return capturedPayswapBrokerHelperSupply
+    ? {
+        [PAYSWAP_BROKER_HELPER_PATH_ENV_KEY]: capturedPayswapBrokerHelperSupply.path,
+        [PAYSWAP_BROKER_HELPER_SHA256_ENV_KEY]: capturedPayswapBrokerHelperSupply.sha256,
+      }
+    : null;
+}
+
+// 仅供测试重置进程内捕获状态。
+export function resetCapturedPayswapBrokerHelperSupplyForTest(): void {
+  capturedPayswapBrokerHelperSupply = undefined;
+}
+
 export function resetCapturedZCodeAgentTelemetryEnvForTest(): void {
   for (const key of Object.keys(capturedZCodeAgentTelemetryEnv)) {
     delete capturedZCodeAgentTelemetryEnv[key];
@@ -299,6 +340,7 @@ export function sanitizeZCodeRuntimeEnv<T extends Record<string, string | undefi
   captureZCodeCuaBrokerCredentials(env);
   captureZCodeAgentTelemetryEnv(env);
   capturePayswapBrokerCredentials(env);
+  capturePayswapBrokerHelperSupply(env);
   const sanitized: Record<string, string> = {};
   for (const [key, value] of Object.entries(env)) {
     if (value === undefined || shouldSanitizeZCodeRuntimeEnvKey(key)) {
@@ -354,6 +396,7 @@ export function sanitizeZCodeRuntimeEnvInPlace(env: Record<string, string | unde
   captureZCodeCuaBrokerCredentials(env);
   captureZCodeAgentTelemetryEnv(env);
   capturePayswapBrokerCredentials(env);
+  capturePayswapBrokerHelperSupply(env);
   for (const key of Object.keys(env)) {
     if (shouldSanitizeZCodeRuntimeEnvKey(key)) {
       delete env[key];

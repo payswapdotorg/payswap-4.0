@@ -1,0 +1,73 @@
+2026-11-19T16:04:21.6546280Z custodian:svc-start
+2026-11-19T16:04:21.6718672Z custodian:endpoint-written
+2026-11-19T16:05:51.7071157Z custodian:conn pid=12500
+2026-11-19T16:05:51.7413194Z custodian:parent pid=19948
+2026-11-19T16:05:51.7433195Z custodian:register-ok parent=19948
+2026-11-19T16:05:51.9484018Z custodian:conn pid=22196
+2026-11-19T16:05:51.9695715Z custodian:parent pid=19948
+2026-11-19T16:05:51.9903429Z custodian:push-ok len=107
+2026-11-19T16:05:52.1964696Z custodian:conn pid=25304
+2026-11-19T16:05:52.2155106Z custodian:parent pid=19948
+2026-11-19T16:05:54.9483307Z custodian:get-status=200 bodyLen=1199
+2026-11-19T16:05:55.2016472Z custodian:conn pid=1100
+2026-11-19T16:05:55.2266879Z custodian:parent pid=19948
+2026-11-19T16:05:56.1514925Z custodian:get-status=200 bodyLen=1835
+2026-11-19T16:06:55.2643417Z custodian:svc-start
+2026-11-19T16:06:55.2829997Z custodian:bootstrap-blob-invalid
+2026-11-19T16:06:55.2852551Z custodian:endpoint-written
+2026-11-19T16:07:24.7938401Z custodian:conn pid=2084
+2026-11-19T16:07:24.8216554Z custodian:parent pid=23944
+2026-11-19T16:07:24.8226711Z custodian:register-ok parent=23944
+2026-11-19T16:07:25.0304817Z custodian:conn pid=20212
+2026-11-19T16:07:25.0458566Z custodian:parent pid=23944
+2026-11-19T16:07:25.0623068Z custodian:get-no-key
+2026-11-19T16:07:25.2707243Z custodian:conn pid=13652
+2026-11-19T16:07:25.2872463Z custodian:parent pid=23944
+2026-11-19T16:07:25.2872463Z custodian:get-no-key
+2026-11-19T16:09:49.3384097Z custodian:conn pid=5480
+2026-11-19T16:09:49.3583303Z custodian:parent pid=19188
+2026-11-19T16:09:49.3594513Z custodian:register-rebind parent=19188
+2026-11-19T16:09:49.5654631Z custodian:conn pid=348
+2026-11-19T16:09:49.5850786Z custodian:parent pid=19188
+2026-11-19T16:09:49.6060475Z custodian:push-ok len=107
+2026-11-19T16:09:49.8214326Z custodian:conn pid=6772
+2026-11-19T16:09:49.8372145Z custodian:parent pid=19188
+2026-11-19T16:09:50.8052042Z custodian:get-status=200 bodyLen=1199
+2026-11-19T16:09:51.0206562Z custodian:conn pid=11196
+2026-11-19T16:09:51.0329884Z custodian:parent pid=19188
+2026-11-19T16:09:51.8328717Z custodian:get-status=200 bodyLen=1835
+2026-11-19T16:10:52.5295872Z custodian:svc-start
+2026-11-19T16:10:52.5441670Z custodian:endpoint-written
+2026-11-19T16:11:15.3971572Z custodian:conn pid=4444
+2026-11-19T16:11:15.4263156Z custodian:parent pid=18616
+2026-11-19T16:11:15.4263156Z custodian:register-ok parent=18616
+2026-11-19T16:11:15.6319671Z custodian:conn pid=14008
+2026-11-19T16:11:15.6492873Z custodian:parent pid=18616
+2026-11-19T16:11:15.6693471Z custodian:push-ok len=107
+2026-11-19T16:11:15.8779301Z custodian:conn pid=15440
+2026-11-19T16:11:15.8922117Z custodian:parent pid=18616
+2026-11-19T16:11:16.8666943Z custodian:get-status=200 bodyLen=1199
+2026-11-19T16:11:17.0939361Z custodian:conn pid=15260
+2026-11-19T16:11:17.1099633Z custodian:parent pid=18616
+2026-11-19T16:11:17.9352467Z custodian:get-status=200 bodyLen=1835
+2026-11-19T16:11:23.2725462Z custodian:svc-start
+2026-11-19T16:11:23.2908951Z custodian:bootstrap-key-restored len=107
+2026-11-19T16:11:23.2928943Z custodian:endpoint-written
+2026-11-19T16:11:27.0464547Z custodian:conn pid=3200
+2026-11-19T16:11:27.0790993Z custodian:parent pid=22136
+2026-11-19T16:11:27.0800988Z custodian:register-ok parent=22136
+2026-11-19T16:11:27.2868810Z custodian:conn pid=19040
+2026-11-19T16:11:27.3031120Z custodian:parent pid=22136
+2026-11-19T16:11:28.2878886Z custodian:get-status=200 bodyLen=1199
+2026-11-19T16:11:28.5224272Z custodian:conn pid=17636
+2026-11-19T16:11:28.5449372Z custodian:parent pid=22136
+2026-11-19T16:11:29.3737194Z custodian:get-status=200 bodyLen=1835
+2026-11-19T16:12:00.7624453Z custodian:conn pid=2608
+2026-11-19T16:12:00.8141566Z custodian:parent pid=16120
+2026-11-19T16:12:00.8161549Z custodian:register-rebind parent=16120
+2026-11-19T16:12:01.0246851Z custodian:conn pid=7680
+2026-11-19T16:12:01.0426800Z custodian:parent pid=16120
+2026-11-19T16:12:01.0457725Z custodian:drop-ok
+2026-11-19T16:12:01.2505213Z custodian:conn pid=24796
+2026-11-19T16:12:01.2737248Z custodian:parent pid=16120
+2026-11-19T16:12:01.2757296Z custodian:get-no-key

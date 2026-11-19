@@ -74,12 +74,20 @@ export function createPayswapDesktopAccountRuntime(
 ): PayswapDesktopAccountRuntime {
   let current: { runtime: PayswapAccountRuntime; keyAvailable: boolean } | null = null;
   let rebuilds = 0;
+  // ADR-P2-3（A5/F5）：custodian-required 政策下 legacy 键仓预热被跳过 ——
+  // safeStorage 解包键永远不会为保管路径物化进 main 内存（refusing port 不读
+  // env；预热产物只会是不可达的旧表面）。keyAvailable 恒 false → 运行时恰
+  // 装配一次（keyAvailable 不变化，法则 1 的单实例仍然成立）。
+  const custodianRequired =
+    options.runtimeDependencies?.credentialCustody === "custodian-required";
 
   async function ensureRuntime(): Promise<PayswapAccountRuntime> {
-    const warm = await warmupPayswapPspRuntimeEnv({
-      keyStore: options.keyStore,
-      onWarmupError: options.onWarmupError,
-    });
+    const warm = custodianRequired
+      ? { env: {}, keyAvailable: false }
+      : await warmupPayswapPspRuntimeEnv({
+          keyStore: options.keyStore,
+          onWarmupError: options.onWarmupError,
+        });
     if (current === null || current.keyAvailable !== warm.keyAvailable) {
       // 法则 2：env 视图恰 warmup 产物（快照 —— fresh-read 经法则 1 的按需重建兑现）。
       current = {
@@ -100,10 +108,12 @@ export function createPayswapDesktopAccountRuntime(
       return rebuilds;
     },
     warmup: () =>
-      warmupPayswapPspRuntimeEnv({
-        keyStore: options.keyStore,
-        onWarmupError: options.onWarmupError,
-      }),
+      custodianRequired
+        ? Promise.resolve({ env: {}, keyAvailable: false })
+        : warmupPayswapPspRuntimeEnv({
+            keyStore: options.keyStore,
+            onWarmupError: options.onWarmupError,
+          }),
     serve(port) {
       return servePayswapReaderBridge({
         port,

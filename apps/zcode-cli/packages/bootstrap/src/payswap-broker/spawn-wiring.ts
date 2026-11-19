@@ -60,6 +60,15 @@ import type {
   PayswapBrokerHandle,
 } from "./server.js";
 
+/**
+ * 长会话宿主（app-server / 协议宿主面）的 broker idle 超时：broker 的存活期 = 宿主
+ * 进程的存活期。30s 缺省在真实对话节奏下必然触发 idle-close → 以新 instanceId 重启
+ * → MCP 子进程 env 的铸造时元组过期 → 每次调用 instance_mismatch（"broker
+ * restarted; plugin needs reload"；2026-11-17 native-Windows live 实测）。24h 事实上
+ * = 进程存活期（socket 是每次 boot 自铸的私有命名管道，进程死即消亡；无跨进程残留）。
+ */
+export const PAYSWAP_BROKER_HOST_SESSION_IDLE_TIMEOUT_MS = 24 * 60 * 60 * 1000;
+
 export interface PayswapBrokerCoordinatorOptions {
   /** env 与工作目录（缺省 reader 的 fresh config 读所需；CUA browser-broker 同款注入）。 */
   env?: NodeJS.ProcessEnv;
@@ -92,6 +101,13 @@ export interface PayswapBrokerCoordinatorOptions {
   sessionScopeResolver?: PayswapSessionScopeResolver;
   /** §8.3 实体工作区 resolver（Wave 2 生产不接线 —— 无实体存储，§13；测试/P2 用）。 */
   entityWorkspaceResolver?: PayswapEntityWorkspaceResolver;
+  /**
+   * broker idle 超时（透传给 boot；缺省 = boot 层 30s）。长会话宿主（app-server）
+   * 必须传远超对话间隔的值 —— idle-close 会以**新 instanceId** 重启 broker，而 MCP
+   * 子进程 env 里烙的是铸造时元组：重启后每次调用都死于 instance_mismatch
+   * （"broker restarted; plugin needs reload"，2026-11-17 native-Windows live 实测）。
+   */
+  idleTimeoutMs?: number;
   /** §11 审计 ingress sink（透传给 broker boot）。 */
   auditSink?: (event: PayswapBrokerAuditEvent) => void;
   /** boot 接缝（测试注入失败臂）。 */
@@ -188,6 +204,7 @@ export function createPayswapBrokerCoordinator(
           ? { entityWorkspaceResolver: options.entityWorkspaceResolver }
           : {}),
         ...(options.auditSink ? { auditSink: options.auditSink } : {}),
+        ...(options.idleTimeoutMs !== undefined ? { idleTimeoutMs: options.idleTimeoutMs } : {}),
       });
       bootState = state;
       handle = broker;

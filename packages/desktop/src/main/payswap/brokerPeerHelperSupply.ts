@@ -60,8 +60,11 @@ interface PayswapBrokerPeerHelperManifest {
 }
 
 const defaultDevBundledToolsRoots = () => [
-  // 仓库内 dev 形态（src/main → packages/desktop/bundled-tools）。
-  join(import.meta.dirname, "../../bundled-tools"),
+  // 仓库内 dev 形态。dev 实际运行的是**编译产物**（out/main/index.js，ESM）——
+  // import.meta.dirname 是 out/main，向上两级才是 packages/desktop（源码形态的
+  // src/main → ../.. 同样成立，两级上溯对两种布局都指向 packages/desktop）。
+  // 三级上溯（源码布局的旧注释）在编译布局会落到 out/bundled-tools（缺席）。
+  join(import.meta.dirname, "..", "..", "bundled-tools"),
   // dev cwd 可能是 packages/desktop 或仓库根（resolveBundledZCodeAgentBinaryPath
   // 同款多候选根，避免启动入口不同导致资源解析漂移）。
   join(process.cwd(), "bundled-tools"),

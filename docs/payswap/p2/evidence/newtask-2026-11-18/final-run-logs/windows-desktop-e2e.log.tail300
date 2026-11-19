@@ -1,0 +1,300 @@
+[0-0]   error: 'no such element',
+[0-0]   message: 'no such element: Unable to locate element: {"method":"css selector","selector":"[data-testid="onboarding-page"]"}\n' +
+[0-0]     '  (Session info: chrome=152.0.7977.130)',
+[0-0]   stacktrace: '\tchromedriver!GetHandleVerifier [0x7ff74aa1ed95+55d5]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a947020]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a775d9d]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7d0f6a]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7d127c]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a821eb7]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a81eaa1]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7c33ab]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7c42e3]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ae4526b+42baab]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ae71512+457d52]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ae6525e+44ba9e]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ab182fe+feb3e]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a95479c]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a9503c4]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a950554]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a93b10c]\n' +
+[0-0]     '\tKERNEL32!BaseThreadInitThunk [0x7ffa7ce4dda7+17]\n' +
+[0-0]     '\tntdll!RtlUserThreadStart [0x7ffa7e1b9c5c+2c]\n'
+[0-0] }
+[0-0] 2026-11-18T20:19:43.137Z INFO webdriver: COMMAND findElements("css selector", "[data-testid="onboarding-page"]")
+[0-0] 2026-11-18T20:19:43.137Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/elements
+[0-0] 2026-11-18T20:19:43.137Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"onboarding-page\"]"}
+[0-0] 2026-11-18T20:19:43.160Z INFO webdriver: RESULT []
+[0-0] 2026-11-18T20:19:43.163Z INFO webdriver: COMMAND findElement("css selector", "[data-testid="onboarding-page"]")
+[0-0] 2026-11-18T20:19:43.164Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element
+[0-0] 2026-11-18T20:19:43.164Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"onboarding-page\"]"}
+[0-0] 2026-11-18T20:19:43.186Z INFO webdriver: RESULT {
+[0-0]   error: 'no such element',
+[0-0]   message: 'no such element: Unable to locate element: {"method":"css selector","selector":"[data-testid="onboarding-page"]"}\n' +
+[0-0]     '  (Session info: chrome=152.0.7977.130)',
+[0-0]   stacktrace: '\tchromedriver!GetHandleVerifier [0x7ff74aa1ed95+55d5]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a947020]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a775d9d]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7d0f6a]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7d127c]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a821eb7]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a81eaa1]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7c33ab]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7c42e3]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ae4526b+42baab]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ae71512+457d52]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ae6525e+44ba9e]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ab182fe+feb3e]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a95479c]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a9503c4]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a950554]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a93b10c]\n' +
+[0-0]     '\tKERNEL32!BaseThreadInitThunk [0x7ffa7ce4dda7+17]\n' +
+[0-0]     '\tntdll!RtlUserThreadStart [0x7ffa7e1b9c5c+2c]\n'
+[0-0] }
+[0-0] 2026-11-18T20:19:43.192Z INFO webdriver: COMMAND findElements("css selector", "[data-testid="onboarding-page"]")
+[0-0] 2026-11-18T20:19:43.192Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/elements
+[0-0] 2026-11-18T20:19:43.193Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"onboarding-page\"]"}
+[0-0] 2026-11-18T20:19:43.210Z INFO webdriver: RESULT []
+[0-0] 2026-11-18T20:19:43.213Z INFO webdriver: COMMAND executeScript(<fn>, <object>)
+[0-0] 2026-11-18T20:19:43.214Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/execute/sync
+[0-0] 2026-11-18T20:19:43.214Z INFO webdriver: DATA {"script":"\n            function webdriverioPolyfill() {\n  var __defProp = Object.defineProperty;\n  var __name = function(target, _value) {\n    return __defProp(target, \"name\", { value: _value, configurable: true });\n  };\n  var __globalThis = typeof globalThis === \"object\" && globalThis || typeof window === \"object\" && window;\n  __globalThis.__name = __name;\n}\n            webdriverioPolyfill();\n            return (function probeWorkspaceAppState(params){if(document.querySelector('[data-testid=\"onboarding-page\"]')){return\"onboarding\"}const pathBadge=document.querySelector(`[data-testid=\"${params.workspacePathTestId}\"]`);if(pathBadge?.dataset.workspaceAbsPath===params.expectedPath){return\"ready\"}const workspaceItem=window.__zcodeTabStoreE2E?.getState().activeWorkspacePath===params.expectedPath;const conversationWorkspaceReady=params.expectedPath.replace(/\\\\/g,\"/\").endsWith(\"/.zcode/workspace/default\")&&Boolean(document.querySelector(`[data-testid=\"${params.composerWorkspaceTriggerTestId}\"]`));return(workspaceItem||conversationWorkspaceReady)&&document.querySelector(`[data-testid^=\"${params.sessionPanePrefix}-\"]`)?\"ready\":\"pending\"}).apply(null, arguments)\n        ","args":[{"workspacePathTestId":"workspace-path","workspaceItemTestId":"virtual-project-row","sessionPanePrefix":"v4-session-pane","composerWorkspaceTriggerTestId":"composer-workspace-trigger","expectedPath":"C:\\Users\\Lenovo\\Documents\\Qoder\\2026-11-16\\1c553c72\\payswap-4.0\\packages\\desktop\\.e2e-home-p2-acceptance-2026-11-18T20-12-16-275Z\\ZCodeProject"}]}
+[0-0] 2026-11-18T20:19:43.243Z INFO webdriver: RESULT ready
+[0-0] 2026-11-18T20:19:43.244Z INFO webdriver: COMMAND performActions(<object>)
+[0-0] 2026-11-18T20:19:43.244Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/actions
+[0-0] 2026-11-18T20:19:43.245Z INFO webdriver: DATA {"actions":[{"id":"key3","type":"key","parameters":{},"actions":[{"type":"keyDown","value":""},{"type":"pause","duration":10},{"type":"keyUp","value":""}]}]}
+[0-0] 2026-11-18T20:19:43.308Z INFO webdriver: RESULT null
+[0-0] 2026-11-18T20:19:43.474Z INFO webdriver: COMMAND findElement("css selector", "[data-testid="settings-page"]")
+[0-0] 2026-11-18T20:19:43.475Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element
+[0-0] 2026-11-18T20:19:43.475Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"settings-page\"]"}
+[0-0] 2026-11-18T20:19:43.505Z INFO webdriver: RESULT {
+[0-0]   error: 'no such element',
+[0-0]   message: 'no such element: Unable to locate element: {"method":"css selector","selector":"[data-testid="settings-page"]"}\n' +
+[0-0]     '  (Session info: chrome=152.0.7977.130)',
+[0-0]   stacktrace: '\tchromedriver!GetHandleVerifier [0x7ff74aa1ed95+55d5]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a947020]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a775d9d]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7d0f6a]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7d127c]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a821eb7]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a81eaa1]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7c33ab]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7c42e3]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ae4526b+42baab]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ae71512+457d52]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ae6525e+44ba9e]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ab182fe+feb3e]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a95479c]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a9503c4]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a950554]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a93b10c]\n' +
+[0-0]     '\tKERNEL32!BaseThreadInitThunk [0x7ffa7ce4dda7+17]\n' +
+[0-0]     '\tntdll!RtlUserThreadStart [0x7ffa7e1b9c5c+2c]\n'
+[0-0] }
+[0-0] 2026-11-18T20:19:43.507Z INFO webdriver: COMMAND findElement("css selector", "[data-testid="settings-page"]")
+[0-0] 2026-11-18T20:19:43.508Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element
+[0-0] 2026-11-18T20:19:43.508Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"settings-page\"]"}
+[0-0] 2026-11-18T20:19:43.521Z INFO webdriver: RESULT {
+[0-0]   error: 'no such element',
+[0-0]   message: 'no such element: Unable to locate element: {"method":"css selector","selector":"[data-testid="settings-page"]"}\n' +
+[0-0]     '  (Session info: chrome=152.0.7977.130)',
+[0-0]   stacktrace: '\tchromedriver!GetHandleVerifier [0x7ff74aa1ed95+55d5]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a947020]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a775d9d]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7d0f6a]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7d127c]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a821eb7]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a81eaa1]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7c33ab]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a7c42e3]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ae4526b+42baab]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ae71512+457d52]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ae6525e+44ba9e]\n' +
+[0-0]     '\tchromedriver!GetHandleVerifier [0x7ff74ab182fe+feb3e]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a95479c]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a9503c4]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a950554]\n' +
+[0-0]     '\tchromedriver!(No symbol) [0x7ff74a93b10c]\n' +
+[0-0]     '\tKERNEL32!BaseThreadInitThunk [0x7ffa7ce4dda7+17]\n' +
+[0-0]     '\tntdll!RtlUserThreadStart [0x7ffa7e1b9c5c+2c]\n'
+[0-0] }
+[0-0] 2026-11-18T20:19:43.524Z INFO webdriver: COMMAND executeScript(<fn>, <object>)
+[0-0] 2026-11-18T20:19:43.524Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/execute/sync
+[0-0] 2026-11-18T20:19:43.525Z INFO webdriver: DATA {"script":"\n            function webdriverioPolyfill() {\n  var __defProp = Object.defineProperty;\n  var __name = function(target, _value) {\n    return __defProp(target, \"name\", { value: _value, configurable: true });\n  };\n  var __globalThis = typeof globalThis === \"object\" && globalThis || typeof window === \"object\" && window;\n  __globalThis.__name = __name;\n}\n            webdriverioPolyfill();\n            return (targetTestId=>{const element=document.querySelector(`[data-testid=\"${targetTestId}\"]`);if(!element)return false;const style=window.getComputedStyle(element);if(style.display===\"none\"||style.visibility===\"hidden\")return false;if(element.getClientRects().length===0)return false;element.click();return true}).apply(null, arguments)\n        ","args":["task-settings-button"]}
+[0-0] 2026-11-18T20:19:43.674Z INFO webdriver: RESULT true
+[0-0] 2026-11-18T20:19:43.676Z INFO webdriver: COMMAND findElement("css selector", "[data-testid="settings-page"]")
+[0-0] 2026-11-18T20:19:43.677Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element
+[0-0] 2026-11-18T20:19:43.677Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"settings-page\"]"}
+[0-0] 2026-11-18T20:19:43.744Z INFO webdriver: RESULT {
+[0-0]   'element-6066-11e4-a52e-4f735466cecf': 'f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.11'
+[0-0] }
+[0-0] 2026-11-18T20:19:43.746Z INFO webdriver: COMMAND executeScript(<fn>, <object>)
+[0-0] 2026-11-18T20:19:43.747Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/execute/sync
+[0-0] 2026-11-18T20:19:43.747Z INFO webdriver: DATA {"script":"\n            function webdriverioPolyfill() {\n  var __defProp = Object.defineProperty;\n  var __name = function(target, _value) {\n    return __defProp(target, \"name\", { value: _value, configurable: true });\n  };\n  var __globalThis = typeof globalThis === \"object\" && globalThis || typeof window === \"object\" && window;\n  __globalThis.__name = __name;\n}\n            webdriverioPolyfill();\n            return (function(elem) {\n      try {\n        const style = window.getComputedStyle(elem);\n        return { value: style?.display ?? \"\" };\n      } catch {\n        if (typeof elem.isConnected === \"boolean\" && !elem.isConnected) {\n          throw new Error(\"stale element reference: element is not attached to the page document\");\n        }\n        return { value: \"\" };\n      }\n    }).apply(null, arguments)\n        ","args":[{"element-6066-11e4-a52e-4f735466cecf":"f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.11","ELEMENT":"f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.11"}]}
+[0-0] 2026-11-18T20:19:43.747Z INFO webdriver: COMMAND executeScript(<fn>, <object>)
+[0-0] 2026-11-18T20:19:43.748Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/execute/sync
+[0-0] 2026-11-18T20:19:43.748Z INFO webdriver: DATA {"script":"\n            function webdriverioPolyfill() {\n  var __defProp = Object.defineProperty;\n  var __name = function(target, _value) {\n    return __defProp(target, \"name\", { value: _value, configurable: true });\n  };\n  var __globalThis = typeof globalThis === \"object\" && globalThis || typeof window === \"object\" && window;\n  __globalThis.__name = __name;\n}\n            webdriverioPolyfill();\n            return (function checkVisibility(elem, params) {\n      if (typeof elem.checkVisibility === \"function\") {\n        return elem.checkVisibility(params);\n      }\n      return null;\n    }).apply(null, arguments)\n        ","args":[{"element-6066-11e4-a52e-4f735466cecf":"f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.11","ELEMENT":"f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.11"},{"withinViewport":false,"contentVisibilityAuto":true,"opacityProperty":true,"visibilityProperty":true}]}
+[0-0] 2026-11-18T20:19:43.768Z INFO webdriver: RESULT { value: 'grid' }
+[0-0] 2026-11-18T20:19:43.777Z INFO webdriver: RESULT true
+[0-0] 2026-11-18T20:19:43.779Z INFO webdriver: COMMAND executeScript(<fn>, <object>)
+[0-0] 2026-11-18T20:19:43.779Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/execute/sync
+[0-0] 2026-11-18T20:19:43.780Z INFO webdriver: DATA {"script":"\n            function webdriverioPolyfill() {\n  var __defProp = Object.defineProperty;\n  var __name = function(target, _value) {\n    return __defProp(target, \"name\", { value: _value, configurable: true });\n  };\n  var __globalThis = typeof globalThis === \"object\" && globalThis || typeof window === \"object\" && window;\n  __globalThis.__name = __name;\n}\n            webdriverioPolyfill();\n            return (targetTestId=>{const element=document.querySelector(`[data-testid=\"${targetTestId}\"]`);if(!element)return false;const style=window.getComputedStyle(element);if(style.display===\"none\"||style.visibility===\"hidden\")return false;if(element.getClientRects().length===0)return false;element.click();return true}).apply(null, arguments)\n        ","args":["settings-section-nav-payswap"]}
+[0-0] 2026-11-18T20:19:43.815Z INFO webdriver: RESULT true
+[0-0] 2026-11-18T20:19:43.816Z INFO webdriver: COMMAND findElement("css selector", "[data-testid="payswap-connections-section"]")
+[0-0] 2026-11-18T20:19:43.816Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element
+[0-0] 2026-11-18T20:19:43.816Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"payswap-connections-section\"]"}
+[0-0] 2026-11-18T20:19:43.838Z INFO webdriver: RESULT {
+[0-0]   'element-6066-11e4-a52e-4f735466cecf': 'f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.12'
+[0-0] }
+[0-0] 2026-11-18T20:19:43.842Z INFO webdriver: COMMAND executeScript(<fn>, <object>)
+[0-0] 2026-11-18T20:19:43.843Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/execute/sync
+[0-0] 2026-11-18T20:19:43.843Z INFO webdriver: DATA {"script":"\n            function webdriverioPolyfill() {\n  var __defProp = Object.defineProperty;\n  var __name = function(target, _value) {\n    return __defProp(target, \"name\", { value: _value, configurable: true });\n  };\n  var __globalThis = typeof globalThis === \"object\" && globalThis || typeof window === \"object\" && window;\n  __globalThis.__name = __name;\n}\n            webdriverioPolyfill();\n            return (function(elem) {\n      try {\n        const style = window.getComputedStyle(elem);\n        return { value: style?.display ?? \"\" };\n      } catch {\n        if (typeof elem.isConnected === \"boolean\" && !elem.isConnected) {\n          throw new Error(\"stale element reference: element is not attached to the page document\");\n        }\n        return { value: \"\" };\n      }\n    }).apply(null, arguments)\n        ","args":[{"element-6066-11e4-a52e-4f735466cecf":"f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.12","ELEMENT":"f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.12"}]}
+[0-0] 2026-11-18T20:19:43.844Z INFO webdriver: COMMAND executeScript(<fn>, <object>)
+[0-0] 2026-11-18T20:19:43.844Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/execute/sync
+[0-0] 2026-11-18T20:19:43.844Z INFO webdriver: DATA {"script":"\n            function webdriverioPolyfill() {\n  var __defProp = Object.defineProperty;\n  var __name = function(target, _value) {\n    return __defProp(target, \"name\", { value: _value, configurable: true });\n  };\n  var __globalThis = typeof globalThis === \"object\" && globalThis || typeof window === \"object\" && window;\n  __globalThis.__name = __name;\n}\n            webdriverioPolyfill();\n            return (function checkVisibility(elem, params) {\n      if (typeof elem.checkVisibility === \"function\") {\n        return elem.checkVisibility(params);\n      }\n      return null;\n    }).apply(null, arguments)\n        ","args":[{"element-6066-11e4-a52e-4f735466cecf":"f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.12","ELEMENT":"f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.12"},{"withinViewport":false,"contentVisibilityAuto":true,"opacityProperty":true,"visibilityProperty":true}]}
+[0-0] 2026-11-18T20:19:43.856Z INFO webdriver: RESULT { value: 'block' }
+[0-0] 2026-11-18T20:19:43.867Z INFO webdriver: RESULT true
+[0-0] 2026-11-18T20:19:43.870Z INFO webdriver: COMMAND findElements("css selector", "[data-testid="payswap-connection-row"]")
+[0-0] 2026-11-18T20:19:43.870Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/elements
+[0-0] 2026-11-18T20:19:43.870Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"payswap-connection-row\"]"}
+[0-0] 2026-11-18T20:19:43.887Z INFO webdriver: RESULT [
+[0-0]   {
+[0-0]     'element-6066-11e4-a52e-4f735466cecf': 'f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.13'
+[0-0]   }
+[0-0] ]
+[0-0] 2026-11-18T20:19:43.890Z INFO webdriver: COMMAND getElementAttribute("f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.13", "data-connection-id")
+[0-0] 2026-11-18T20:19:43.890Z INFO webdriver: [GET] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element/f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.13/attribute/data-connection-id
+[0-0] 2026-11-18T20:19:43.904Z INFO webdriver: RESULT 0de087d2-d76c-4c54-904c-4e18b929046a
+[0-0] 2026-11-18T20:19:43.905Z INFO webdriver: COMMAND findElement("css selector", "[data-testid="payswap-connect-secret"]")
+[0-0] 2026-11-18T20:19:43.905Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element
+[0-0] 2026-11-18T20:19:43.905Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"payswap-connect-secret\"]"}
+[0-0] 2026-11-18T20:19:43.922Z INFO webdriver: RESULT {
+[0-0]   'element-6066-11e4-a52e-4f735466cecf': 'f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.14'
+[0-0] }
+[0-0] 2026-11-18T20:19:43.924Z INFO webdriver: COMMAND executeScript(<fn>, <object>)
+[0-0] 2026-11-18T20:19:43.924Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/execute/sync
+[0-0] 2026-11-18T20:19:43.925Z INFO webdriver: DATA {"script":"\n            function webdriverioPolyfill() {\n  var __defProp = Object.defineProperty;\n  var __name = function(target, _value) {\n    return __defProp(target, \"name\", { value: _value, configurable: true });\n  };\n  var __globalThis = typeof globalThis === \"object\" && globalThis || typeof window === \"object\" && window;\n  __globalThis.__name = __name;\n}\n            webdriverioPolyfill();\n            return (function(elem) {\n      try {\n        const style = window.getComputedStyle(elem);\n        return { value: style?.display ?? \"\" };\n      } catch {\n        if (typeof elem.isConnected === \"boolean\" && !elem.isConnected) {\n          throw new Error(\"stale element reference: element is not attached to the page document\");\n        }\n        return { value: \"\" };\n      }\n    }).apply(null, arguments)\n        ","args":[{"element-6066-11e4-a52e-4f735466cecf":"f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.14","ELEMENT":"f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.14"}]}
+[0-0] 2026-11-18T20:19:43.925Z INFO webdriver: COMMAND executeScript(<fn>, <object>)
+[0-0] 2026-11-18T20:19:43.925Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/execute/sync
+[0-0] 2026-11-18T20:19:43.925Z INFO webdriver: DATA {"script":"\n            function webdriverioPolyfill() {\n  var __defProp = Object.defineProperty;\n  var __name = function(target, _value) {\n    return __defProp(target, \"name\", { value: _value, configurable: true });\n  };\n  var __globalThis = typeof globalThis === \"object\" && globalThis || typeof window === \"object\" && window;\n  __globalThis.__name = __name;\n}\n            webdriverioPolyfill();\n            return (function checkVisibility(elem, params) {\n      if (typeof elem.checkVisibility === \"function\") {\n        return elem.checkVisibility(params);\n      }\n      return null;\n    }).apply(null, arguments)\n        ","args":[{"element-6066-11e4-a52e-4f735466cecf":"f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.14","ELEMENT":"f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.14"},{"withinViewport":false,"contentVisibilityAuto":true,"opacityProperty":true,"visibilityProperty":true}]}
+[0-0] 2026-11-18T20:19:43.937Z INFO webdriver: RESULT { value: 'block' }
+[0-0] 2026-11-18T20:19:43.944Z INFO webdriver: RESULT true
+[0-0] 2026-11-18T20:19:43.945Z INFO webdriver: COMMAND findElement("css selector", "[data-testid="payswap-connect-secret"]")
+[0-0] 2026-11-18T20:19:43.945Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element
+[0-0] 2026-11-18T20:19:43.945Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"payswap-connect-secret\"]"}
+[0-0] 2026-11-18T20:19:43.971Z INFO webdriver: RESULT {
+[0-0]   'element-6066-11e4-a52e-4f735466cecf': 'f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.14'
+[0-0] }
+[0-0] 2026-11-18T20:19:43.974Z INFO webdriver: COMMAND elementClear("f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.14")
+[0-0] 2026-11-18T20:19:43.975Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element/f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.14/clear
+[0-0] 2026-11-18T20:19:43.975Z INFO webdriver: DATA {}
+[0-0] 2026-11-18T20:19:44.016Z INFO webdriver: RESULT null
+[0-0] 2026-11-18T20:19:44.016Z INFO webdriver: COMMAND elementSendKeys("f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.14", "sk_test_e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8")
+[0-0] 2026-11-18T20:19:44.017Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element/f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.14/value
+[0-0] 2026-11-18T20:19:44.017Z INFO webdriver: DATA {"text":"sk_test_e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8e5f6a7b8"}
+[0-0] 2026-11-18T20:19:44.295Z INFO webdriver: RESULT null
+[0-0] 2026-11-18T20:19:44.296Z INFO webdriver: COMMAND findElement("css selector", "[data-testid="payswap-connect-display-name"]")
+[0-0] 2026-11-18T20:19:44.296Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element
+[0-0] 2026-11-18T20:19:44.296Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"payswap-connect-display-name\"]"}
+[0-0] 2026-11-18T20:19:44.314Z INFO webdriver: RESULT {
+[0-0]   'element-6066-11e4-a52e-4f735466cecf': 'f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.19'
+[0-0] }
+[0-0] 2026-11-18T20:19:44.316Z INFO webdriver: COMMAND elementClear("f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.19")
+[0-0] 2026-11-18T20:19:44.316Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element/f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.19/clear
+[0-0] 2026-11-18T20:19:44.316Z INFO webdriver: DATA {}
+[0-0] 2026-11-18T20:19:44.370Z INFO webdriver: RESULT null
+[0-0] 2026-11-18T20:19:44.370Z INFO webdriver: COMMAND elementSendKeys("f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.19", "E2 Stripe Fallback")
+[0-0] 2026-11-18T20:19:44.370Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element/f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.19/value
+[0-0] 2026-11-18T20:19:44.370Z INFO webdriver: DATA {"text":"E2 Stripe Fallback"}
+[0-0] 2026-11-18T20:19:44.554Z INFO webdriver: RESULT null
+[0-0] 2026-11-18T20:19:44.555Z INFO webdriver: COMMAND executeScript(<fn>, <object>)
+[0-0] 2026-11-18T20:19:44.555Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/execute/sync
+[0-0] 2026-11-18T20:19:44.555Z INFO webdriver: DATA {"script":"\n            function webdriverioPolyfill() {\n  var __defProp = Object.defineProperty;\n  var __name = function(target, _value) {\n    return __defProp(target, \"name\", { value: _value, configurable: true });\n  };\n  var __globalThis = typeof globalThis === \"object\" && globalThis || typeof window === \"object\" && window;\n  __globalThis.__name = __name;\n}\n            webdriverioPolyfill();\n            return (targetTestId=>{const element=document.querySelector(`[data-testid=\"${targetTestId}\"]`);if(!element)return false;const style=window.getComputedStyle(element);if(style.display===\"none\"||style.visibility===\"hidden\")return false;if(element.getClientRects().length===0)return false;element.click();return true}).apply(null, arguments)\n        ","args":["payswap-connect-submit"]}
+[0-0] 2026-11-18T20:19:44.586Z INFO webdriver: RESULT true
+[0-0] 2026-11-18T20:19:44.587Z INFO webdriver: COMMAND findElement("css selector", "[data-testid="payswap-connection-notice"]")
+[0-0] 2026-11-18T20:19:44.587Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element
+[0-0] 2026-11-18T20:19:44.587Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"payswap-connection-notice\"]"}
+[0-0] 2026-11-18T20:19:44.622Z INFO webdriver: RESULT {
+[0-0]   'element-6066-11e4-a52e-4f735466cecf': 'f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23'
+[0-0] }
+[0-0] 2026-11-18T20:19:44.626Z INFO webdriver: COMMAND findElements("css selector", "[data-testid="payswap-connection-notice"]")
+[0-0] 2026-11-18T20:19:44.626Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/elements
+[0-0] 2026-11-18T20:19:44.626Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"payswap-connection-notice\"]"}
+[0-0] 2026-11-18T20:19:44.647Z INFO webdriver: RESULT [
+[0-0]   {
+[0-0]     'element-6066-11e4-a52e-4f735466cecf': 'f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23'
+[0-0]   }
+[0-0] ]
+[0-0] 2026-11-18T20:19:44.650Z INFO webdriver: COMMAND getElementAttribute("f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23", "data-notice-key")
+[0-0] 2026-11-18T20:19:44.650Z INFO webdriver: [GET] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element/f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23/attribute/data-notice-key
+[0-0] 2026-11-18T20:19:44.678Z INFO webdriver: RESULT payswap.connections.refusal.secure_storage_unavailable
+[0-0] 2026-11-18T20:19:44.679Z INFO webdriver: COMMAND getElementAttribute("f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23", "data-notice-code")
+[0-0] 2026-11-18T20:19:44.680Z INFO webdriver: [GET] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element/f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23/attribute/data-notice-code
+[0-0] 2026-11-18T20:19:44.699Z INFO webdriver: RESULT PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE
+[0-0] 2026-11-18T20:19:44.699Z INFO webdriver: COMMAND getElementAttribute("f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23", "data-notice-tone")
+[0-0] 2026-11-18T20:19:44.700Z INFO webdriver: [GET] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element/f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23/attribute/data-notice-tone
+[0-0] 2026-11-18T20:19:44.714Z INFO webdriver: RESULT danger
+[0-0] 2026-11-18T20:19:44.715Z INFO webdriver: COMMAND findElement("css selector", "[data-testid="payswap-connection-notice"]")
+[0-0] 2026-11-18T20:19:44.715Z INFO webdriver: [POST] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element
+[0-0] 2026-11-18T20:19:44.715Z INFO webdriver: DATA {"using":"css selector","value":"[data-testid=\"payswap-connection-notice\"]"}
+[0-0] 2026-11-18T20:19:44.733Z INFO webdriver: RESULT {
+[0-0]   'element-6066-11e4-a52e-4f735466cecf': 'f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23'
+[0-0] }
+[0-0] 2026-11-18T20:19:44.735Z INFO webdriver: COMMAND getElementAttribute("f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23", "data-notice-key")
+[0-0] 2026-11-18T20:19:44.735Z INFO webdriver: [GET] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element/f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23/attribute/data-notice-key
+[0-0] 2026-11-18T20:19:44.757Z INFO webdriver: RESULT payswap.connections.refusal.secure_storage_unavailable
+[0-0] 2026-11-18T20:19:44.758Z INFO webdriver: COMMAND getElementAttribute("f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23", "data-notice-code")
+[0-0] 2026-11-18T20:19:44.758Z INFO webdriver: [GET] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element/f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23/attribute/data-notice-code
+[0-0] 2026-11-18T20:19:44.776Z INFO webdriver: RESULT PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE
+[0-0] 2026-11-18T20:19:44.776Z INFO webdriver: COMMAND getElementAttribute("f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23", "data-notice-tone")
+[0-0] 2026-11-18T20:19:44.776Z INFO webdriver: [GET] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c/element/f.D088B172511691FB9C1AD627929B7856.d.92BFB94E5A25C7389A02B5733D8A86D6.e.23/attribute/data-notice-tone
+[0-0] 2026-11-18T20:19:44.791Z INFO webdriver: RESULT danger
+[0-0] 2026-11-18T20:19:44.822Z INFO webdriver: COMMAND deleteSession()
+[0-0] 2026-11-18T20:19:44.836Z INFO webdriver: COMMAND deleteSession()
+[0-0] 2026-11-18T20:19:44.836Z INFO webdriver: [DELETE] http://127.0.0.1:57610/session/f6b337e006dc05cc2abb471bc98f311c
+[0-0] 2026-11-18T20:19:46.719Z INFO webdriver: RESULT null
+[0-0] 2026-11-18T20:19:46.719Z INFO webdriver: RESULT null
+[0-0] PASSED in chrome(152.0.7977.130) - file:///C:/Users/Lenovo/Documents/Qoder/2026-11-16/1c553c72/payswap-4.0/packages/desktop/test/e2e/payswap-connection-ui.test.ts
+2026-11-18T20:19:48.087Z INFO @wdio/cli:launcher: Run onWorkerEnd hook
+
+ "spec" Reporter:
+------------------------------------------------------------------
+[chrome 152.0.7977.130 windows #0-0] Running: chrome (v152.0.7977.130) on windows
+[chrome 152.0.7977.130 windows #0-0] Session ID: 821f466f8b1408766cda626b558fafd8
+[chrome 152.0.7977.130 windows #0-0]
+[chrome 152.0.7977.130 windows #0-0] » test\e2e\payswap-connection-ui.test.ts
+[chrome 152.0.7977.130 windows #0-0] P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2 UI 条款）
+[chrome 152.0.7977.130 windows #0-0]    ✓ 分区可达 + 通道注册 fail-closed：list 直达；畸形 → malformed_request
+[chrome 152.0.7977.130 windows #0-0]    ✓ validation_failed 按 code 呈现；秘密单发清空；列表零行
+[chrome 152.0.7977.130 windows #0-0]    ✓ 首次合法 connect：闭集结局按 law 呈现（Gate E2 fallback-only 行或 connected）
+[chrome 152.0.7977.130 windows #0-0]    ✓ happy path：connected 行 + at-rest 密文（记录无明文；凭据 store 含 id 无明文）
+[chrome 152.0.7977.130 windows #0-0]    ✓ refresh：闭集结局呈现 + 状态一致（read_back_unavailable 不变 / expired 翻牌 / verified）
+[chrome 152.0.7977.130 windows #0-0]    ✓ revoke：终态 revoked + at-rest 本地秘密删除
+[chrome 152.0.7977.130 windows #0-0]    ✓ Gate E2 行（存储可用环境）：损坏键 + 真实重启 → typed 存储 refusal 呈现；既有记录仍可列表
+[chrome 152.0.7977.130 windows #0-0]
+[chrome 152.0.7977.130 windows #0-0] 7 passing (34.3s)
+
+
+Spec Files:	 1 passed, 1 total (100% completed) in 00:00:59  
+
+2026-11-18T20:19:48.099Z INFO @wdio/local-runner: Shutting down spawned worker
+2026-11-18T20:19:48.354Z INFO @wdio/local-runner: Waiting for 0 to shut down gracefully
+2026-11-18T20:19:48.354Z INFO @wdio/local-runner: shutting down
+2026-11-18T20:19:48.354Z INFO @wdio/cli:launcher: Run onComplete hook
+[desktop-e2e-report] summary: C:\Users\Lenovo\Documents\Qoder\2026-11-16\1c553c72\payswap-4.0\packages\desktop\.e2e-artifacts\p2-acceptance-2026-11-18T20-12-16-275Z\summary.md
+[desktop-e2e-report] viewer: http://127.0.0.1:4173/?summary=%2F%40fs%2FC%3A%2FUsers%2FLenovo%2FDocuments%2FQoder%2F2026-11-16%2F1c553c72%2Fpayswap-4.0%2Fpackages%2Fdesktop%2F.e2e-artifacts%2Fp2-acceptance-2026-11-18T20-12-16-275Z%2Fsummary.json
+[e2e-shards] {
+  "runId": "p2-acceptance-2026-11-18T20-12-16-275Z",
+  "shardTotal": 1,
+  "distributionKind": "wdio-native",
+  "wallDurationMs": 284238,
+  "manifestPath": "C:\\Users\\Lenovo\\Documents\\Qoder\\2026-11-16\\1c553c72\\payswap-4.0\\packages\\desktop\\.e2e-artifacts\\p2-acceptance-2026-11-18T20-12-16-275Z\\shard-manifest.json",
+  "children": [
+    {
+      "shardId": "1/1",
+      "exitCode": 0,
+      "artifactDir": "C:\\Users\\Lenovo\\Documents\\Qoder\\2026-11-16\\1c553c72\\payswap-4.0\\packages\\desktop\\.e2e-artifacts\\p2-acceptance-2026-11-18T20-12-16-275Z",
+      "summaryPath": "C:\\Users\\Lenovo\\Documents\\Qoder\\2026-11-16\\1c553c72\\payswap-4.0\\packages\\desktop\\.e2e-artifacts\\p2-acceptance-2026-11-18T20-12-16-275Z\\summary.json"
+    }
+  ]
+}

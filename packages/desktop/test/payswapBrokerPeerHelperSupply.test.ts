@@ -231,9 +231,14 @@ describe("resolvePayswapBrokerPeerHelperSupply", () => {
       ).toEqual({});
 
       // 缺少整个资源目录 → 不注入
+      // 缺少整个资源目录 → 打包面不注入。devBundledToolsRoots 必须显式隔离：
+      // 打包候选全部缺席时解析器按设计回退到 dev 根族（dev 桌面在真实机器上正是
+      // 靠它供给 —— 2026-11-17 起 repo 的 bundled-tools 里存在真实 staged pair，
+      // 不隔离会让本对抗行读到真供给而假红）。
       expect(
         resolvePayswapBrokerPeerHelperSupply({
           arch: "x64",
+          devBundledToolsRoots: [],
           env: {},
           isPackaged: true,
           platform: "win32",

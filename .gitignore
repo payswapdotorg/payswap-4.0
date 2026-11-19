@@ -20,6 +20,9 @@ packages/desktop/.e2e-cache/
 packages/desktop/.e2e-network-capture/
 # P2 live 验收 harness 的构建/运行产物（build-live-harness.mjs 输出 + main.cjs 草稿目录）。
 packages/desktop/.live-harness/
+# P2 验收 runner 的证据工件输出（scripts/payswap/windows/run-p2-acceptance.cjs）——
+# 消毒要点按 evidence register 登记后原始工件不入库（含运行日志，防止误提交半敏感面）。
+artifacts/
 *.tsbuildinfo
 .DS_Store
 coverage/

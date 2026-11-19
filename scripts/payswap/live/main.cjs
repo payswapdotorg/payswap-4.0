@@ -51,8 +51,10 @@
  *   ZCODE_E2E_STRIPE_LIVE_KEY   真实受限只读测试键（rk_test_*）—— 必需
  *   ZCODE_PAYSWAP_LIVE_SCRATCH  草稿根目录（缺省 packages/desktop/.live-harness/run）
  *   ZCODE_PAYSWAP_LIVE_OUT_DIR  证据输出目录（缺省 packages/desktop/.live-harness/out）
- *   ZCODE_PAYSWAP_LIVE_EXPECT_BACKEND  期望的 safeStorage 后端名（缺省按平台：
- *                               linux=gnome_libsecret / darwin=keychain / win32=dpapi）
+ *   ZCODE_PAYSWAP_LIVE_EXPECT_BACKEND  期望的 safeStorage 后端名（**仅 linux 消费**；
+ *                               缺省 gnome_libsecret。win32/darwin 无后端名 API ——
+ *                               由 isEncryptionAvailable 门住，见
+ *                               safe-storage-backend-gate.cjs 与环境就绪报告 2026-11-17）
  */
 
 "use strict";
@@ -62,6 +64,7 @@ const fs = require("node:fs");
 const fsp = require("node:fs/promises");
 const Module = require("node:module");
 const { app, safeStorage } = require("electron");
+const { assertLiveSafeStorageBackend } = require("./safe-storage-backend-gate.cjs");
 
 const REPO_ROOT = resolve(__dirname, "..", "..", "..");
 const BUNDLE_PATH = join(REPO_ROOT, "packages", "desktop", ".live-harness", "harness-bundle.cjs");
@@ -75,13 +78,13 @@ const OUT_DIR = process.env.ZCODE_PAYSWAP_LIVE_OUT_DIR
   ? resolve(process.env.ZCODE_PAYSWAP_LIVE_OUT_DIR)
   : join(REPO_ROOT, "packages", "desktop", ".live-harness", "out");
 
+// 期望后端名：**仅 linux 消费**（win32/darwin 无后端名 API —— 步骤 1 的平台门
+// 见 safe-storage-backend-gate.cjs；环境就绪审计 2026-11-17 修复：原先
+// win32/darwin 的 "dpapi"/"keychain" 缺省值没有任何 API 可与之比较，且步骤 1 的
+// 无条件 getSelectedStorageBackend() 调用（Linux-only API）在 win32 上即 TypeError）。
 const EXPECTED_BACKEND =
   process.env.ZCODE_PAYSWAP_LIVE_EXPECT_BACKEND ||
-  (process.platform === "linux"
-    ? "gnome_libsecret"
-    : process.platform === "darwin"
-      ? "keychain"
-      : "dpapi");
+  (process.platform === "linux" ? "gnome_libsecret" : undefined);
 
 // ---------------------------------------------------------------------------
 // 环境前置（顺序敏感）
@@ -230,17 +233,19 @@ async function main() {
   /** @type {string | null} */
   let connectionId = null;
 
-  // 步骤 1：后端是真 OS 钥匙串后端（basic_text/unknown = 失败 —— 硬编码密码不是
-  // OS 钥匙串保护，live 实证不得在该后端上成立）。
+  // 步骤 1：后端是真 OS 钥匙串后端（平台感知门 —— safe-storage-backend-gate.cjs：
+  // linux = 后端名闭集〔basic_text/unknown = 失败，硬编码密码不是 OS 钥匙串保护〕；
+  // win32 = DPAPI 可用性门；darwin = Keychain 可用性门。**Linux-only API 不得在
+  // 非 linux 平台触碰** —— 与生产键仓 pspCredentialKeyStore 的平台门同一法则
+  // 〔pspSafeStorageBackendPolicy 法则 2〕；Windows 上不存在后端名 API，不发明）。
   if (
     !(await step("safeStorage backend is a real OS keychain backend", async () => {
-      const backendSelected = safeStorage.getSelectedStorageBackend();
-      if (backendSelected !== EXPECTED_BACKEND) {
-        throw new Error(
-          `safeStorage 后端为 '${backendSelected}'，期望 '${EXPECTED_BACKEND}' —— live 实证要求真实 OS 钥匙串后端（--password-store=gnome-libsecret + org.freedesktop.secrets 在场）`,
-        );
-      }
-      return { backendSelected };
+      const { gate, backendSelected } = assertLiveSafeStorageBackend({
+        safeStorage,
+        platform: process.platform,
+        expectedBackend: EXPECTED_BACKEND,
+      });
+      return { gate, backendSelected };
     })).ok
   )
     return finish();
