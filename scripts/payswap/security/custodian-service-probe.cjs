@@ -279,7 +279,8 @@ function run(args, stdin) {
 const reg = run(["--custodian-register"]);
 const push = run(["--custodian-push"], "rk_f6probe_" + "0".repeat(70) + "\\n");
 const get = run(["--custodian-get", "--path", "/v1/balance"]);
-console.log("EVIL " + JSON.stringify({ register: reg, push, get }));
+const drop = run(["--custodian-drop"]);
+console.log("EVIL " + JSON.stringify({ register: reg, push, get, drop }));
 process.exit(0);
 `,
   );
@@ -318,6 +319,11 @@ process.exit(0);
     evil.get.code === 70,
     "exit=" + evil.get.code,
   );
+  record(
+    "f6:impersonator-drop-refused-while-genuine-alive",
+    evil.drop.code === 70,
+    "exit=" + evil.drop.code + " (all four custody ops blocked for the impersonator)",
+  );
 
   // documented residual: after the genuine main dies, a fresh electron main's
   // registration SUCCEEDS (the rebind path — also the legitimate restart path,
@@ -345,8 +351,37 @@ process.exit(0);
     "fresh electron main rebinds once the registered main is dead (race window — must stay visible, not silently change)",
   );
 
-  evilChild.kill();
+  // service restart: registration is in-memory and must clear — a fresh electron
+  // main registers against the restarted server (the legitimate recovery path).
   server.child.kill();
+  await wait(800);
+  const restarted = startConsoleServer({ image: ELECTRON });
+  const restartedEndpoint = waitForEndpoint(restarted.endpointFile);
+  if (restartedEndpoint === null) {
+    record("f6:service-restart-registration-cleared", false, "restarted endpoint never appeared");
+    restarted.child.kill();
+    return;
+  }
+  // re-write the idle main against the RESTARTED server's endpoint
+  fs.writeFileSync(
+    idleMain,
+    `
+const { spawnSync } = require("node:child_process");
+const HELPER = ${JSON.stringify(HELPER)};
+const ep = ${JSON.stringify(restarted.endpointFile)};
+const r = spawnSync(HELPER, ["--endpoint-file", ep, "--custodian-register"], { encoding: "utf8", windowsHide: true });
+console.log("IDLE-REGISTER exit=" + r.status);
+process.exit(0);
+`,
+  );
+  const afterRestart = spawnSync(ELECTRON, [idleMain], { encoding: "utf8", windowsHide: true, timeout: 30000 });
+  record(
+    "f6:service-restart-registration-cleared",
+    (afterRestart.stdout || "").includes("IDLE-REGISTER exit=0"),
+    "fresh registration after restart (in-memory state cleared)",
+  );
+  evilChild.kill();
+  restarted.child.kill();
 }
 
 
