@@ -504,3 +504,21 @@ The helper now carries the full ADR-P2-3 custodian (system service + client mode
 3. Revoke: row delete + custodian `drop` (erases memory + SYSTEM blob).
 4. Then: adversarial re-proof (probe + custodian gate) → New Task re-read →
    formal runner re-run → evidence §10.3.
+
+### Custodian path LIVE in New Task (2026-11-19 — the adversarial re-proof)
+
+- Marker-prefix fix: the custodian port's load placeholder now carries the
+  `sk_test_` prefix (adapter mode derivation intact) — the first live read
+  refused with the typed prefix mismatch (the law working), fixed in
+  runtime.ts, root typecheck green.
+- Console custodian (electron test-gate) + dev app + UI reconnect: new row
+  Connected with **zero new enc:v1 slot** (slots remain 2, historical only);
+  New Task four-category read answered **through the custodian** (audit
+  dispatched ×3 on 2026-11-19); stale mis-keyed row revoked (its wrapped
+  dead-key slot remains as a historical tombstone).
+- Probe note: the at-rest RED gate still fires on the two historical
+  (dead-key) slots; for FRESH custodian connections there is no slot to
+  recover — the in-session chain is closed at the file layer.
+- Remaining: --svc-install elevated step (service mode replacing console
+  mode), evidence §10.3, formal runner re-run on the isolated build, TL
+  design sign-off on the amended ADR (custodian helper).

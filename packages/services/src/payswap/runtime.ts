@@ -112,7 +112,9 @@ export function createPayswapAccountRuntime(
   //（托管清除走 revoke 分支的 drop）。在位时 main 全程不持明文、不落 enc:v1 槽。
   const custodianCredentialPort: PayswapAccountCredentialPort = custodianBridge
     ? {
-        load: async () => CUSTODIAN_SECRET_MARKER,
+        // 占位密钥带 sk_test_ 前缀：adapter 的 mode 推导（derivePayswapSecretKeyMode）
+        // 照常成立（P2 仅 test 模式连接）；真实 Bearer 由 custodian 服务端补。
+        load: async () => `sk_test_${CUSTODIAN_SECRET_MARKER}`,
         save: async (_key, value) => {
           await custodianBridge.push(value);
         },
