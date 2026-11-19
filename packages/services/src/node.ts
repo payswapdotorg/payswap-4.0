@@ -183,6 +183,7 @@ export {
 export {
   createPayswapAccountRuntime,
   createPayswapCustodianUnavailableError,
+  createCustodianRequiredRefusingCredentialPort,
   type PayswapAccountRuntime,
   type PayswapAccountRuntimeDependencies,
   type PayswapCustodianBridge,

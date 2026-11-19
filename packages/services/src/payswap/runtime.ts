@@ -174,6 +174,10 @@ export function createPayswapAccountRuntime(
   });
   const accountService = createPayswapAccountService({
     credentialPort: custodianCredentialPort,
+    // ADR-P2-3：桥必须转发给服务 —— revoke 臂的托管清除（drop）依赖它。此前
+    // 装配漏传：服务的 custodianBridge 恒为 undefined，custodian 连接的撤销从未
+    // 真正清托管（?. 静默吞掉）—— 本修复使「撤销必证实清除」成立。
+    custodianBridge,
     connectionStore,
     readBackAccount,
     readAccountData,
