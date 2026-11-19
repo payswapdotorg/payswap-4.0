@@ -313,12 +313,38 @@ async function stageWindowsSecureStorage(context) {
   const gate = await execStep(log, process.execPath, ["--test", GATE_TEST], { timeoutMs: 60 * 1000 });
   steps.push({ name: "node --test safe-storage-backend-gate (win32 never calls getSelectedStorageBackend)", code: gate.code });
 
+  // 4) custodian 服务协议探针（ADR-P2-3 硬化回归 —— console 模式私有管道，
+  //    不触生产服务：诊断卫生（合成秘密永不入诊断）、精确映像门（含复制
+  //    helper 拒绝）、敌意客户端界（静默/部分 token/超长行/挂连接后合法
+  //    客户端仍被服务）、持久 push/drop（证实后应答）、客户端退出码契约）。
+  log.append("\n[runner] step: custodian service probe battery (console-mode, private pipe/endpoint/blob/diag)\n");
+  const custodianProbe = await execStep(
+    log,
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts", "payswap", "security", "custodian-service-probe.cjs")],
+    { timeoutMs: 5 * 60 * 1000 },
+  );
+  steps.push({ name: "custodian service probe battery (21 checks: diag hygiene, exact gates, deadlines, durable custody, client contract)", code: custodianProbe.code });
+
+  // 5) custodian 隔离验收探针（ADR-P2-3 §A6 —— meaningful-green：环境必须真实
+  //    含新连接凭据；同用户敌意链（master key → file key → enc:v1 槽）对新鲜
+  //    凭据不可达 + blob EPERM + 未授权管道 get 拒绝 + 复制 helper 注册拒绝 +
+  //    诊断无秘密）。
+  log.append("\n[runner] step: custodian isolation acceptance probe (live SYSTEM service, hostile same-user child)\n");
+  const isolationProbe = await execStep(
+    log,
+    process.execPath,
+    [path.join(REPO_ROOT, "scripts", "payswap", "security", "isolation-probe.cjs")],
+    { timeoutMs: 5 * 60 * 1000 },
+  );
+  steps.push({ name: "custodian isolation acceptance probe (meaningful-green: fresh credential in custody, at-rest recovery blocked, unauthorized RPC refused)", code: isolationProbe.code });
+
   await log.flush();
   return {
     verdict: steps.every((s) => s.code === 0) ? "PASS" : "FAIL",
     steps,
     logPath: log.filePath,
-    note: "DPAPI proof = real Electron runtime round-trip + production key-store law on win32; at-rest ciphertext inspection is carried by the windows-desktop-e2e / stripe-live specs",
+    note: "DPAPI proof = real Electron runtime round-trip + production key-store law on win32; custodian boundary = service probe battery + live isolation probe (fresh credential required, vacuous green impossible)",
   };
 }
 
