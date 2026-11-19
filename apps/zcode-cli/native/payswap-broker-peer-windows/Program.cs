@@ -1688,37 +1688,53 @@ namespace PayswapBrokerPeerHelper
             {
                 // Stripe 需要 TLS 1.2+（.NET Framework 缺省不含 Tls12 —— 显式启用）；
                 // Proxy=null（SYSTEM 下 WPAD/WinHTTP 代理故障是 status 0 的一类根因，
-                // 直连消除该变量）；读写双 30s 界。
+                // 直连消除该变量）；读写双 30s 界。有界重试（≤2 次，500ms 退避）只
+                // 针对「无响应」类传输失败（DNS 瞬断/连接被断）—— 真实 HTTP 应答
+                //（含 4xx/5xx）是权威结局，绝不重试。
                 System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12;
-                var request = (System.Net.HttpWebRequest)System.Net.WebRequest.Create("https://api.stripe.com" + path);
-                request.Method = "GET";
-                request.Headers.Add("Authorization", "Bearer " + key);
-                request.Timeout = 30000;
-                request.ReadWriteTimeout = 30000;
-                request.Proxy = null;
-                request.KeepAlive = false;
-                request.UserAgent = "payswap-custodian";
-                var response = (System.Net.HttpWebResponse)request.GetResponse();
-                string body = new StreamReader(response.GetResponseStream(), System.Text.Encoding.UTF8).ReadToEnd();
-                Diag("custodian:get-status=" + (int)response.StatusCode + " bodyLen=" + body.Length);
-                WritePipeLine(pipe, "{\"v\":1,\"status\":" + (int)response.StatusCode + ",\"body\":\"" + EscapeJson(body) + "\"}");
+                for (int attempt = 1; ; attempt++)
+                {
+                    try
+                    {
+                        var request = (System.Net.HttpWebRequest)System.Net.WebRequest.Create("https://api.stripe.com" + path);
+                        request.Method = "GET";
+                        request.Headers.Add("Authorization", "Bearer " + key);
+                        request.Timeout = 30000;
+                        request.ReadWriteTimeout = 30000;
+                        request.Proxy = null;
+                        request.KeepAlive = false;
+                        request.UserAgent = "payswap-custodian";
+                        var response = (System.Net.HttpWebResponse)request.GetResponse();
+                        string body = new StreamReader(response.GetResponseStream(), System.Text.Encoding.UTF8).ReadToEnd();
+                        Diag("custodian:get-status=" + (int)response.StatusCode + " bodyLen=" + body.Length);
+                        WritePipeLine(pipe, "{\"v\":1,\"status\":" + (int)response.StatusCode + ",\"body\":\"" + EscapeJson(body) + "\"}");
+                        return;
+                    }
+                    catch (System.Net.WebException e)
+                    {
+                        var response = e.Response as System.Net.HttpWebResponse;
+                        if (response != null)
+                        {
+                            string body = new StreamReader(response.GetResponseStream(), System.Text.Encoding.UTF8).ReadToEnd();
+                            Diag("custodian:get-status=" + (int)response.StatusCode);
+                            WritePipeLine(pipe, "{\"v\":1,\"status\":" + (int)response.StatusCode + ",\"body\":\"" + EscapeJson(body) + "\"}");
+                            return;
+                        }
+                        // A2 诊断纪律：只记稳定枚举事实（WebException.Status），不记异常消息。
+                        Diag("custodian:get-network-error status=" + e.Status + " attempt=" + attempt);
+                        if (attempt < 3)
+                        {
+                            Thread.Sleep(500);
+                            continue;
+                        }
+                        WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"network-error\"}");
+                        return;
+                    }
+                }
             }
-            catch (System.Net.WebException e)
+            catch
             {
-                var response = e.Response as System.Net.HttpWebResponse;
-                if (response != null)
-                {
-                    string body = new StreamReader(response.GetResponseStream(), System.Text.Encoding.UTF8).ReadToEnd();
-                    Diag("custodian:get-status=" + (int)response.StatusCode);
-                    WritePipeLine(pipe, "{\"v\":1,\"status\":" + (int)response.StatusCode + ",\"body\":\"" + EscapeJson(body) + "\"}");
-                }
-                else
-                {
-                    // A2 诊断纪律：只记稳定枚举事实（WebException.Status），不记异常
-                    // 消息（消息可含 URL/主机名等不可控内容）。
-                    Diag("custodian:get-network-error status=" + e.Status);
-                    WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"network-error\"}");
-                }
+                WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"network-error\"}");
             }
         }
 

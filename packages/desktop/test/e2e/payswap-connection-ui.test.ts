@@ -472,6 +472,30 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
     );
 
     await submitConnect(VALID_FORMAT_TEST_SECRET, "E2 Stripe Fallback");
+    // 架构分支：ADR-P2-3 custodian-required 路径不触 legacy 键仓（F5 —— 预热跳过
+    //，解包永远不会为保管路径运行）—— 损坏的 legacy 包裹键与 connect 无关，
+    // 托管在场的 lawful 结局是 connected（走托管）；托管缺席时 lawful 结局是
+    // typed custodian_unavailable。legacy 路径保留原 Gate E2 存储 refusal 断言。
+    if (custodianBackedAtRest()) {
+      const custodianNotice = await waitForNotice(
+        (candidate) =>
+          candidate.key === "payswap.connections.result.connected" ||
+          (candidate.key === "payswap.connections.refusal.custodian_unavailable" &&
+            candidate.code === CUSTODIAN_REFUSAL_CODE),
+        "托管在场时损坏 legacy 键不影响 connect —— lawful 结局为 connected（托管）/ custodian_unavailable（托管缺席）",
+      );
+      // at-rest：connected 分支 = 托管保管（本地 store 无本连接槽位；blob 在场）。
+      if (custodianNotice.key === "payswap.connections.result.connected") {
+        const connectionsCustodian = await readTextIfExists(CONNECTIONS_STORE_FILE);
+        expect(connectionsCustodian).toContain("E2 Stripe Fallback");
+        const credentialsCustodian = await readTextIfExists(CREDENTIALS_STORE_FILE);
+        if (credentialsCustodian !== null) {
+          expect(credentialsCustodian).not.toContain(VALID_FORMAT_TEST_SECRET);
+        }
+        expect(existsSync(CUSTODIAN_KEY_BLOB_FILE)).toBe(true);
+      }
+      return;
+    }
     const notice = await waitForNotice(
       (candidate) =>
         candidate.key === "payswap.connections.refusal.secure_storage_unavailable" &&
