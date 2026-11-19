@@ -324,7 +324,7 @@ async function stageWindowsSecureStorage(context) {
     [path.join(REPO_ROOT, "scripts", "payswap", "security", "custodian-service-probe.cjs")],
     { timeoutMs: 5 * 60 * 1000 },
   );
-  steps.push({ name: "custodian service probe battery (26 checks: diag hygiene, exact gates, deadlines, durable custody, client contract, F6 impersonation)", code: custodianProbe.code });
+  steps.push({ name: "custodian service probe battery (28 checks: diag hygiene, exact gates, deadlines, durable custody, client contract, F6 impersonation incl. drop + restart + residual)", code: custodianProbe.code });
 
   // 5) custodian 隔离验收探针（ADR-P2-3 §A6 —— meaningful-green：环境必须真实
   //    含新连接凭据；同用户敌意链（master key → file key → enc:v1 槽）对新鲜

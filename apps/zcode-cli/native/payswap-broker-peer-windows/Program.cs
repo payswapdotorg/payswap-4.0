@@ -1184,10 +1184,24 @@ namespace PayswapBrokerPeerHelper
         private static volatile bool custodianStopping;
         private static readonly object CustodianStateLock = new object();
         private static int registeredMainPid = -1;
+        // A0.5（评审跟进 W2 —— PID 复用）：注册时**保留在册主进程的内核句柄**。
+        // 句柄引用的是「原始进程对象」—— 若该进程退出而 PID 被复用（哪怕复用者
+        // 恰是同一 electron 映像），句柄变为 signaled（进程已死）→ 数据门拒绝。
+        // 仅凭 pid 整数 + 映像路径无法区分「原进程」与「同 pid 同映像的复用者」；
+        // 句柄活性 + pid 相等 + 映像核验三者合取才构成进程实例身份。
+        private static IntPtr registeredMainHandle = IntPtr.Zero;
         private static string custodianKeyHex;
         private static string custodianElectronImage;      // 精确 electron 主进程映像（config image）
         private static string custodianClientHelperImage;  // 精确客户端 helper 映像（config clientHelper）
         private static string custodianUserSid;
+
+        /** 关闭在册主句柄（rebind / 服务停止时；句柄泄漏 = 内核对象滞留）。 */
+        private static void CloseRegisteredMainHandle()
+        {
+            IntPtr existing = registeredMainHandle;
+            registeredMainHandle = IntPtr.Zero;
+            if (existing != IntPtr.Zero) CloseHandle(existing);
+        }
 
         private static int SvcInstall(string[] args)
         {
@@ -1337,6 +1351,8 @@ namespace PayswapBrokerPeerHelper
             protected override void OnStop()
             {
                 custodianStopping = true;
+                // A0.5 W2 纪律：服务停止时释放在册主句柄（进程退出亦会关闭 —— 双保险）。
+                CloseRegisteredMainHandle();
             }
         }
 
@@ -1466,15 +1482,24 @@ namespace PayswapBrokerPeerHelper
            （main/index.ts requestSingleInstanceLock）下，真实桌面在册即拥有服务；
             一个同用户进程用「同映像 electron + 攻击入口脚本」冒充桌面时，其注册
             被拒（在册主未死）。rebind 仅当在册主已死（陈旧注册 —— 应用重启/退
-            出后的新注册）。残留窗口（ADR §A0.3）：服务重启/在册主死亡瞬间的注册
+            出后的新注册）。残留窗口（ADR §A0.3/§A0.5）：服务重启/在册主死亡瞬间的注册
             竞态（先到先得，赢家拿到保管通道直到自身消亡 —— 该竞态的抢注会让真
-            实桌面连接 typed 失败，响亮可见，非静默冒充）。 */
+            实桌面连接 typed 失败，响亮可见，非静默冒充）。
+            在册主的「活着」判定用**保留句柄**（A0.5 W2 —— 句柄引用原始进程对象；
+            PID 复用 → 原对象已死 → 句柄 signaled），不是 pid+映像的重新解析。 */
+        private static bool RegisteredMainAlive()
+        {
+            if (registeredMainPid == -1 || registeredMainHandle == IntPtr.Zero) return false;
+            // WAIT_OBJECT_0 = 进程已退出；WAIT_TIMEOUT = 仍在运行；WAIT_FAILED = 句柄失效（同样视为已死）。
+            return WaitForSingleObject(registeredMainHandle, 0) == 0x00000102 /* WAIT_TIMEOUT */;
+        }
+
         private static bool RegisterGateAllows(int parentPid, string parentImage)
         {
             if (custodianTestGateSubstring != null)
                 return parentImage != null && parentImage.ToLowerInvariant().Contains(custodianTestGateSubstring);
             if (custodianElectronImage == null) return false;
-            if (registeredMainPid != -1 && VerifyProcessImagePath(registeredMainPid, custodianElectronImage))
+            if (RegisteredMainAlive())
             {
                 Diag("custodian:register-alive-exists registered=" + registeredMainPid);
                 return false;
@@ -1482,18 +1507,19 @@ namespace PayswapBrokerPeerHelper
             return VerifyProcessImagePath(parentPid, custodianElectronImage);
         }
 
-        /** 客户端父进程门（数据操作，F6 修复核心）：数据操作只接受 **恰注册的
-            桌面进程**（registered pid + 映像精确 + 活着）。同用户进程用「同映像
-            electron + 攻击入口」冒充桌面时，其 helper 的父 pid ≠ registered
-            pid → 拒绝。多实例放宽已回退 —— 桌面是单实例法（requestSingleInstance
-            Lock），顺序重启的 E2E 实例经「在册主已死 → rebind」路径照常工作。
-            PID 复用防御：映像 + 活性内核核验（复用者映像不符）。 */
+        /** 客户端父进程门（数据操作，F6 修复核心 + A0.5 W2）：数据操作只接受
+            **恰注册的桌面进程实例** —— 三重合取：
+            ① helper 的父 pid == 在册 pid；② **保留句柄仍活跃**（WaitForSingleObject
+            即时探测 —— PID 复用/原进程退出都使句柄 signaled → 拒绝，哪怕复用者
+            恰是同映像 electron）；③ 当前持有该 pid 的进程映像 == config electron
+            全路径（OpenProcess+QueryFullProcessImageName 内核事实）。 */
         private static bool IsAuthorizedCustodianParent(int parentPid, string parentImage)
         {
             if (custodianTestGateSubstring != null)
                 return parentImage != null && parentImage.ToLowerInvariant().Contains(custodianTestGateSubstring);
             if (custodianElectronImage == null) return false;
-            if (parentPid != registeredMainPid || registeredMainPid == -1) return false;
+            if (registeredMainPid == -1 || parentPid != registeredMainPid) return false;
+            if (!RegisteredMainAlive()) return false;
             return VerifyProcessImagePath(parentPid, custodianElectronImage);
         }
 
@@ -1552,8 +1578,20 @@ namespace PayswapBrokerPeerHelper
                     Diag("custodian:register-gate-reject parent=" + parentPid);
                     return;
                 }
-                bool rebind = registeredMainPid != -1 && registeredMainPid != parentPid;
+                // A0.5 W2：保留在册主的内核句柄（SYNCHRONIZE | QueryLimited）——
+                // 进程实例身份的锚。打开失败 = fail-closed（不接受无句柄注册）。
+                IntPtr handle = OpenProcess(
+                    0x00100000 /* SYNCHRONIZE */ | ProcessQueryLimitedInformation,
+                    false, parentPid);
+                if (handle == IntPtr.Zero)
+                {
+                    Diag("custodian:register-handle-failed parent=" + parentPid);
+                    return;
+                }
+                bool rebind = registeredMainPid != -1;
+                CloseRegisteredMainHandle();
                 registeredMainPid = parentPid;
+                registeredMainHandle = handle;
                 Diag((rebind ? "custodian:register-rebind parent=" : "custodian:register-ok parent=") + parentPid);
                 WritePipeLine(pipe, "{\"v\":1,\"ok\":true,\"registered\":" + parentPid + "}");
                 return;

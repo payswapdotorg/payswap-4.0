@@ -244,3 +244,43 @@ model-controlled children (AppContainer spawn for agent processes) — tracked a
 the follow-up Windows security task; until then the same-trust-boundary breakout
 class (debug-injecting the genuine main, winning the restart race) remains
 documented rather than solved.
+
+### A0.5 Amendment 2026-11-19 (review follow-up round 2) — process-instance identity + honest race statement
+
+The second review round accepted the F6 gate but identified two remaining
+weaknesses. Disposition:
+
+1. **PID-reuse (W2) — CLOSED structurally.** `registeredMainPid` alone cannot
+   distinguish the original main from a same-image process that later owns the
+   reused PID. Registration now **retains a kernel handle to the registered main
+   process** (SYNCHRONIZE | QueryLimitedInformation); the data gate requires the
+   retained handle to be **live** (WaitForSingleObject(0) == WAIT_TIMEOUT) in
+   addition to pid equality and the exact-image check. A retained handle
+   references the *original* process object: if the process exits and Windows
+   reuses the PID — even for a process launched from the same configured
+   electron image — the handle signals and every data operation is refused.
+   The handle is opened fail-closed at registration and released on rebind/stop.
+2. **Registration race (W1) — OPEN, documented, loud.** At service start /
+   registered-main death, the first qualifying electron main rebinds first-come-
+   first-served; the service has no kernel-enforced way to distinguish the real
+   desktop from an attacker's electron at that instant (command lines are
+   PEB-rewritable; every same-user protocol proof is replayable). The race is
+   asserted in the probe battery (`f6:residual-rebind-after-genuine-death-
+   expected`) so it cannot silently change. Winning the race is **loud**: the
+   genuine desktop's subsequent connections fail typed (`custodian_unavailable`)
+   and the diag records the rebinding pid. Closing this window requires the
+   OS-level identity separation of recommendation 3 (AppContainer for
+   model-controlled agent children with the pipe ACL designed together) — the
+   tracked Windows security task.
+3. **Battery coverage (W3) — extended to 28 checks**: the F6 case now covers all
+   four custody operations (register/push/get/**drop**) refused while the
+   genuine registration is alive, plus service-restart registration clearing,
+   plus the residual-rebind assertion. The live F6 result JSON now records the
+   service binary identity (deployed path via sc qc + the staged binary's
+   SHA-256 — byte-identical to the deployed copy by the install code path) and
+   the post-fix genuine flow (4/4 with live Stripe 200s).
+
+Live re-verification on the redeployed SYSTEM service (retained-handle binary
+`c670f706…`): the impersonator was refused at all four operations while the
+genuine main was alive; the fresh-main rebind after genuine death succeeded
+(residual visible); the genuine flow re-verified 4/4.

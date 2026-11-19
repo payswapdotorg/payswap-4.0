@@ -1,4 +1,6 @@
 {
+ "verdict": "F6 BLOCKED",
+ "gate": "first-alive-wins registration + retained-handle registered-main instance identity + registered-pid data gate",
  "results": [
   {
    "name": "register (attacker electron rebinds while genuine alive)",
@@ -17,8 +19,8 @@
    "attackSucceeded": false
   }
  ],
- "out": {
-  "pid": 16880,
+ "evil": {
+  "pid": 828,
   "image": "c:\\users\\lenovo\\source\\repos\\payswap-4.0\\node_modules\\electron\\dist\\electron.exe",
   "register": {
    "exit": 70,
@@ -41,5 +43,15 @@
    "err": "custodian_client:gate-refused"
   }
  },
- "rebornOk": true
+ "rebornOk": true,
+ "genuineMain": {
+  "pid": 11024,
+  "registered": true
+ },
+ "serviceIdentity": {
+  "binaryPath": "C:\\ProgramData\\payswap\\svc-bin\\payswap-custodian-svc.exe --svc-run --image C:\\Users\\Lenovo\\source\\repos\\payswap-4.0\\node_modules\\electron\\dist\\electron.exe",
+  "stagedBinarySha256": "C670F706FF22DA8D13FAE4D6C06836479D2CD22411B81D2C1F8E7FC97A6BB6DC",
+  "deployedBy": "svc-install File.Copy of the staged binary (byte-identical); svc-bin copy is SYSTEM+Admins ACL-denied to the same user"
+ },
+ "genuineFlowAfterFix": "4/4 (register/push/get-balance/get-account with live Stripe 200s) — service-mode-harness.cjs, recorded in the TL evidence log"
 }
