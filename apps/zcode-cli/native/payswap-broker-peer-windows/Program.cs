@@ -1126,6 +1126,8 @@ namespace PayswapBrokerPeerHelper
 
         private static int SvcRun(string[] args)
         {
+            diagPath = CustodianProgramDataDir + "\\custodian-diag.log";
+            Diag("custodian:svc-start");
             Dictionary<string, string> parsed = ParseArguments(args);
             custodianElectronImage = RequireArgument(parsed, "--image").ToLowerInvariant();
             custodianHelperImage = System.Reflection.Assembly.GetExecutingAssembly().Location.ToLowerInvariant();
@@ -1271,7 +1273,7 @@ namespace PayswapBrokerPeerHelper
 
         private static void ServeCustodianConnection(NamedPipeServerStream pipe, string token)
         {
-            Console.Error.WriteLine("custodian:serve");
+            
             uint clientPid = 0;
             try
             {
@@ -1280,41 +1282,44 @@ namespace PayswapBrokerPeerHelper
                     clientPid = clientProcessId;
             }
             catch { }
-            Console.Error.WriteLine("custodian:clientPid=" + clientPid);
+            Diag("custodian:clientPid=" + clientPid);
 
             string tokenLine = ReadPipeLine(pipe, 5000);
-            Console.Error.WriteLine("custodian:token=" + (tokenLine == null ? "null" : (tokenLine.Trim() == token ? "match" : "mismatch-len" + tokenLine.Trim().Length)));
+            Diag("custodian:token=" + (tokenLine == null ? "null" : (tokenLine.Trim() == token ? "match" : "mismatch-len" + tokenLine.Trim().Length)));
             if (tokenLine == null || tokenLine.Trim() != token) return;
 
             string opLine = ReadPipeLine(pipe, 8000);
-            Console.Error.WriteLine("custodian:op=" + (opLine == null ? "null" : opLine));
+            Diag("custodian:op=" + (opLine == null ? "null" : opLine));
             if (opLine == null) return;
             string op = ExtractJsonString(opLine, "\"op\":\"");
-            if (op == null) { Console.Error.WriteLine("custodian:op-unparsable"); return; }
+            if (op == null) { Diag("custodian:op-unparsable"); return; }
 
-            // 父链事实：client pid 的父 = main（electron 映像）。所有操作共用此门。
+            // 父链事实：client pid 的父 = main（electron 映像）。register = 映像门
+            //（服务初启无 registered pid —— 首注册以 electron 映像锚定）；数据操作 =
+            // registered pid 精确门（测试缝 = 映像门）。
             int parentPid;
             string parentImage;
-            if (!GetParentProcessInfo((int)clientPid, out parentPid, out parentImage)) { Console.Error.WriteLine("custodian:parent-unavailable"); return; }
-            Console.Error.WriteLine("custodian:parent=" + parentPid + " image=" + parentImage);
-            if (!IsAuthorizedCustodianParent(parentPid, parentImage)) { Console.Error.WriteLine("custodian:gate-reject"); return; }
-
+            if (!GetParentProcessInfo((int)clientPid, out parentPid, out parentImage)) { Diag("custodian:parent-unavailable"); return; }
+            Diag("custodian:parent=" + parentPid + " image=" + parentImage);
+            string parentLower = parentImage == null ? "" : parentImage.ToLowerInvariant();
             if (op == "register")
             {
-                // 注册 = 自报内核父 pid（client 用 TOOLHELP 查自己的父）+ electron 映像门
-                //（父映像由服务用 QueryFullProcessImageName 核验 —— 线上声明不参与）。
+                bool imageOk = parentLower.Contains("electron.exe") ||
+                    (custodianTestGateSubstring != null && parentLower.Contains(custodianTestGateSubstring));
+                if (!imageOk) { Diag("custodian:register-gate-reject"); return; }
                 registeredMainPid = parentPid;
                 WritePipeLine(pipe, "{\"v\":1,\"ok\":true,\"registered\":" + parentPid + "}");
                 return;
             }
-            // 生产 = registered pid 精确门；测试缝（MSYS fork 使父 pid 不稳定）= 映像门。
-            if (custodianTestGateSubstring == null && parentPid != registeredMainPid)
-            { Console.Error.WriteLine("custodian:not-registered-parent pid=" + parentPid); return; }
+            bool dataOk = custodianTestGateSubstring != null
+                ? parentLower.Contains(custodianTestGateSubstring)
+                : parentPid == registeredMainPid && parentLower.Contains("electron.exe");
+            if (!dataOk) { Diag("custodian:data-gate-reject pid=" + parentPid); return; }
 
             if (op == "push")
             {
                 string key = ExtractJsonString(opLine, "\"key\":\"");
-                if (key == null || key.Length < 64) { Console.Error.WriteLine("custodian:push-shape-invalid len=" + (key == null ? -1 : key.Length)); return; }
+                if (key == null || key.Length < 64) { Diag("custodian:push-shape-invalid len=" + (key == null ? -1 : key.Length)); return; }
                 lock (CustodianStateLock) { custodianKeyHex = key; }
                 try
                 {
@@ -1322,8 +1327,8 @@ namespace PayswapBrokerPeerHelper
                     byte[] blob = CryptProtectBytes(plain);
                     File.WriteAllBytes(CustodianKeyBlobFile, blob);
                 }
-                catch (Exception e) { Console.Error.WriteLine("custodian:blob-write-failed " + e.Message); }
-                Console.Error.WriteLine("custodian:push-ok len=" + key.Length);
+                catch (Exception e) { Diag("custodian:blob-write-failed " + e.Message); }
+                Diag("custodian:push-ok len=" + key.Length);
                 WritePipeLine(pipe, "{\"v\":1,\"ok\":true}");
                 return;
             }
@@ -1340,10 +1345,10 @@ namespace PayswapBrokerPeerHelper
             {
                 string path = ExtractJsonString(opLine, "\"path\":\"");
                 if (path == null) return;
-                if (!CustodianAllowedPaths.Split('|').Contains(path.Split('?')[0])) { Console.Error.WriteLine("custodian:get-path-not-allowed " + path); return; }
+                if (!CustodianAllowedPaths.Split('|').Contains(path.Split('?')[0])) { Diag("custodian:get-path-not-allowed " + path); return; }
                 string key;
                 lock (CustodianStateLock) { key = custodianKeyHex; }
-                if (key == null) { Console.Error.WriteLine("custodian:get-no-key"); WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"no-key\"}"); return; }
+                if (key == null) { Diag("custodian:get-no-key"); WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"no-key\"}"); return; }
                 try
                 {
                     // Stripe 需要 TLS 1.2+（.NET Framework 缺省不含 Tls12 —— 显式启用）。
@@ -1354,7 +1359,7 @@ namespace PayswapBrokerPeerHelper
                     request.Timeout = 30000;
                     var response = (System.Net.HttpWebResponse)request.GetResponse();
                     string body = new StreamReader(response.GetResponseStream(), System.Text.Encoding.UTF8).ReadToEnd();
-                    Console.Error.WriteLine("custodian:get-status=" + (int)response.StatusCode + " bodyLen=" + body.Length);
+                    Diag("custodian:get-status=" + (int)response.StatusCode + " bodyLen=" + body.Length);
                     WritePipeLine(pipe, "{\"v\":1,\"status\":" + (int)response.StatusCode + ",\"body\":\"" + EscapeJson(body) + "\"}");
                 }
                 catch (System.Net.WebException e)
@@ -1367,13 +1372,13 @@ namespace PayswapBrokerPeerHelper
                     }
                     else
                     {
-                        Console.Error.WriteLine("custodian:get-network-error " + e.Message);
+                        Diag("custodian:get-network-error " + e.Message);
                         WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"network-error\"}");
                     }
                 }
                 return;
             }
-            Console.Error.WriteLine("custodian:op-unknown " + op);
+            Diag("custodian:op-unknown " + op);
         }
 
         private static string EscapeJson(string value)

@@ -522,3 +522,88 @@ The helper now carries the full ADR-P2-3 custodian (system service + client mode
 - Remaining: --svc-install elevated step (service mode replacing console
   mode), evidence §10.3, formal runner re-run on the isolated build, TL
   design sign-off on the amended ADR (custodian helper).
+
+---
+
+# ⚠️ TAKEOVER HANDOFF — CUSTODIAN SERVICE (2026-11-19, mid-flight — READ FIRST)
+
+> **A new TL picking this up starts HERE.** The hardening milestone
+> (owner disposition: hardening = P2-Windows blocker) is mid-implementation.
+> Everything functional is done and evidenced (see §9/§9.1); the custodian
+> service is implemented, compiled, staged, console-protocol-verified, and
+> **installed + RUNNING as SYSTEM** — but the service-mode read chain fails at
+> one diagnosed point (§H-3 below). The Diag instrumentation to finish the
+> diagnosis is in the working tree (uncommitted), staged binary matches.
+
+## H-1. Where the hardening stands
+
+| Piece | State |
+|---|---|
+| Restricted-token layer | REJECTED (win32 1314 — documented in ADR-P2-3 §2 first-attempt) |
+| Custodian service (`--svc-run`) | **RUNNING as SYSTEM** (service `PayswapCustodianSvc`, demand-start) |
+| Console-mode protocol test | GREEN: register → push (rotated key via stdin) → get /v1/balance → **HTTP 200 live body** |
+| Service-mode connect | ✓ (UI connect pushed the key through the helper client; row Connected) |
+| Service-mode read | ✗ FAILS: status 0 ("no-key" or "network-error") → 502 to the adapters |
+| RED isolation gate | `scripts/payswap/security/isolation-probe.cjs` — RED on the two historical dead-key slots; for FRESH custodian connections there is **no slot to recover** (in-session chain closed at the file layer) |
+| TS seam | LANDED (`225ac529`): marker-routed apiClient + custodian credential port (save=push, load=marker w/ sk_test_ prefix, delete=no-op) + revoke drop |
+| Call-site AST law | LANDED (3/3) |
+| ADR | `adr-P2-3-credential-isolation.md` (amended: restricted-token rejected, custodian accepted) |
+
+## H-2. Live artifacts
+
+- Service: `PayswapCustodianSvc` (WIN32_OWN_PROCESS, SYSTEM, demand-start)
+- Config: `C:\ProgramData\payswap\custodian-config.json` (electron image + Lenovo SID + helper path)
+- Endpoint: `C:\ProgramData\payswap\custodian-endpoint.json` (pipe `payswap-custodian-v1` + per-start token)
+- Key blob: `C:\ProgramData\payswap\custodian-key.bin` — **ABSENT** (the service-mode push never landed — see H-3)
+- Isolated dev home: `ZCODE_DATA_BASE_DIR=C:\Users\Lenovo\payswap-dev-data`; launcher
+  `C:\Users\Lenovo\payswap-dev-launch.cmd`; connection row 5aaa40b4-era Connected (custodian custody, no slot)
+- Rotated key: `C:\Users\Lenovo\.payswap-live.env` (suffix …hi17co; all five endpoints 200)
+
+## H-3. The open failure (diagnosed to one point)
+
+Service-mode `get` returns `{status:0,…}` → the runtime wrapper maps 0→502 → the
+adapters see 502 → unavailable. Two candidate causes, distinguishable by the Diag
+file that is now wired into the uncommitted Program.cs
+(`C:\ProgramData\payswap\custodian-diag.log`, SYSTEM-writable):
+- **no-key**: the connect-time push (helper client spawned by main → parent =
+  electron main = registered pid ✓) reached the service but the blob write or
+  memory store failed silently, OR the push never happened because the bridge
+  creation (register spawnSync) failed → bridge undefined → legacy port → but
+  then the connect would have written an enc:v1 slot — **it did not** (slot count
+  stayed 2) → the custodian port WAS active → the push path ran → the service
+  received the register (its diag will show the register's parent==electron image)
+- **network-error**: HttpWebRequest under SYSTEM failing TLS/proxy — Tls12 is set
+  per-request; SYSTEM has full network.
+
+The push DID reach the pipe in console mode (protocol test green with the same
+binary). The service-mode delta = SYSTEM identity + no console. Note the blob
+absence: the push handler writes it in a try/catch whose Diag will say which.
+
+## H-4. Exact next steps for the taking-over TL
+
+1. Commit the working tree (Program.cs custodian service + Diag wiring + prepare
+   script System.ServiceProcess reference — compiled clean, staged, sha of the
+   staged binary in `bundled-tools/.../manifest.json`; bundled-tools/ is gitignored).
+2. Recompile: `node apps/zcode-cli/packages/cli/scripts/prepare-payswap-broker-peer-helper.mjs`
+   (from `packages/desktop`); kill stale helpers first (EPERM on unlink if running).
+3. Restart the service (elevated): `sc stop PayswapCustodianSvc && sc start PayswapCustodianSvc`.
+4. Launch the dev app (isolated home launcher), UI-connect (fill-key.js +
+   click-connect via CDP — the scripts are in the handoff workspace), then read
+   `C:\ProgramData\payswap\custodian-diag.log`: the register/push/get decision
+   lines pinpoint the failure (no-key vs network-error vs gate-reject).
+5. Fix per diag; then the acceptance: isolation-probe GREEN-or-RED-per-H-1 +
+   New Task four-category read + five-stage runner re-run + evidence §10.3.
+6. The TS seam needs NO further work (runtime/wiring/bridge all landed and
+   typechecked; batteries 31/31).
+
+## H-5. Honest scope notes
+
+- The service-mode register gate was restructured (register = electron image
+  anchor; data ops = registered-pid + electron image) — re-tested in console
+  mode after the restructure: register/push/get all green.
+- The probe's at-rest RED persists on historical dead-key tombstones by design
+  (documented in §10.2); fresh custodian connections have no slot to recover.
+- The formal runner/receipt (§9.1) ran on the LEGACY path; a re-run on the
+  custodian path is part of the closure evidence after the fix.
+- The dev app renderer occasionally needs the Cancel-auth-gate CDP click after
+  restarts (isolated home quirk, cosmetic).
