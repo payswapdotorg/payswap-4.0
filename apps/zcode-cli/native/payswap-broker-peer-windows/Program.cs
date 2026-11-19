@@ -1343,7 +1343,9 @@ namespace PayswapBrokerPeerHelper
         private static void CustodianServeLoop()
         {
             // SYSTEM-wrapped 密钥 blob 自举（跨重启持久； SYSTEM DPAPI 自解）。形状
-            // 法则：恰 64 hex —— 否则不采用（fail-closed 保留现场；推送会原子覆盖）。
+            // 法则：64..512 可打印 ASCII（与 push 同一 PlausibleSecretKey 法则 ——
+            // 旧「恰 64 hex」从未被真实验证过：blob 持久化本身一直是坏的）。否则不
+            // 采用（fail-closed 保留现场；推送会原子覆盖）。
             try
             {
                 if (File.Exists(custodianActiveKeyBlobFile))
@@ -1351,14 +1353,14 @@ namespace PayswapBrokerPeerHelper
                     byte[] blob = File.ReadAllBytes(custodianActiveKeyBlobFile);
                     byte[] plain = CryptUnprotectBytes(blob);
                     string hex = System.Text.Encoding.UTF8.GetString(plain);
-                    if (hex.Length == 64 && IsHexToken(hex))
+                    if (IsPlausibleSecretKey(hex))
                     {
                         lock (CustodianStateLock) { custodianKeyHex = hex; }
-                        Diag("custodian:bootstrap-key-restored");
+                        Diag("custodian:bootstrap-key-restored len=" + hex.Length);
                     }
                     else
                     {
-                        Diag("custodian:bootstrap-blob-invalid");
+                        Diag("custodian:bootstrap-blob-invalid len=" + hex.Length);
                     }
                 }
             }
@@ -1434,6 +1436,19 @@ namespace PayswapBrokerPeerHelper
                     security);
             }
             catch { return null; }
+        }
+
+        /** 密钥形状法则（push 与 bootstrap 共用 —— 单一事实源）：64..512 可打印
+            ASCII（Stripe 受限键形态；无控制字符/空白 —— 带这些字符的输入不是
+            provider 密钥，fail-closed）。 */
+        private static bool IsPlausibleSecretKey(string value)
+        {
+            if (value == null || value.Length < 64 || value.Length > 512) return false;
+            foreach (char c in value)
+            {
+                if (c < 0x21 || c > 0x7E) return false;
+            }
+            return true;
         }
 
         /** 客户端映像门：连接进程 == config clientHelper 全路径（精确，非子串）。
@@ -1546,7 +1561,7 @@ namespace PayswapBrokerPeerHelper
         private static void ServeCustodianPush(NamedPipeServerStream pipe, string opLine)
         {
             string key = ExtractJsonString(opLine, "\"key\":\"");
-            if (key == null || key.Length < 64 || key.Length > 512)
+            if (!IsPlausibleSecretKey(key))
             {
                 Diag("custodian:push-shape-invalid len=" + (key == null ? -1 : key.Length));
                 WritePipeLine(pipe, "{\"v\":1,\"ok\":false,\"error\":\"shape-invalid\"}");

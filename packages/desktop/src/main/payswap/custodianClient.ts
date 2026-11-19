@@ -32,10 +32,11 @@ import { resolvePayswapBrokerPeerHelperSupply } from "./brokerPeerHelperSupply.j
 const CUSTODIAN_ENDPOINT_FILE = "C:\\ProgramData\\payswap\\custodian-endpoint.json";
 const CLIENT_TIMEOUT_MS = 45_000;
 
-/** helper 客户端稳定退出码（与 Program.cs 契约逐字对应）。 */
+/** helper 客户端稳定退出码（与 Program.cs 契约逐字对应）。
+ *  0=成功；70=门拒；71=服务不可达；72=协议失败/未证实；其它=spawn 超时/内部
+ *  错误 —— 桥面把一切非零统一映射 typed custodian_unavailable（A5/F3 收口）。 */
 const EXIT_GATE_REFUSED = 70;
 const EXIT_SERVICE_UNREACHABLE = 71;
-const EXIT_PROTOCOL_FAILED = 72;
 
 function resolveHelperPath(): string | null {
   const supply = resolvePayswapBrokerPeerHelperSupply();
@@ -165,7 +166,10 @@ export function provisionDesktopCustodianBridge(
       const attempt = executeDataOp(helperPath, clientArgs, run, ["--custodian-push"], {
         stdin: key,
       });
-      if (attempt.exitCode === EXIT_GATE_REFUSED || attempt.exitCode === EXIT_SERVICE_UNREACHABLE || attempt.exitCode === EXIT_PROTOCOL_FAILED) {
+      if (attempt.exitCode !== 0) {
+        // A5/F3 税法收口：任何非零退出（门拒 70 / 不可达 71 / 协议失败 72 /
+        // spawn 超时或 helper 内部错误）一律映射 typed custodian_unavailable
+        // —— 绝不把非 0/70/71/72 的结局掉进通用 malformed-reply 词汇。
         throw createPayswapCustodianUnavailableError(
           "custodian push failed (exit=" + attempt.exitCode + " reason=" + attempt.stderr.trim() + ")",
         );
@@ -194,6 +198,7 @@ export function provisionDesktopCustodianBridge(
     async drop(): Promise<void> {
       const attempt = executeDataOp(helperPath, clientArgs, run, ["--custodian-drop"]);
       if (attempt.exitCode !== 0) {
+        // A5/F3 同款收口：非零退出一律 typed（撤销不谎报成功）。
         throw createPayswapCustodianUnavailableError(
           "custodian drop failed (exit=" + attempt.exitCode + " reason=" + attempt.stderr.trim() + ")",
         );
