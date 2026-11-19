@@ -1461,29 +1461,39 @@ namespace PayswapBrokerPeerHelper
             return VerifyProcessImagePath(clientPid, custodianClientHelperImage);
         }
 
-        /** 注册门：父进程映像 == config electron 全路径（A4 —— Contains("electron.exe")
-            已废除；相似名/复制的 electron 不再是门）。映像查询成功 = 进程活着的副产品。 */
+        /** 注册门（含 first-alive-wins，F6 修复）：父映像 == config electron 全路径
+            且父进程活着；**在册主进程存活时拒绝 rebind** —— 单实例桌面法则
+           （main/index.ts requestSingleInstanceLock）下，真实桌面在册即拥有服务；
+            一个同用户进程用「同映像 electron + 攻击入口脚本」冒充桌面时，其注册
+            被拒（在册主未死）。rebind 仅当在册主已死（陈旧注册 —— 应用重启/退
+            出后的新注册）。残留窗口（ADR §A0.3）：服务重启/在册主死亡瞬间的注册
+            竞态（先到先得，赢家拿到保管通道直到自身消亡 —— 该竞态的抢注会让真
+            实桌面连接 typed 失败，响亮可见，非静默冒充）。 */
         private static bool RegisterGateAllows(int parentPid, string parentImage)
         {
             if (custodianTestGateSubstring != null)
                 return parentImage != null && parentImage.ToLowerInvariant().Contains(custodianTestGateSubstring);
             if (custodianElectronImage == null) return false;
+            if (registeredMainPid != -1 && VerifyProcessImagePath(registeredMainPid, custodianElectronImage))
+            {
+                Diag("custodian:register-alive-exists registered=" + registeredMainPid);
+                return false;
+            }
             return VerifyProcessImagePath(parentPid, custodianElectronImage);
         }
 
-        /** 客户端父进程门（数据操作）：测试缝 = 父映像子串（仅 console 模式可达）；
-            生产 = 父进程是「真实 desktop 级客户端」—— 恰配置 electron 全路径映像 +
-            进程活着（OpenProcess+QueryFullProcessImageName 内核事实，PID 复用由映像
-            核验拦截）。registered pid 保持为注册握手的锚与诊断事实；数据操作按
-            desktop 级身份放行 —— 多实例桌面（双窗口 / E2E 顺序引导）各自是同一
-            custodian 的合法客户端，单注册绑定会在实例更替时饿死合法客户端。
-            A4 攻击类全部仍被拦：not-electron / 不同 electron 可执行 / 复制 helper /
-            陈旧 pid（复用者映像不符）—— 门是映像精确性 + 活性，不是 pid 记账。 */
+        /** 客户端父进程门（数据操作，F6 修复核心）：数据操作只接受 **恰注册的
+            桌面进程**（registered pid + 映像精确 + 活着）。同用户进程用「同映像
+            electron + 攻击入口」冒充桌面时，其 helper 的父 pid ≠ registered
+            pid → 拒绝。多实例放宽已回退 —— 桌面是单实例法（requestSingleInstance
+            Lock），顺序重启的 E2E 实例经「在册主已死 → rebind」路径照常工作。
+            PID 复用防御：映像 + 活性内核核验（复用者映像不符）。 */
         private static bool IsAuthorizedCustodianParent(int parentPid, string parentImage)
         {
             if (custodianTestGateSubstring != null)
                 return parentImage != null && parentImage.ToLowerInvariant().Contains(custodianTestGateSubstring);
             if (custodianElectronImage == null) return false;
+            if (parentPid != registeredMainPid || registeredMainPid == -1) return false;
             return VerifyProcessImagePath(parentPid, custodianElectronImage);
         }
 
