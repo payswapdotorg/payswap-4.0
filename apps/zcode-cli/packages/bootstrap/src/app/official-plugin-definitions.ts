@@ -310,7 +310,7 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
   {
     defaultEnabled: true,
     name: "plugin-creator",
-    version: "0.1.1",
+    version: "0.2.0",
     listing: {
       author: ZAI_AUTHOR,
       category: "utilities",
@@ -333,9 +333,18 @@ export const OFFICIAL_PLUGIN_DEFINITIONS: readonly OfficialPluginDefinition[] = 
       "skills/plugin-creator/scripts/marketplace-files.mjs",
       "skills/plugin-creator/scripts/upsert-dev-marketplace.mjs",
       "skills/plugin-creator/scripts/scaffold-files.mjs",
+      "skills/plugin-creator/scripts/scaffold-official-plugin.mjs",
       "skills/plugin-creator/scripts/validate-plugin.mjs",
+      "skills/plugin-creator/scripts/official-plugin-audit.mjs",
       "skills/plugin-creator/references/plugin-json-spec.md",
       "skills/plugin-creator/references/installing-and-updating.md",
+      "skills/plugin-creator/references/official-plugin-lifecycle.md",
+      "skills/plugin-creator/references/official-plugin-definition.md",
+      "skills/plugin-creator/references/host-broker-integration.md",
+      "skills/plugin-creator/references/workspace-plugin-security.md",
+      "skills/plugin-creator/references/production-launch-testing.md",
+      "skills/plugin-creator/references/ui-surface-integration.md",
+      "skills/plugin-creator/references/payswap-reference-pattern.md",
     ],
   },
   {

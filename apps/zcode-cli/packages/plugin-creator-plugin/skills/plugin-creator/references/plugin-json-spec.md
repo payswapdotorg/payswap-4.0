@@ -66,3 +66,7 @@ Scaffold components are selected with `--with-skills`, `--with-mcp`, `--with-hoo
 These helpers prepare files only. Their use does not authorize registration or installation. If Node is unavailable, use file tools and the manifest/catalog examples above; asking the user to install Node is not part of this handoff.
 
 Fields and conventions from other plugin formats, such as `interface`, availability/authentication `policy`, `.app.json`, implicit `~/.agents/plugins/marketplace.json` discovery and custom-scheme handoff links, are not this workflow's contract. Use ZCode's format, and distinguish source inspection from any schema/runtime validation actually performed.
+
+## Official plugin manifests (Profiles 2/3)
+
+Official manifests additionally use `mcpServers.<key>.isolation: "workspace"` (honored only for official plugins), `ui.surfaces[]` panel declarations, and `userConfig` options (a boolean with `default: false` is the opt-in gate; `${user_config.<key>}` injects it into the server env). `${ZCODE_PLUGIN_ROOT}` is the official token for the runtime plugin location. These fields, their validation rules and the consent laws are specified in [official-plugin-lifecycle.md](official-plugin-lifecycle.md), [ui-surface-integration.md](ui-surface-integration.md) and [workspace-plugin-security.md](workspace-plugin-security.md); `scripts/scaffold-official-plugin.mjs` generates a conforming manifest and `scripts/official-plugin-audit.mjs` verifies it.
