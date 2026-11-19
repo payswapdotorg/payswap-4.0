@@ -1455,6 +1455,8 @@ const zhCN: Record<string, string> = {
   "payswap.connections.refusal.read_back_unavailable": "无法访问服务商完成凭据验证，连接状态保持不变。",
   "payswap.connections.refusal.secure_storage_unavailable":
     "本设备的安全凭据存储不可用，无法存储任何支付密钥。请启用系统钥匙串（safeStorage）后重试。",
+  "payswap.connections.refusal.custodian_unavailable":
+    "PaySwap 凭据托管服务不可用，无法在此设备存储或使用支付密钥。请安装或启动托管服务后重试。",
   "payswap.connections.channel_error.malformed_request": "请求在到达连接服务前被拒绝。",
   "payswap.connections.channel_error.internal_error": "连接服务发生内部错误。",
   "browser.title": "浏览器",

@@ -328,18 +328,48 @@ export function mintPayswapConnectionId(): string {
  * - 存储 fail-closed 逐字复用 Gate E2 常量（addendum §5.2「typed error surfaced
  *   in the connection UI」—— 连接 UI 按 code 分流，永不匹配 message）；
  * - `read_back_unavailable` = 读回无法完成（端口缺席/传输失败/畸形结局/秘密缺失）
- *   —— unknown ≠ expired，状态不变（fail-closed 不猜）。
+ *   —— unknown ≠ expired，状态不变（fail-closed 不猜）；
+ * - `custodian_unavailable` = ADR-P2-3 custodian-required 路径上托管缺席/拒绝
+ *   （服务未安装/未运行/注册或推送被拒）—— 绝不静默回退 legacy 凭据存储；
+ *   连接/撤销按 typed refusal 呈现，操作员处置（装服务/重连）。
  */
 export type PayswapAccountRefusalCode =
   | "validation_failed"
   | "unsupported_provider"
   | "unknown_connection"
   | "read_back_unavailable"
-  | typeof PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE_CODE;
+  | typeof PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE_CODE
+  | typeof PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE;
 
 /** 账户服务存储 fail-closed 拒绝码（Gate E2 常量的单一事实源再导出）。 */
 export const PAYSWAP_ACCOUNT_SECURE_STORAGE_REFUSAL_CODE =
   PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE_CODE;
+
+/** 账户服务 custodian fail-closed 拒绝码（ADR-P2-3 —— 托管缺席的 typed 词）。 */
+export const PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE = "custodian_unavailable" as const;
+
+export interface PayswapAccountCustodianUnavailableError extends Error {
+  code: typeof PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE;
+}
+
+/** custodian 托管缺席 typed 错误（runtime 的 refusing port / custodian 桥抛出）。 */
+export function createPayswapCustodianUnavailableError(
+  message: string,
+): PayswapAccountCustodianUnavailableError {
+  return Object.assign(new Error(message), {
+    code: PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE,
+  });
+}
+
+export function isPayswapCustodianUnavailableError(
+  error: unknown,
+): error is PayswapAccountCustodianUnavailableError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE
+  );
+}
 
 export interface PayswapAccountRefusal {
   readonly code: PayswapAccountRefusalCode;

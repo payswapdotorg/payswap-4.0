@@ -19,7 +19,10 @@
  */
 
 export {
+  createCustodianRequiredRefusingCredentialPort,
   createPayswapAccountService,
+  createPayswapCustodianUnavailableError,
+  CUSTODIAN_SECRET_MARKER,
   type PayswapAccountCredentialPort,
   type PayswapAccountService,
   type PayswapAccountServiceDependencies,

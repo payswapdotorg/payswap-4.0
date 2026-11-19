@@ -294,7 +294,7 @@ import {
   installPluginSandboxHost,
 } from "./pluginSandbox/index.js";
 import { installDesktopPayswapApproval, installDesktopPayswapConnections } from "./payswap/index.js";
-import { createDesktopCustodianBridge } from "./payswap/custodianClient.js";
+import { provisionDesktopCustodianBridge } from "./payswap/custodianClient.js";
 import { buildPayswapReaderBridgeSpawnOptions } from "./payswap/readerBridgeSpawnOptions.js";
 
 registerLocalMediaPreviewScheme(protocol, [
@@ -2193,12 +2193,27 @@ app.whenReady().then(async () => {
   // fail-closed，不可信发送者 typed unauthorized_origin，载荷不解析）。预热在设置
   // 引导（setDataBaseDir）之后进行 —— 键文件路径解析依赖 CLI 数据根（ADR-P2-2
   // 附录 C pin）。连接 UI 住设置页 payswap 分区（桌面专属）。
+  // ADR-P2-3 fail-closed 装配：Windows = custodian-required（托管缺席/门拒 =
+  // typed `custodian_unavailable` 拒绝 —— 绝不静默回退 legacy enc:v1 槽）；
+  // 其余平台 = 既有平台特定架构（legacy 直接路径不变）。桥只在注册握手成功
+  // 时注入（活性 = 服务真活着，不是陈旧端点文件）。
+  const custodianProvisioning = provisionDesktopCustodianBridge();
+  if (custodianProvisioning.state === "inactive") {
+    logger.warn(
+      "[payswap] custodian provisioning inactive (" +
+        custodianProvisioning.reason +
+        "): " +
+        custodianProvisioning.detail,
+    );
+  }
   const payswapConnectionsInstallation = installDesktopPayswapConnections({
     getMainWindowFrameUrl: () =>
       getApplicationWindowsExcludingCuaIndicator()[0]?.webContents.getURL() ?? "",
-    // ADR-P2-3：custodian 服务在位 → 密钥只入托管（桥缺席 = 既有直接路径不变）。
     runtimeDependencies: {
-      custodianBridge: createDesktopCustodianBridge() ?? undefined,
+      ...(custodianProvisioning.state === "active"
+        ? { custodianBridge: custodianProvisioning.bridge }
+        : {}),
+      credentialCustody: process.platform === "win32" ? "custodian-required" : "legacy",
     },
     onWarmupError: (error) => {
       logger.warn("[payswap] connection key warmup failed (fail-safe, empty env):", error);

@@ -31,6 +31,7 @@ import type {
 import { createCredentialService } from "../credential/credentialService.js";
 import {
   CUSTODIAN_SECRET_MARKER,
+  createCustodianRequiredRefusingCredentialPort,
   createPayswapAccountService,
   type PayswapAccountCredentialPort,
   type PayswapCustodianBridge,
@@ -52,8 +53,18 @@ export interface PayswapAccountRuntimeDependencies {
   now?(): string;
   /** 连接 ID 铸造（缺省 = shared 法则）。 */
   mintConnectionId?(): string;
-  /** ADR-P2-3 custodian 桥（在位 = 密钥只入托管；缺席 = 既有直接路径不变）。 */
+  /** ADR-P2-3 custodian 桥（在位 = 密钥只入托管；缺席 = 见 credentialCustody）。 */
   custodianBridge?: PayswapCustodianBridge;
+  /**
+   * ADR-P2-3 凭据保管政策（缺省 "legacy" = 既有直接路径不变）：
+   * - "legacy"：桥缺席 → legacy 凭据端口（既有行为；Linux/测试臂）。
+   * - "custodian-required"（Windows secured 路径）：托管缺席/注册被拒 →
+   *   refusing 凭据端口（typed `custodian_unavailable` 拒绝）—— **绝不静默
+   *   回退 legacy enc:v1 槽**；结构上不存在写入路径（fail-closed）。delete
+   *   例外转发 legacy 删除（只删不写）：撤销永远可用并清理策略前残留。
+   *   桥在位 → custodian 端口（push=save、load=标记、delete=legacy 清理）。
+   */
+  credentialCustody?: "legacy" | "custodian-required";
 }
 
 /**
@@ -102,14 +113,16 @@ export function createPayswapAccountRuntime(
   dependencies: PayswapAccountRuntimeDependencies = {},
 ): PayswapAccountRuntime {
   const env = dependencies.env ?? process.env;
-  const credentialPort = createCredentialService({ env });
-  const connectionStore = createPayswapConnectionRecordStore({
-    resolveStorePath: dependencies.resolveStorePath,
-  });
   const custodianBridge = dependencies.custodianBridge;
+  const custodianRequired = dependencies.credentialCustody === "custodian-required";
+  // legacy 凭据服务仅剩两用途：custodian-required 下 delete-only 撤销清理；
+  // legacy 政策下的完整端口。custodian-required 下 load/save 永不触达它 ——
+  // 不存在「托管缺席 → legacy 写入」的路径（A3 fail-closed，结构保证）。
+  const legacyCredentialPort = createCredentialService({ env });
   // ADR-P2-3 custodian 凭据端口：save = push（connect 时恰一次，密钥入托管）；
-  // load = 占位标记（读取经标记路由 transport 转发托管代理）；delete = no-op
-  //（托管清除走 revoke 分支的 drop）。在位时 main 全程不持明文、不落 enc:v1 槽。
+  // load = 占位标记（读取经标记路由 transport 转发托管代理）；delete = legacy
+  // 删除（只删不写 —— 撤销清理 + 策略前残留清理；托管清除走 revoke 的 drop）。
+  // 在位时 main 全程不持明文、不落 enc:v1 槽。
   const custodianCredentialPort: PayswapAccountCredentialPort = custodianBridge
     ? {
         // 占位密钥带 sk_test_ 前缀：adapter 的 mode 推导（derivePayswapSecretKeyMode）
@@ -118,9 +131,16 @@ export function createPayswapAccountRuntime(
         save: async (_key, value) => {
           await custodianBridge.push(value);
         },
-        delete: async () => {},
+        delete: (key) => legacyCredentialPort.delete(key),
       }
-    : credentialPort;
+    : custodianRequired
+      ? createCustodianRequiredRefusingCredentialPort({
+          deleteOnlyDelete: (key) => legacyCredentialPort.delete(key),
+        })
+      : legacyCredentialPort;
+  const connectionStore = createPayswapConnectionRecordStore({
+    resolveStorePath: dependencies.resolveStorePath,
+  });
   // ADR-P2-3：custodian 在位 → apiClient 包装为标记路由 transport —— 携占位
   // Bearer（"custodian-managed"）的 GET 转发托管代理（服务端补真 Bearer + 路径
   // 闭集 + pid 门）；其余 fetch 原样（行为不变）。代理应答以 status/body 重铸
