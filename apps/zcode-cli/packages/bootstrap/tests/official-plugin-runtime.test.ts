@@ -64,8 +64,11 @@ describe("official plugin runtime manifest", () => {
     writeOfficialPluginRuntimeManifest(input);
     const contents = await readFile(manifestPath, "utf8");
     const manifest = JSON.parse(contents);
-    expect(manifest.mcpServers.pdf.args.slice(-2)).toEqual([
-      join(root, "dist/server.mjs"),
+    // Windows 启动清单契约：${ZCODE_PLUGIN_ROOT} 替换后的入口以正斜杠拼接
+    //（plugin.json 的 JSON 移植形态；node 两种分隔符都接受）。按分隔符归一比较。
+    const posixPath = (value: string): string => value.replace(/\\/g, "/");
+    expect(manifest.mcpServers.pdf.args.slice(-2).map(posixPath)).toEqual([
+      posixPath(join(root, "dist/server.mjs")),
       "--flag",
     ]);
     expect(manifest.mcpServers.pdf.env.ELECTRON_RUN_AS_NODE).toBe("1");

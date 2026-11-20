@@ -171,10 +171,13 @@ describe("payswap production host launch (real zcode.cjs entrypoint + __zcode-pl
     });
     // 生产命令逐字钉死：node <workspace 构建的 zcode.cjs> __zcode-plugin-host <缓存 server.mjs>。
     // 前缀必须就是真实 CLI 入口（不是 vitest 入口），派发标记必须来自 contracts 常量。
-    expect(mcp.args).toEqual([
-      cliEntry,
+    // Windows 启动清单契约：server 入口以正斜杠拼接（plugin.json 的 JSON 移植形态；
+    // node 两种分隔符都接受 —— 本文件的 stdio 行为面测试已证明）。按分隔符归一比较。
+    const posixPath = (value: string): string => value.replace(/\\/g, "/");
+    expect(mcp.args.map(posixPath)).toEqual([
+      posixPath(cliEntry),
       ZCODE_PLUGIN_HOST_COMMAND,
-      join(payswapCacheRoot, "dist", "server.mjs"),
+      posixPath(join(payswapCacheRoot, "dist", "server.mjs")),
     ]);
     // 解析器权威 env：opt-in 臂（默认 false）、插件身份、缓存根、Electron Node 模式。
     expect(mcp.env.PAYSWAP_FINANCIAL_WORKSPACE).toBe("false");

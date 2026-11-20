@@ -58,6 +58,11 @@ describe("payswap official-plugin launch path (definition → build → seed →
   let payswapCacheRoot: string;
   let payswapVersion: string;
 
+  // Windows 启动清单契约：${ZCODE_PLUGIN_ROOT} 替换后的 server 入口以正斜杠拼接
+  //（plugin.json 的 JSON 移植形态；node 两种分隔符都接受 —— 行为面 stdio 测试已
+  // 证明）。路径断言按分隔符归一比较 —— 钉住的是解析出的路径身份，不是分隔符。
+  const posixPath = (value: string): string => value.replace(/\\/g, "/");
+
   beforeAll(async () => {
     // 仓库内的插件包目录（bootstrap/tests → ../../payswap-plugin）。
     // 启动路径证据必须来自真实打包产物：并行安全地确保官方构建脚本产出存在
@@ -170,13 +175,13 @@ describe("payswap official-plugin launch path (definition → build → seed →
     });
     expect(mcp.args).toBeDefined();
     expect(mcp.args!.length).toBeGreaterThanOrEqual(2);
-    expect(mcp.args!.at(-1)).toBe(join(payswapCacheRoot, "dist", "server.mjs"));
+    expect(posixPath(mcp.args!.at(-1)!)).toBe(posixPath(join(payswapCacheRoot, "dist", "server.mjs")));
     const hostMarkerIndex = mcp.args!.indexOf(ZCODE_PLUGIN_HOST_COMMAND);
     expect(hostMarkerIndex).toBeGreaterThanOrEqual(0);
     // 派发标记之后就是 server 入口（无多余参数）。
-    expect(mcp.args!.slice(hostMarkerIndex)).toEqual([
+    expect(mcp.args!.slice(hostMarkerIndex).map(posixPath)).toEqual([
       ZCODE_PLUGIN_HOST_COMMAND,
-      join(payswapCacheRoot, "dist", "server.mjs"),
+      posixPath(join(payswapCacheRoot, "dist", "server.mjs")),
     ]);
     // ${user_config.financialWorkspace} → manifest env 注入（默认 false 的 opt-in 臂）。
     expect(mcp.env.PAYSWAP_FINANCIAL_WORKSPACE).toBe("false");
