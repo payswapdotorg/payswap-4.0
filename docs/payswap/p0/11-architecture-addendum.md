@@ -1870,3 +1870,12 @@ connectivity, routing, transaction initiation, relaying, smart contracts,
 protocol integrations and node-to-node coordination. Non-custodial design
 does not itself establish a licensing exemption.
 
+### 13.6 Current platform sequencing
+
+Under the current product-owner direction, native Windows desktop is the
+active implementation and acceptance leg. The Linux leg remains parked.
+This addition does not authorize Linux implementation or claim Linux
+acceptance. Keep interfaces portable where practical, prove the new
+blockchain/wallet path on Windows first, and preserve a separate future
+Linux acceptance gate if and when that platform leg is explicitly resumed.
+
