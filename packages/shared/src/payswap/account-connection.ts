@@ -167,12 +167,6 @@ export interface PayswapOperatorSecretAuthSpec {
 }
 
 /**
- * authSpec 的 P2 形态（operator-supplied-secret）。oauth-authorization-code 与
- * client-credentials 形态随 P3 的 provider 评估落地 —— 不提前发明 URL/scope 事实。
- */
-export type PayswapAuthSpec = PayswapOperatorSecretAuthSpec;
-
-/**
  * Stripe authSpec（doc 04 §1 的事实，检索日期在案）：operator-supplied secret
  * key；sk（secret）/rk（restricted）× test/live 前缀区分模式；revoke =
  * delete-local-only。restricted key 优先（doc 04 §4 最小权限）。
@@ -280,6 +274,121 @@ export const PAYSWAP_PAYSTACK_AUTH_SPEC: PayswapOperatorSecretAuthSpec = {
 };
 
 /**
+ * PayPal 官方事实 pin（P3 provider half，检索 2026-11-20）：
+ * - https://developer.paypal.com/api/rest/authentication/ — OAuth2 client
+ *   credentials：POST /v1/oauth2/token（sandbox 官方示例 base
+ *   https://api-m.sandbox.paypal.com），HTTP Basic（CLIENT_ID:CLIENT_SECRET 的
+ *   Base64），form body grant_type=client_credentials；token 响应字段
+ *   {scope, access_token, token_type: "Bearer", app_id, expires_in, nonce}；
+ *   后续调用 Bearer ACCESS-TOKEN；过期则重取。
+ * - https://developer.paypal.com/api/rest/ — 凭据经 Developer Dashboard
+ *   「Apps & Credentials」取得（「Copy the client ID and client secret」）；
+ *   client id 标识 app、client secret 认证 client id；官方不记载凭据字符模式。
+ * - https://developer.paypal.com/api/identity/v1/ — 官方 identity 面是
+ *   OpenID Connect userinfo（/v1/identity/openidconnect/userinfo），其 scopes
+ *   绑定 client ID —— client_credentials token 可达性官方未证实，不采用。
+ * **身份面决策**：token 响应的 app_id 是官方记载的非秘密 app 标识 —— PayPal
+ * 读回 = token 交换本身，verified{providerAccountId: app_id}（与 Paystack 的
+ * 结构性身份缺口相反，PayPal 有官方身份面）。
+ */
+export const PAYSWAP_PAYPAL_EVIDENCE_PIN: PayswapProviderEvidencePin = {
+  providerId: "paypal",
+  officialSourceUrls: [
+    "https://developer.paypal.com/api/rest/authentication/",
+    "https://developer.paypal.com/api/rest/",
+    "https://developer.paypal.com/api/identity/v1/",
+  ],
+  factsRetrievedAt: "2026-11-20",
+  verifiedBoundaryFacts: [
+    "OAuth2 client credentials: POST /v1/oauth2/token with HTTP Basic auth (CLIENT_ID:CLIENT_SECRET Base64) and form body grant_type=client_credentials",
+    "Token response fields: {scope, access_token, token_type: \"Bearer\", app_id, expires_in (seconds), nonce}",
+    "Subsequent API calls carry Authorization: Bearer ACCESS-TOKEN; on expiry request a new token",
+    "Credentials are created in the Developer Dashboard (Apps & Credentials: client ID identifies the app, client secret authenticates it); no official character-pattern documentation for either value",
+    "Sandbox token base https://api-m.sandbox.paypal.com (official example); the live host appears in official scope-string examples as https://api-m.paypal.com",
+    "The official identity surface is the OpenID Connect userinfo endpoint (/v1/identity/openidconnect/userinfo) with scopes bound to the client ID — client_credentials reachability is NOT officially evidenced",
+  ],
+  reverifyBeforeAdapterUse: [
+    "Live server URL: confirm https://api-m.paypal.com against the official go-live documentation before any live-mode acceptance (the sandbox base is directly documented; the live host is evidenced only by official scope-string examples as of 2026-11-20)",
+    "client_credentials access to identity/userinfo surfaces: not officially evidenced as of 2026-11-20 — do not adopt without official documentation",
+    "Client id/secret character patterns: not officially documented — keep formatCheck permissive (non-whitespace) unless PayPal publishes a pattern",
+  ],
+};
+
+/**
+ * PayPal authSpec（P3 provider half；PAYSWAP_PAYPAL_EVIDENCE_PIN 的事实，检索
+ * 2026-11-20 在案）：OAuth2 client credentials 凭据对（client-id + client-secret
+ * 两个秘密种类，[0] = client-secret 主秘密）；模式 = operator-declared
+ * （sandbox/live 各有独立 app 凭据，官方无前缀记载 —— 连接输入显式携带 mode，
+ * 不猜）；revoke = delete-local-only（官方未证实 credential 自动撤销面）。
+ */
+export const PAYSWAP_PAYPAL_AUTH_SPEC: PayswapClientCredentialsAuthSpec = {
+  providerId: "paypal",
+  acquisition: {
+    kind: "oauth-client-credentials",
+    label: "PayPal REST API app credentials",
+    clientIdLabel: "PayPal client ID",
+    clientIdPlaceholder: "<client-id>",
+    clientSecretLabel: "PayPal client secret",
+    clientSecretPlaceholder: "<client-secret>",
+    clientSecretFormatCheck: /^\S{8,}$/,
+    apiBaseUrl: {
+      test: "https://api-m.sandbox.paypal.com",
+      live: "https://api-m.paypal.com",
+    },
+    tokenPath: "/v1/oauth2/token",
+  },
+  secretKinds: ["client-secret", "client-id"],
+  revoke: "delete-local-only",
+};
+
+// ---------------------------------------------------------------------------
+// client-credentials authSpec 形态（P3 provider half —— PayPal 首个落地；
+// shared 头注释「oauth-authorization-code 与 client-credentials 形态随 P3 的
+// provider 评估落地」的兑现）。
+// ---------------------------------------------------------------------------
+
+/** PayPal client-credentials 形态的 acquisition（凭据对 + 环境声明的端点面）。 */
+export interface PayswapClientCredentialsAcquisition {
+  readonly kind: "oauth-client-credentials";
+  readonly label: string;
+  readonly clientIdLabel: string;
+  readonly clientIdPlaceholder: string;
+  readonly clientSecretLabel: string;
+  readonly clientSecretPlaceholder: string;
+  /**
+   * 防御性检查（client-secret）；最终权威是 provider read-back（token 交换）。
+   * PayPal 官方文档不记载凭据字符模式 —— 本检查刻意宽松（非空、无空白），
+   * 绝不编码未证实的格式事实。
+   */
+  readonly clientSecretFormatCheck: RegExp;
+  /** 环境端点面（官方 server URL；token 请求 = base + tokenPath）。 */
+  readonly apiBaseUrl: { readonly test: string; readonly live: string };
+  readonly tokenPath: string;
+}
+
+/**
+ * client-credentials authSpec：凭据对（client-id + client-secret，两个秘密种类）
+ * 存凭据 store；模式不可由凭据值推导（sandbox/live 各有独立 app 凭据，官方无
+ * 前缀记载）—— **operator-declared**：连接输入显式携带 mode，不猜。
+ */
+export interface PayswapClientCredentialsAuthSpec {
+  readonly providerId: string;
+  readonly acquisition: PayswapClientCredentialsAcquisition;
+  /** 恰两种秘密；[0] = 主秘密（client-secret —— wire 认证的另一半经 clientId）。 */
+  readonly secretKinds: readonly ["client-secret", "client-id"];
+  readonly revoke: "delete-local-only";
+}
+
+export type PayswapAuthSpec = PayswapOperatorSecretAuthSpec | PayswapClientCredentialsAuthSpec;
+
+/** client-credentials 形态的类型守卫（连接流按 acquisition.kind 分派的窄化面）。 */
+export function isPayswapClientCredentialsAuthSpec(
+  spec: PayswapAuthSpec,
+): spec is PayswapClientCredentialsAuthSpec {
+  return spec.acquisition.kind === "oauth-client-credentials";
+}
+
+/**
  * 按前缀推导连接模式（key-prefix 型规格）。无匹配前缀 → null（fail-closed：
  * 宁可拒绝，不可猜）。推导只是记录元数据；凭据有效性的最终权威是 provider
  * read-back（后续切片）。
@@ -305,6 +414,11 @@ export interface PayswapAccountReadBackInput {
   readonly secretKind: PayswapPspSecretKind;
   /** 连接秘密（host 进程内从凭据 store 读出；端口永不持久化/日志/投影它）。 */
   readonly secret: string;
+  /**
+   * client-credentials 形态的 client id（P3 —— PayPal 读回的 Basic 认证另一半；
+   * operator-supplied-secret 记录缺省缺席，wire 行为不变）。
+   */
+  readonly clientId?: string;
 }
 
 
