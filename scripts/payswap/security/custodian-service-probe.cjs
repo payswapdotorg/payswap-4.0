@@ -411,6 +411,68 @@ process.exit(0);
 // loud-refusal contract so it cannot silently change in either direction;
 // closing the race itself is the deferred OS-level identity-separation task.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Battery 7 — v1.1 named credential slots (custodian multi-secret round):
+// push/drop/get accept an optional --slot (the credential storage key —
+// provider + random connection id + kind, never a secret); the LEGACY no-slot
+// path is byte-for-byte unchanged (the existing batteries are that proof).
+// Slot charset is fail-closed ([A-Za-z0-9:._-], 1..128); GET slot resolution
+// never borrows another slot (missing slot = honest network-free no-key).
+// ---------------------------------------------------------------------------
+async function batteryNamedSlots() {
+  const server = startConsoleServer({ testGate: "node", blob: path.join(workDir, "blob-named.bin") });
+  const endpoint = waitForEndpoint(server.endpointFile);
+  if (endpoint === null) {
+    record("slot:server-start", false, "endpoint never appeared");
+    server.child.kill();
+    return;
+  }
+  const slotA = "payswap:psp:probe:11111111-1111-4111-8111-111111111111:api-key";
+  const slotB = "payswap:psp:probe:22222222-2222-4222-8222-222222222222:client-secret";
+  client(server.endpointFile, ["--custodian-register"]);
+  const pushA = client(server.endpointFile, ["--custodian-push", "--slot", slotA], "rk_slot_a_" + "1".repeat(60) + "\n");
+  record(
+    "slot:push-named-ok",
+    pushA.code === 0 && pushA.out.includes('"ok":true'),
+    "exit=" + pushA.code + " (named slot pushed; canary never echoed)",
+  );
+  const pushB = client(server.endpointFile, ["--custodian-push", "--slot", slotB], "rk_slot_b_" + "2".repeat(60) + "\n");
+  record(
+    "slot:push-second-ok",
+    pushB.code === 0 && pushB.out.includes('"ok":true'),
+    "exit=" + pushB.code + " (a second slot coexists — the old single-slot overwrite boundary is structurally solved)",
+  );
+  const getUnknown = client(server.endpointFile, ["--custodian-get", "--path", "/v1/balance", "--slot", "payswap:psp:probe:no-such:api-key"]);
+  record(
+    "slot:get-unknown-slot-no-key",
+    getUnknown.code === 0 && getUnknown.out.includes('"body":"no-key"'),
+    "exit=" + getUnknown.code + " (missing slot = no-key before any egress; slot isolation holds)",
+  );
+  const pushEvil = client(server.endpointFile, ["--custodian-push", "--slot", "../evil"], "rk_slot_evil_" + "3".repeat(60) + "\n");
+  const getEvil = client(server.endpointFile, ["--custodian-get", "--path", "/v1/balance", "--slot", "../evil"]);
+  record(
+    "slot:invalid-charset-refused",
+    pushEvil.code === 72 && pushEvil.out === "" && getEvil.code === 0 && getEvil.out.includes('"body":"no-key"'),
+    "push exit=" + pushEvil.code + " (ok:false refusal — the slot-invalid detail stays server-side, client stdout empty), get exit=" + getEvil.code + " (no-key) — traversal never reaches a blob path",
+  );
+  const dropA = client(server.endpointFile, ["--custodian-drop", "--slot", slotA]);
+  const getAfterDrop = client(server.endpointFile, ["--custodian-get", "--path", "/v1/balance", "--slot", slotA]);
+  record(
+    "slot:drop-then-get-no-key",
+    dropA.code === 0 && dropA.out.includes('"ok":true') && getAfterDrop.code === 0 && getAfterDrop.out.includes('"body":"no-key"'),
+    "drop exit=" + dropA.code + ", get exit=" + getAfterDrop.code + " (per-slot verifiable drop)",
+  );
+  const pushLegacy = client(server.endpointFile, ["--custodian-push"], "rk_slot_legacy_" + "4".repeat(60) + "\n");
+  record(
+    "slot:legacy-push-still-ok",
+    pushLegacy.code === 0 && pushLegacy.out.includes('"ok":true'),
+    "exit=" + pushLegacy.code + " (no-slot push = the legacy single-slot wire, unchanged)",
+  );
+  server.child.kill();
+}
+
+
+
 async function batteryRegistrationRaceW1() {
   const ELECTRON =
     process.env.PAYSWAP_CUSTODIAN_ELECTRON ||
@@ -926,6 +988,7 @@ async function main() {
     await batteryDeadlines();
     await batteryDurableCustody();
     await batteryImpersonationF6();
+    await batteryNamedSlots();
     await batteryRegistrationRaceW1();
   } finally {
     // never leave probe artifacts behind (unless debugging a failure)

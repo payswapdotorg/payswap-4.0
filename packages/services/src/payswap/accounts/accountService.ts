@@ -74,15 +74,17 @@ export interface PayswapAccountCredentialPort {
 /**
  * ADR-P2-3 custodian 桥（可选注入）：在位时密钥只入托管（SYSTEM 服务内存 + 其
  * SYSTEM-DPAPI blob），main 不持明文、不落 enc:v1 槽。语义：
- *   - push = credentialPort.save 的托管形态（connect 时恰一次）；
- *   - load = 占位标记（"custodian-managed"）—— 读取经 apiClient 标记路由进托管
- *     有界代理（服务端补真 Bearer）；
- *   - drop = revoke 时清托管（内存 + blob 全删）。
+ *   - push = credentialPort.save 的托管形态（connect 时恰一次，槽 = 凭据存储键）；
+ *   - load = 占位标记（"custodian-managed" + 槽后缀）—— 读取经 apiClient 标记
+ *     路由进托管有界代理（服务端按槽补真 Bearer）；
+ *   - drop = revoke 时按记录声明的秘密种类逐槽清托管（内存 + blob 全删）。
+ * v1.1 命名槽：slot = 凭据存储键（provider + 随机连接 id + 种类 —— 非秘密）；
+ * slot 缺省（undefined）= 旧版单槽（wire 行为逐字不变 —— 既有电池/还原面全绿）。
  */
 export interface PayswapCustodianBridge {
-  push(key: string): Promise<void>;
-  get(path: string): Promise<{ status: number; body: string }>;
-  drop(): Promise<void>;
+  push(key: string, slot?: string): Promise<void>;
+  get(path: string, slot?: string): Promise<{ status: number; body: string }>;
+  drop(slot?: string): Promise<void>;
 }
 
 export const CUSTODIAN_SECRET_MARKER = "custodian-managed";
@@ -205,12 +207,18 @@ export function createPayswapAccountService(
    * 证实）= typed `custodian_unavailable` 拒绝 —— 记录已是 revoked（法则 4 先于
    * 清除），但绝不把「保管未证实清除」伪装成成功撤销（A3.6：撤销必须证实）。
    */
-  async function dropCustodyOrRefuse(): Promise<
+  async function dropCustodyOrRefuse(record: PayswapConnectionRecord): Promise<
     { kind: "refused"; refusal: PayswapAccountRefusal } | undefined
   > {
     if (custodianBridge === undefined) return undefined;
     try {
-      await custodianBridge.drop();
+      // v1.1：按记录声明的秘密种类逐一清命名槽（槽名 = 各自的凭据存储键）。
+      // 绝不 drop 旧版单槽 —— 那可能属于其它（升级前）连接的保管。
+      for (const secretKind of record.secretKinds) {
+        await custodianBridge.drop(
+          payswapPspSecretCredentialKey(record.providerId, record.connectionId, secretKind),
+        );
+      }
     } catch (error) {
       if (isPayswapCustodianUnavailableError(error)) {
         return refused(
@@ -227,11 +235,10 @@ export function createPayswapAccountService(
   }
 
     // P3 client-credentials 连接流（PayPal 首落地）—— 独立模块（架构上限内的
-  // 单一职责抽出）：凭据对存储 + operator-declared 模式 + 单秘密槽托管边界。
+  // 单一职责抽出）：凭据对存储 + operator-declared 模式（v1.1 命名槽下凭据对可入托管）。
   const connectWithClientCredentials = createPayswapClientCredentialsConnect({
     credentialPort,
     connectionStore,
-    custodianBridge,
     now,
     mintConnectionId,
   });
@@ -338,7 +345,7 @@ export function createPayswapAccountService(
       if (record.status === "revoked") {
         // 幂等：已撤销连接的重复撤销不抛错；补清可能残留的秘密（删键对缺失键安全）。
         await deleteSecrets(record).catch(() => undefined);
-        const dropOutcome = await dropCustodyOrRefuse();
+        const dropOutcome = await dropCustodyOrRefuse(record);
         if (dropOutcome !== undefined) return dropOutcome;
         return { kind: "revoked", connection: projectPayswapConnectionStatus(record) };
       }
@@ -350,7 +357,7 @@ export function createPayswapAccountService(
       };
       await connectionStore.upsert(revoked);
       await deleteSecrets(record);
-      const dropOutcome = await dropCustodyOrRefuse();
+      const dropOutcome = await dropCustodyOrRefuse(record);
       if (dropOutcome !== undefined) return dropOutcome;
       return { kind: "revoked", connection: projectPayswapConnectionStatus(revoked) };
     },

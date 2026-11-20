@@ -131,17 +131,20 @@ export function createPayswapAccountRuntime(
   // legacy 政策下的完整端口。custodian-required 下 load/save 永不触达它 ——
   // 不存在「托管缺席 → legacy 写入」的路径（A3 fail-closed，结构保证）。
   const legacyCredentialPort = createCredentialService({ env });
-  // ADR-P2-3 custodian 凭据端口：save = push（connect 时恰一次，密钥入托管）；
-  // load = 占位标记（读取经标记路由 transport 转发托管代理）；delete = legacy
-  // 删除（只删不写 —— 撤销清理 + 策略前残留清理；托管清除走 revoke 的 drop）。
-  // 在位时 main 全程不持明文、不落 enc:v1 槽。
+  // ADR-P2-3 custodian 凭据端口：save = push（connect 时恰一次，密钥入托管；
+  // v1.1 槽 = 凭据存储键 —— 命名槽）；load = 占位标记 + 槽后缀（读取经标记
+  // 路由 transport 转发托管代理 —— wrapper 从后缀解析槽）；delete = legacy
+  // 删除（只删不写 —— 撤销清理 + 策略前残留清理；托管清除走 revoke 的逐槽
+  // drop）。在位时 main 全程不持明文、不落 enc:v1 槽。
   const custodianCredentialPort: PayswapAccountCredentialPort = custodianBridge
     ? {
         // 占位密钥带 sk_test_ 前缀：adapter 的 mode 推导（derivePayswapSecretKeyMode）
-        // 照常成立（P2 仅 test 模式连接）；真实 Bearer 由 custodian 服务端补。
-        load: async () => `sk_test_${CUSTODIAN_SECRET_MARKER}`,
-        save: async (_key, value) => {
-          await custodianBridge.push(value);
+        // 照常成立（P2 仅 test 模式连接）；真实 Bearer 由 custodian 服务端按槽补。
+        // 槽后缀（":<存储键>"）供 wrapper 解析 —— 存储键非秘密（provider + 随机
+        // 连接 id + 种类）。
+        load: async (key: string) => `sk_test_${CUSTODIAN_SECRET_MARKER}:${key}`,
+        save: async (key, value) => {
+          await custodianBridge.push(value, key);
         },
         delete: (key) => legacyCredentialPort.delete(key),
       }
@@ -154,20 +157,24 @@ export function createPayswapAccountRuntime(
     resolveStorePath: dependencies.resolveStorePath,
   });
   // ADR-P2-3：custodian 在位 → apiClient 包装为标记路由 transport —— 携占位
-  // Bearer（"custodian-managed"）的 GET 转发托管代理（服务端补真 Bearer + 路径
-  // 闭集 + pid 门）；其余 fetch 原样（行为不变）。代理应答以 status/body 重铸
-  // Response（两 adapter 只消费 status/json —— 形状契约不变）。
+  // Bearer（"custodian-managed" + 可选槽后缀）的 GET 转发托管代理（服务端按槽
+  // 补真 Bearer + 路径闭集 + pid 门）；其余 fetch 原样（行为不变）。代理应答以
+  // status/body 重铸 Response（两 adapter 只消费 status/json —— 形状契约不变）。
   const apiClient: ApiClient | undefined = custodianBridge
     ? {
         async request(input, requestInit) {
           const url = typeof input === "string" ? input : input.toString();
           const auth = readAuthorizationHeader(requestInit);
-          if (!auth.endsWith(CUSTODIAN_SECRET_MARKER)) {
+          const markerIndex = auth.indexOf(CUSTODIAN_SECRET_MARKER);
+          if (markerIndex < 0) {
             const fallback = dependencies.apiClient ?? { request: (i, r) => fetch(i, r) };
             return fallback.request(input, requestInit);
           }
+          // v1.1 槽解析：标记后的 ":<存储键>" 后缀（load 编码）；无后缀 = 旧版
+          // 单槽（旧桌面 wire 兼容）。
+          const slot = auth.slice(markerIndex + CUSTODIAN_SECRET_MARKER.length).replace(/^:/, "");
           const parsed = new URL(url);
-          const reply = await custodianBridge.get(parsed.pathname + parsed.search);
+          const reply = await custodianBridge.get(parsed.pathname + parsed.search, slot);
           return new Response(reply.body, {
             status: reply.status === 0 ? 502 : reply.status,
           });

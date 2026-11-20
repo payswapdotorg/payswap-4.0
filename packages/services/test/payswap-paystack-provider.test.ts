@@ -385,28 +385,30 @@ describe("payswap paystack provider contract (P3 provider half) — law integrat
     const dir = await mkdtemp(join(tmpdir(), "payswap-p3-paystack-custodian-"));
     createdDirs.push(dir);
     setDataBaseDir(dir);
-    const pushedKeys: string[] = [];
-    let dropped = 0;
+    const pushedEntries: Array<{ value: string; slot: string }> = [];
+    const droppedSlots: string[] = [];
     const client = recordingApiClient(() => jsonResponse(200, VALID_BALANCE_ENVELOPE));
     const runtime = createPayswapAccountRuntime({
       env: { [PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]: "f".repeat(64) },
       resolveStorePath: () => join(dir, "payswap-connections.json"),
       apiClient: client,
       custodianBridge: {
-        push: async (key: string) => {
-          pushedKeys.push(key);
+        push: async (key: string, slot?: string) => {
+          pushedEntries.push({ value: key, slot: slot ?? "" });
         },
         get: async () => ({ status: 0, body: "no-key" }),
-        drop: async () => {
-          dropped += 1;
+        drop: async (slot?: string) => {
+          droppedSlots.push(slot ?? "");
         },
       },
     });
     const connected = await runtime.accountService.connect({ providerId: "paystack", operatorSecret: TEST_SECRET });
     expect(connected.kind).toBe("connected");
-    // connect 走 custodian 凭据端口：save = push（密钥入托管 —— 托管本身
-    // provider 无关；只有读回面是 Stripe 限定的）。
-    expect(pushedKeys).toEqual([TEST_SECRET]);
+    // connect 走 custodian 凭据端口：save = push（密钥入命名槽 —— v1.1 槽名 =
+    // 凭据存储键；托管本身 provider 无关；只有读回/数据面是 Stripe 限定的）。
+    expect(pushedEntries).toHaveLength(1);
+    expect(pushedEntries[0].value).toBe(TEST_SECRET);
+    expect(pushedEntries[0].slot).toContain("payswap:psp:paystack:");
     if (connected.kind !== "connected") return;
     const refresh = await runtime.accountService.refreshEvidence({ connectionId: connected.connection.connectionId });
     // refresh 走占位标记凭据 → Paystack adapter 装配防线 typed 拒绝（零网络
@@ -419,6 +421,8 @@ describe("payswap paystack provider contract (P3 provider half) — law integrat
     // revoke：custody drop（provider 无关的托管清除）+ 记录撤销。
     const revoked = await runtime.accountService.revoke({ connectionId: connected.connection.connectionId });
     expect(revoked.kind).toBe("revoked");
-    expect(dropped).toBe(1);
+    // v1.1：revoke 按记录种类逐命名槽 drop（槽名 = 各自凭据存储键）。
+    expect(droppedSlots).toHaveLength(1);
+    expect(droppedSlots[0]).toContain("payswap:psp:paystack:");
   }, 15000);
 });

@@ -49,6 +49,7 @@ import {
 import {
   createCredentialService,
   createPaypalAccountReadBackPort,
+  createPayswapAccountRuntime,
   createPayswapAccountService,
   createPayswapConnectionRecordStore,
   createStripeAccountReadBackPort,
@@ -385,36 +386,55 @@ describe("payswap paypal provider contract (P3 provider half) — law integratio
     expect(stripe.kind).toBe("connected");
   }, 15000);
 
-  it("ADR-P2-3: the custodian bridge holds a single managed secret — connecting a client-credentials pair is refused typed (never partially stored), Stripe/Paystack unaffected", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "payswap-p3-paypal-custodian-"));
-    createdDirs.push(dir);
-    setDataBaseDir(dir);
-    const pushedKeys: string[] = [];
-    const connectionsPath = join(dir, "payswap-connections.json");
-    const service = createPayswapAccountService({
-      credentialPort: createCredentialService({ env: { [PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]: "b".repeat(64) } }),
-      connectionStore: createPayswapConnectionRecordStore({ resolveStorePath: () => connectionsPath }),
-      authSpecs: [PAYSWAP_STRIPE_AUTH_SPEC, PAYSWAP_PAYPAL_AUTH_SPEC],
-      custodianBridge: {
-        push: async (key: string) => {
-          pushedKeys.push(key);
-        },
-        get: async () => ({ status: 0, body: "no-key" }),
-        drop: async () => undefined,
+  it("ADR-P2-3 v1.1 named slots: the client-credentials pair connects under custody (each kind its own named slot via the real runtime port), refresh is refused pre-wire, revoke drops both named slots", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "payswap-p3-paypal-custodian-"));
+  createdDirs.push(dir);
+  setDataBaseDir(dir);
+  const pushedEntries: Array<{ value: string; slot: string }> = [];
+  const droppedSlots: string[] = [];
+  const client = recordingApiClient(() => jsonResponse(200, VALID_TOKEN_RESPONSE));
+  const runtime = createPayswapAccountRuntime({
+    env: { [PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]: "g".repeat(64) },
+    resolveStorePath: () => join(dir, "payswap-connections.json"),
+    apiClient: client,
+    custodianBridge: {
+      push: async (value: string, slot?: string) => {
+      pushedEntries.push({ value, slot: slot ?? "" });
       },
-    });
-    const refusedResult = await service.connect({
-      providerId: "paypal",
-      operatorSecret: CLIENT_SECRET,
-      clientId: CLIENT_ID,
-      mode: "test",
-    });
-    expect(refusedResult.kind).toBe("refused");
-    if (refusedResult.kind === "refused") {
-      expect(refusedResult.refusal.code).toBe("custodian_unavailable");
-    }
-    // 零部分入库：托管未收到任何 PayPal 材料；拒绝先于记录 —— store 文件根本未创建。
-    expect(pushedKeys).toEqual([]);
-    expect(existsSync(connectionsPath)).toBe(false);
-  }, 15000);
+      get: async () => ({ status: 0, body: "no-key" }),
+      drop: async (slot?: string) => {
+      droppedSlots.push(slot ?? "");
+      },
+    },
+  });
+  const connected = await runtime.accountService.connect({
+    providerId: "paypal",
+    operatorSecret: CLIENT_SECRET,
+    clientId: CLIENT_ID,
+    mode: "test",
+  });
+  expect(connected.kind).toBe("connected");
+  // v1.1 named slots: the pair lands per kind (slot = the credential storage key) — the old single-slot overwrite boundary is structurally solved.
+  expect(pushedEntries).toHaveLength(2);
+  expect(pushedEntries[0].slot).toContain("payswap:psp:paypal:");
+  expect(pushedEntries[0].slot.endsWith(":client-secret")).toBe(true);
+  expect(pushedEntries[0].value).toBe(CLIENT_SECRET);
+  expect(pushedEntries[1].slot.endsWith(":client-id")).toBe(true);
+  expect(pushedEntries[1].value).toBe(CLIENT_ID);
+  if (connected.kind !== "connected") return;
+  const refresh = await runtime.accountService.refreshEvidence({ connectionId: connected.connection.connectionId });
+  // refresh rides the placeholder marker (v1.1 slot suffix) — the PayPal adapter's pre-wire guard refuses typed (zero wire touch; the token-exchange proxy is the follow-up v1.2 slice).
+  expect(refresh.kind).toBe("refused");
+  if (refresh.kind === "refused") {
+    expect(refresh.refusal.code).toBe("read_back_unavailable");
+  }
+  expect(client.calls.length).toBe(0);
+  // revoke: per-kind named-slot drops (both kinds cleared).
+  const revoked = await runtime.accountService.revoke({ connectionId: connected.connection.connectionId });
+  expect(revoked.kind).toBe("revoked");
+  expect(droppedSlots).toHaveLength(2);
+  for (const slot of droppedSlots) {
+    expect(slot).toContain("payswap:psp:paypal:");
+  }
+}, 15000);
 });

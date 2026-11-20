@@ -1190,10 +1190,41 @@ namespace PayswapBrokerPeerHelper
         // 仅凭 pid 整数 + 映像路径无法区分「原进程」与「同 pid 同映像的复用者」；
         // 句柄活性 + pid 相等 + 映像核验三者合取才构成进程实例身份。
         private static IntPtr registeredMainHandle = IntPtr.Zero;
-        private static string custodianKeyHex;
+        // P3 v1.1（命名凭据槽）：槽名 → 秘密值（内存面）。空串槽 = 旧版单槽（无 slot
+        // 的 push/drop/get 走它 —— 线上 wire 行为逐字不变，既有电池全绿）。命名槽
+        // 的持久化 = 每槽一枚 SYSTEM-DPAPI blob（文件名 = slot 的 SHA-256 前 16 字节
+        // hex —— 无路径/字符集面），明文 = JSON {"slot":…,"key":…}（bootstrap 恢复）。
+        private static readonly Dictionary<string, string> CustodianKeySlots = new Dictionary<string, string>();
         private static string custodianElectronImage;      // 精确 electron 主进程映像（config image）
         private static string custodianClientHelperImage;  // 精确客户端 helper 映像（config clientHelper）
         private static string custodianUserSid;
+
+        /** 槽名合法性（fail-closed）：1..128 字符，恰 [A-Za-z0-9:._-] —— 存储键
+            （payswap:psp:*）合法；路径分隔符/空白/控制字符一律拒绝（blob 文件名
+            由 SHA-256 派生，但内存键与诊断面仍不容注入面）。 */
+        private static bool IsValidCustodianSlot(string slot)
+        {
+            if (string.IsNullOrEmpty(slot) || slot.Length > 128) return false;
+            foreach (char c in slot)
+            {
+                bool ok = (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9')
+                    || c == ':' || c == '.' || c == '_' || c == '-';
+                if (!ok) return false;
+            }
+            return true;
+        }
+
+        /** 命名槽的 blob 路径（SHA-256(slot) 前 16 字节 hex —— 无碰撞歧义、无路径面）。 */
+        private static string SlotBlobPath(string slot)
+        {
+            using (var sha = new System.Security.Cryptography.SHA256Managed())
+            {
+                byte[] hash = sha.ComputeHash(System.Text.Encoding.UTF8.GetBytes(slot));
+                var sb = new StringBuilder(hash.Length * 2);
+                for (int i = 0; i < 16; i++) sb.Append(hash[i].ToString("x2"));
+                return Path.GetDirectoryName(custodianActiveKeyBlobFile) + "\\custodian-key-slot-" + sb.ToString() + ".bin";
+            }
+        }
 
         /** 关闭在册主句柄（rebind / 服务停止时；句柄泄漏 = 内核对象滞留）。 */
         private static void CloseRegisteredMainHandle()
@@ -1356,33 +1387,65 @@ namespace PayswapBrokerPeerHelper
             }
         }
 
-        private static void CustodianServeLoop()
+        /** 恢复一枚槽 blob（命名槽：JSON {"slot","key"}；旧版 blob = 裸键 → 空槽）。 */
+        private static void RestoreCustodianSlotBlob(string blobPath)
         {
-            // SYSTEM-wrapped 密钥 blob 自举（跨重启持久； SYSTEM DPAPI 自解）。形状
-            // 法则：64..512 可打印 ASCII（与 push 同一 PlausibleSecretKey 法则 ——
-            // 旧「恰 64 hex」从未被真实验证过：blob 持久化本身一直是坏的）。否则不
-            // 采用（fail-closed 保留现场；推送会原子覆盖）。
             try
             {
-                if (File.Exists(custodianActiveKeyBlobFile))
+                if (!File.Exists(blobPath)) return;
+                byte[] blob = File.ReadAllBytes(blobPath);
+                byte[] plain = CryptUnprotectBytes(blob);
+                string text = System.Text.Encoding.UTF8.GetString(plain);
+                // 命名槽形状：JSON {"slot":"…","key":"…"}（IsPlausibleSecretKey 双验）。
+                string slot = ExtractJsonString(text, "{\"slot\":\"");
+                string key = ExtractJsonString(text, "\"key\":\"");
+                if (slot != null && key != null && IsValidCustodianSlot(slot) && IsPlausibleSecretKey(key))
                 {
-                    byte[] blob = File.ReadAllBytes(custodianActiveKeyBlobFile);
-                    byte[] plain = CryptUnprotectBytes(blob);
-                    string hex = System.Text.Encoding.UTF8.GetString(plain);
-                    if (IsPlausibleSecretKey(hex))
-                    {
-                        lock (CustodianStateLock) { custodianKeyHex = hex; }
-                        Diag("custodian:bootstrap-key-restored len=" + hex.Length);
-                    }
-                    else
-                    {
-                        Diag("custodian:bootstrap-blob-invalid len=" + hex.Length);
-                    }
+                    lock (CustodianStateLock) { CustodianKeySlots[slot] = key; }
+                    Diag("custodian:bootstrap-slot-restored slot=" + slot + " len=" + key.Length);
+                    return;
+                }
+                // 旧版形状：裸键（64..512 可打印 ASCII —— 与 push 同一法则）。否则不
+                // 采用（fail-closed 保留现场；推送会原子覆盖）。
+                if (IsPlausibleSecretKey(text))
+                {
+                    lock (CustodianStateLock) { CustodianKeySlots[""] = text; }
+                    Diag("custodian:bootstrap-key-restored len=" + text.Length);
+                }
+                else
+                {
+                    Diag("custodian:bootstrap-blob-invalid len=" + text.Length);
                 }
             }
             catch
             {
                 Diag("custodian:bootstrap-blob-unreadable");
+            }
+        }
+
+        private static void CustodianServeLoop()
+        {
+            // SYSTEM-wrapped 密钥 blob 自举（跨重启持久； SYSTEM DPAPI 自解）：
+            // 旧版单槽 blob（裸键 → 空槽）+ 全部命名槽 blob（JSON 形状，v1.1）。
+            try
+            {
+                RestoreCustodianSlotBlob(custodianActiveKeyBlobFile);
+            }
+            catch
+            {
+                Diag("custodian:bootstrap-blob-unreadable");
+            }
+            try
+            {
+                string blobDir = Path.GetDirectoryName(custodianActiveKeyBlobFile);
+                foreach (string file in Directory.GetFiles(blobDir, "custodian-key-slot-*.bin"))
+                {
+                    RestoreCustodianSlotBlob(file);
+                }
+            }
+            catch
+            {
+                Diag("custodian:bootstrap-slot-scan-failed");
             }
 
             // token + endpoint 文件（SYSTEM + 记录用户 RW —— main 读 pipe+token；
@@ -1604,14 +1667,23 @@ namespace PayswapBrokerPeerHelper
             }
 
             if (op == "push") { ServeCustodianPush(pipe, opLine); return; }
-            if (op == "drop") { ServeCustodianDrop(pipe); return; }
+            if (op == "drop") { ServeCustodianDrop(pipe, opLine); return; }
             if (op == "get") { ServeCustodianGet(pipe, opLine); return; }
             Diag("custodian:op-unknown");
         }
 
+        /** op 行的槽名（v1.1 可选）：缺省/空 = 旧版单槽（wire 行为逐字不变）。 */
+        private static string RequestedSlot(string opLine)
+        {
+            string slot = ExtractJsonString(opLine, "\"slot\":\"");
+            return slot == null ? "" : slot;
+        }
+
         /** 持久托管 push（A4）：protect → 原子写（tmp + Replace/Move + SYSTEM-only
             ACL）→ 回读解包逐字节验证 → 才改内存并应答 ok。任何失败 = ok:false
-           （绝不把未证实持久化的密钥谎报为已保管）。 */
+           （绝不把未证实持久化的密钥谎报为已保管）。v1.1：可选 slot —— 命名槽
+           blob（JSON {"slot","key"}，SHA-256 派生文件名）；缺省 = 旧版单槽
+           （裸键 blob，wire/持久化形状逐字不变 —— 既有电池全绿）。 */
         private static void ServeCustodianPush(NamedPipeServerStream pipe, string opLine)
         {
             string key = ExtractJsonString(opLine, "\"key\":\"");
@@ -1621,7 +1693,20 @@ namespace PayswapBrokerPeerHelper
                 WritePipeLine(pipe, "{\"v\":1,\"ok\":false,\"error\":\"shape-invalid\"}");
                 return;
             }
-            byte[] plain = System.Text.Encoding.UTF8.GetBytes(key);
+            string slot = RequestedSlot(opLine);
+            if (slot.Length > 0 && !IsValidCustodianSlot(slot))
+            {
+                Diag("custodian:push-slot-invalid len=" + slot.Length);
+                WritePipeLine(pipe, "{\"v\":1,\"ok\":false,\"error\":\"slot-invalid\"}");
+                return;
+            }
+            bool namedSlot = slot.Length > 0;
+            // blob 明文：命名槽 = JSON {"slot","key"}（bootstrap 恢复需在案槽名）；
+            // 旧版单槽 = 裸键（形状逐字不变）。命名槽的值同样过 PlausibleSecretKey。
+            string blobPlain = namedSlot
+                ? "{\"slot\":\"" + EscapeJson(slot) + "\",\"key\":\"" + EscapeJson(key) + "\"}"
+                : key;
+            byte[] plain = System.Text.Encoding.UTF8.GetBytes(blobPlain);
             byte[] blob;
             try { blob = CryptProtectBytes(plain); }
             catch
@@ -1631,12 +1716,13 @@ namespace PayswapBrokerPeerHelper
                 WritePipeLine(pipe, "{\"v\":1,\"ok\":false,\"error\":\"persist-failed\"}");
                 return;
             }
-            string tmpPath = custodianActiveKeyBlobFile + ".tmp";
+            string blobPath = namedSlot ? SlotBlobPath(slot) : custodianActiveKeyBlobFile;
+            string tmpPath = blobPath + ".tmp";
             try
             {
                 File.WriteAllBytes(tmpPath, blob);
-                if (File.Exists(custodianActiveKeyBlobFile)) File.Replace(tmpPath, custodianActiveKeyBlobFile, null);
-                else File.Move(tmpPath, custodianActiveKeyBlobFile);
+                if (File.Exists(blobPath)) File.Replace(tmpPath, blobPath, null);
+                else File.Move(tmpPath, blobPath);
             }
             catch
             {
@@ -1647,7 +1733,7 @@ namespace PayswapBrokerPeerHelper
             }
             try
             {
-                byte[] roundtrip = CryptUnprotectBytes(File.ReadAllBytes(custodianActiveKeyBlobFile));
+                byte[] roundtrip = CryptUnprotectBytes(File.ReadAllBytes(blobPath));
                 if (roundtrip.Length != plain.Length)
                 {
                     Diag("custodian:push-verify-mismatch");
@@ -1673,26 +1759,38 @@ namespace PayswapBrokerPeerHelper
             // ACL 最后收紧（验证之后）：blob 是 SYSTEM-DPAPI 包装（用户即使临时可读
             // 也无法解包），稳态 = 仅 SYSTEM 可访问（A4 存储边界）。console 探针语境
             // （非 SYSTEM）在验证阶段需要自身可读 —— 收紧必须在验证之后。
-            try { HardenFileSystemOnly(custodianActiveKeyBlobFile); }
+            try { HardenFileSystemOnly(blobPath); }
             catch
             {
                 Diag("custodian:push-acl-failed");
                 WritePipeLine(pipe, "{\"v\":1,\"ok\":false,\"error\":\"persist-failed\"}");
                 return;
             }
-            lock (CustodianStateLock) { custodianKeyHex = key; }
-            Diag("custodian:push-ok len=" + key.Length);
+            lock (CustodianStateLock) { CustodianKeySlots[slot] = key; }
+            Diag(namedSlot
+                ? "custodian:push-ok slot=" + slot + " len=" + key.Length
+                : "custodian:push-ok len=" + key.Length);
             WritePipeLine(pipe, "{\"v\":1,\"ok\":true}");
         }
 
         /** 持久托管 drop（A4）：清内存 → 删 blob → 证实不存在 → 才应答 ok。清除
-            不可证实 = ok:false（连接状态绝不被误认为成功撤销）。 */
-        private static void ServeCustodianDrop(NamedPipeServerStream pipe)
+            不可证实 = ok:false（连接状态绝不被误认为成功撤销）。v1.1：可选 slot
+            （命名槽）；缺省 = 旧版单槽。 */
+        private static void ServeCustodianDrop(NamedPipeServerStream pipe, string opLine)
         {
-            lock (CustodianStateLock) { custodianKeyHex = null; }
+            string slot = RequestedSlot(opLine);
+            if (slot.Length > 0 && !IsValidCustodianSlot(slot))
+            {
+                Diag("custodian:drop-slot-invalid len=" + slot.Length);
+                WritePipeLine(pipe, "{\"v\":1,\"ok\":false,\"error\":\"slot-invalid\"}");
+                return;
+            }
+            bool namedSlot = slot.Length > 0;
+            string blobPath = namedSlot ? SlotBlobPath(slot) : custodianActiveKeyBlobFile;
+            lock (CustodianStateLock) { CustodianKeySlots.Remove(slot); }
             try
             {
-                if (File.Exists(custodianActiveKeyBlobFile)) File.Delete(custodianActiveKeyBlobFile);
+                if (File.Exists(blobPath)) File.Delete(blobPath);
             }
             catch
             {
@@ -1700,13 +1798,13 @@ namespace PayswapBrokerPeerHelper
                 WritePipeLine(pipe, "{\"v\":1,\"ok\":false,\"error\":\"drop-failed\"}");
                 return;
             }
-            if (File.Exists(custodianActiveKeyBlobFile))
+            if (File.Exists(blobPath))
             {
                 Diag("custodian:drop-verify-failed");
                 WritePipeLine(pipe, "{\"v\":1,\"ok\":false,\"error\":\"drop-failed\"}");
                 return;
             }
-            Diag("custodian:drop-ok");
+            Diag(namedSlot ? "custodian:drop-ok slot=" + slot : "custodian:drop-ok");
             WritePipeLine(pipe, "{\"v\":1,\"ok\":true}");
         }
 
@@ -1725,7 +1823,19 @@ namespace PayswapBrokerPeerHelper
                 return;
             }
             string key;
-            lock (CustodianStateLock) { key = custodianKeyHex; }
+            lock (CustodianStateLock)
+            {
+                // v1.1：op 行可选 slot —— 命名槽缺省 = 旧版单槽（wire 行为逐字不变）。
+                // 槽缺失（未 push/已 drop）= 诚实 no-key（network-free，绝不借用他槽）。
+                string slot = RequestedSlot(opLine);
+                if (slot.Length > 0 && !IsValidCustodianSlot(slot))
+                {
+                    Diag("custodian:get-slot-invalid len=" + slot.Length);
+                    WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"no-key\"}");
+                    return;
+                }
+                CustodianKeySlots.TryGetValue(slot, out key);
+            }
             if (key == null)
             {
                 Diag("custodian:get-no-key");
@@ -2082,7 +2192,13 @@ namespace PayswapBrokerPeerHelper
                 }
                 else if (op == "drop")
                 {
-                    opLine = "{\"op\":\"drop\"}";
+                    // v1.1：可选 --slot（命名槽）；缺省 = 旧版单槽（wire 兼容）。
+                    string slot = parsed.ContainsKey("--slot") && !string.IsNullOrWhiteSpace(parsed["--slot"])
+                        ? parsed["--slot"]
+                        : null;
+                    opLine = slot == null
+                        ? "{\"op\":\"drop\"}"
+                        : "{\"op\":\"drop\",\"slot\":\"" + slot.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"}";
                 }
                 else if (op == "push")
                 {
@@ -2093,12 +2209,22 @@ namespace PayswapBrokerPeerHelper
                         return 1;
                     }
                     key = key.Trim();
-                    opLine = "{\"op\":\"push\",\"key\":\"" + key + "\"}";
+                    string slot = parsed.ContainsKey("--slot") && !string.IsNullOrWhiteSpace(parsed["--slot"])
+                        ? parsed["--slot"]
+                        : null;
+                    opLine = slot == null
+                        ? "{\"op\":\"push\",\"key\":\"" + key + "\"}"
+                        : "{\"op\":\"push\",\"slot\":\"" + slot.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\",\"key\":\"" + key + "\"}";
                 }
                 else
                 {
                     string path = RequireArgument(parsed, "--path");
-                    opLine = "{\"op\":\"get\",\"path\":\"" + path + "\"}";
+                    string slot = parsed.ContainsKey("--slot") && !string.IsNullOrWhiteSpace(parsed["--slot"])
+                        ? parsed["--slot"]
+                        : null;
+                    opLine = slot == null
+                        ? "{\"op\":\"get\",\"path\":\"" + path + "\"}"
+                        : "{\"op\":\"get\",\"slot\":\"" + slot.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\",\"path\":\"" + path + "\"}";
                 }
                 byte[] opBytes = System.Text.Encoding.UTF8.GetBytes(opLine + "\n");
                 pipe.Write(opBytes, 0, opBytes.Length);

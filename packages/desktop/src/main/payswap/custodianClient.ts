@@ -2,9 +2,13 @@
  * ADR-P2-3 custodian 桥的桌面 main 侧实现（helper 客户端 spawn 封装）。
  *
  * 法则（normative；违反即实现缺陷）：
- *   - 密钥只经 stdin 进托管（`--custodian-push`）—— argv/env 永不带秘密；
- *   - 有界只读代理 GET（`--custodian-get --path`）—— 路径闭集在服务端强制；
- *   - revoke 清托管（`--custodian-drop`）—— 失败必须上抛（撤销不谎报成功）；
+ *   - 密钥只经 stdin 进托管（`--custodian-push`，可选 `--slot <名>` —— v1.1
+ *     命名槽：槽名 = 凭据存储键；缺省 = 旧版单槽，wire 行为逐字不变）——
+ *     argv/env 永不带秘密（槽名不是秘密：providerId + 随机连接 id + 种类）；
+ *   - 有界只读代理 GET（`--custodian-get --path`，可选 `--slot`）—— 路径闭集
+ *     在服务端强制；缺省槽 = 旧版单槽；
+ *   - revoke 清托管（`--custodian-drop`，可选 `--slot`）—— 失败必须上抛
+ *     （撤销不谎报成功）；
  *   - 注册（`--custodian-register`）自报父 pid —— 父 = electron main（本进程
  *     spawn）；服务端以内核事实核验映像 + 父链。
  *   - **fail-closed**（ADR-P2-3 A3）：托管不可用 = 显式 inactive 状态 + typed
@@ -54,6 +58,9 @@ export interface CustodianClientResult {
   stderr: string;
 }
 
+/** v1.1 命名槽的 argv 面（槽名 = 凭据存储键 —— 非秘密：provider + 随机连接 id + 种类）。 */
+export type CustodianClientSlotArg = { readonly slot?: string };
+
 /** spawnSync 封装（超时 = 45s 上限；windowsHide；stderr 只含稳定码）。 */
 function runClient(
   helperPath: string,
@@ -71,6 +78,11 @@ function runClient(
     stdout: result.stdout ?? "",
     stderr: result.stderr ?? "",
   };
+}
+
+/** 槽 argv（缺省 = 旧版单槽 —— 不加任何参数，wire 行为逐字不变）。 */
+function slotArgs(slot?: string): string[] {
+  return slot !== undefined && slot.length > 0 ? ["--slot", slot] : [];
 }
 
 type ClientReply = { ok?: boolean; registered?: number; status?: number; body?: string };
@@ -125,9 +137,14 @@ function executeDataOp(
  * 测试缝（与 runClient 同族、helper 客户端的 --endpoint-file console 缝同纪律）：
  * endpointFile / helperPath 可注入 —— 生产缺省恒为 CUSTODIAN_ENDPOINT_FILE 与
  * 真实供给解析（不变；隔离测试绝不触碰生产端点文件、也绝不依赖 staged 产物）。
+ * v1.1：push/drop/get 接受可选槽名（凭据存储键）—— 缺省 = 旧版单槽。
  */
 export function provisionDesktopCustodianBridge(
-  options?: { runClient?: typeof runClient; endpointFile?: string; helperPath?: string },
+  options?: {
+    runClient?: typeof runClient;
+    endpointFile?: string;
+    helperPath?: string;
+  },
 ): DesktopCustodianProvisioning {
   const run = options?.runClient ?? runClient;
   const endpointFile = options?.endpointFile ?? CUSTODIAN_ENDPOINT_FILE;
@@ -166,10 +183,14 @@ export function provisionDesktopCustodianBridge(
     };
   }
   const bridge: PayswapCustodianBridge = {
-    async push(key: string): Promise<void> {
-      const attempt = executeDataOp(helperPath, clientArgs, run, ["--custodian-push"], {
-        stdin: key,
-      });
+    async push(key: string, slot?: string): Promise<void> {
+      const attempt = executeDataOp(
+        helperPath,
+        clientArgs,
+        run,
+        ["--custodian-push", ...slotArgs(slot)],
+        { stdin: key },
+      );
       if (attempt.exitCode !== 0) {
         // A5/F3 税法收口：任何非零退出（门拒 70 / 不可达 71 / 协议失败 72 /
         // spawn 超时或 helper 内部错误）一律映射 typed custodian_unavailable
@@ -185,11 +206,12 @@ export function provisionDesktopCustodianBridge(
         );
       }
     },
-    async get(path: string): Promise<{ status: number; body: string }> {
+    async get(path: string, slot?: string): Promise<{ status: number; body: string }> {
       const attempt = executeDataOp(helperPath, clientArgs, run, [
         "--custodian-get",
         "--path",
         path,
+        ...slotArgs(slot),
       ]);
       if (attempt.exitCode !== 0) {
         // 传输面失败 → status 0（runtime 映射 502 → adapter typed unavailable），
@@ -199,8 +221,13 @@ export function provisionDesktopCustodianBridge(
       const reply = parseReply(attempt.stdout);
       return { status: reply.status ?? 0, body: reply.body ?? "" };
     },
-    async drop(): Promise<void> {
-      const attempt = executeDataOp(helperPath, clientArgs, run, ["--custodian-drop"]);
+    async drop(slot?: string): Promise<void> {
+      const attempt = executeDataOp(
+        helperPath,
+        clientArgs,
+        run,
+        ["--custodian-drop", ...slotArgs(slot)],
+      );
       if (attempt.exitCode !== 0) {
         // A5/F3 同款收口：非零退出一律 typed（撤销不谎报成功）。
         throw createPayswapCustodianUnavailableError(
