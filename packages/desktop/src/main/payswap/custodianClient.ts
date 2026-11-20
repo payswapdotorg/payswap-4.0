@@ -48,10 +48,6 @@ function resolveHelperPath(): string | null {
   return helperPath !== undefined && existsSync(helperPath) ? helperPath : null;
 }
 
-function v2Root(): string {
-  return getAppConfigDir();
-}
-
 export interface CustodianClientResult {
   exitCode: number;
   stdout: string;
