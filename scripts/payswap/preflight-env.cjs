@@ -524,7 +524,7 @@ function checkLiveKey() {
     );
     return null;
   }
-  if (/^rk_test_/.test(LIVE_KEY)) {
+  if (LIVE_KEY.startsWith('rk_test_')) {
     record("stripe-live-key", "ZCODE_E2E_STRIPE_LIVE_KEY presence (value never shown)", "pass", "present, restricted test-mode key (rk_test_*)");
     return "restricted-test";
   }
@@ -538,7 +538,7 @@ function checkLiveKey() {
     );
     return "live-forbidden";
   }
-  if (/^sk_test_/.test(LIVE_KEY)) {
+  if (LIVE_KEY.startsWith('sk_test_')) {
     record(
       "stripe-live-key",
       "ZCODE_E2E_STRIPE_LIVE_KEY presence (value never shown)",

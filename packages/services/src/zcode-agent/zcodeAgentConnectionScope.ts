@@ -688,8 +688,10 @@ export function createZCodeAgentConnectionScope(
             for (const entry of owned.values()) {
               if (workspaceKey(entry.target) === key && entry.topic === topic) forget(entry);
             }
+            // oxlint-disable-next-line no-useless-spread -- 同上：removePendingOwnership 会删 pendingByOwnership 的键（453 行）—— 外层快照迭代同为刻意。
             for (const group of [...pendingByOwnership.values()]) {
-              for (const pending of [...group]) {
+              // oxlint-disable-next-line no-useless-spread -- 快照迭代是刻意的：循环体内的 removePendingOwnership 会从同一个 Set/Map 删除（451-453 行）—— 直迭代集合正在被变更。
+            for (const pending of [...group]) {
                 if (workspaceKey(pending.target) !== key || pending.topic !== topic) continue;
                 pending.invalidatedByRuntimeRestart = true;
                 removePendingOwnership(pending);

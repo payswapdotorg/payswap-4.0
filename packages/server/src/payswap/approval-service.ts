@@ -156,9 +156,7 @@ export function createPayswapApprovalHost(options: {
   financialMode?: () => { active: boolean };
 }): PayswapApprovalHost {
   const { store } = options;
-  const ledgerHandle: PayswapGrantLedgerHandle = createPayswapGrantLedger({
-    ...(options.now !== undefined ? { now: options.now } : {}),
-  });
+  const ledgerHandle: PayswapGrantLedgerHandle = createPayswapGrantLedger((options.now !== undefined ? { now: options.now } : {}));
   const flow = createPayswapApprovalFlow({
     ...(options.now !== undefined ? { now: options.now } : {}),
     challengePort: createOperatorChallengePort(store),

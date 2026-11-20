@@ -141,7 +141,7 @@ function quoteForWindowsShell(token) {
 /** 子进程执行 + 全量日志捕获（stdout/stderr 合流、键值置换、超时保护）。 */
 function execStep(log, command, args, options = {}) {
   return new Promise((resolve) => {
-    const env = { ...process.env, ...(options.env || {}) };
+    const env = { ...process.env, ...options.env };
     // Windows 的 pnpm 是 .cmd shim —— Node >= 20 的 EINVAL 防线要求走 shell；
     // 命令词表为 runner 固定词（无用户输入拼接），引号由 quoteForWindowsShell 负责。
     const viaShell = process.platform === "win32" && command !== process.execPath;

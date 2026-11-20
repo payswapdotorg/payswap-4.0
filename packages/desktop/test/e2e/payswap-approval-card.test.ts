@@ -192,7 +192,7 @@ async function setFinancialWorkspace(active: boolean): Promise<void> {
   const options = (plugins.options ?? {}) as Record<string, Record<string, unknown>>;
   enabledPlugins[PAYSWAP_OFFICIAL_PLUGIN_ID] = true;
   options[PAYSWAP_OFFICIAL_PLUGIN_ID] = {
-    ...(options[PAYSWAP_OFFICIAL_PLUGIN_ID] ?? {}),
+    ...options[PAYSWAP_OFFICIAL_PLUGIN_ID],
     financialWorkspace: active,
   };
   await writeCliConfig({
