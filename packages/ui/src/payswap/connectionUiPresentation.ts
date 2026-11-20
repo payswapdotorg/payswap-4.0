@@ -213,6 +213,7 @@ export const PAYSWAP_CONNECTIONS_STATIC_I18N_KEYS: readonly string[] = [
   "payswap.connections.description",
   "payswap.connections.unavailable",
   "payswap.connections.providerLabel",
+  "payswap.connections.provider.paystack",
   "payswap.connections.provider.stripe",
   "payswap.connections.secretLabel",
   "payswap.connections.secretPlaceholder",

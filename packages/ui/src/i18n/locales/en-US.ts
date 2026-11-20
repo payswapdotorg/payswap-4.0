@@ -1557,6 +1557,7 @@ const enUS: Record<string, string> = {
   "payswap.connections.unavailable": "Payment connections are available in the desktop app.",
   "payswap.connections.providerLabel": "Provider",
   "payswap.connections.provider.stripe": "Stripe",
+  "payswap.connections.provider.paystack": "Paystack",
   "payswap.connections.secretLabel": "Secret key",
   "payswap.connections.secretPlaceholder": "sk_test_… or rk_test_… (restricted key preferred)",
   "payswap.connections.secretHint":
