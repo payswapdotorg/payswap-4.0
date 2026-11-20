@@ -43,8 +43,15 @@ import {
 import { SettingsGroupCard, SettingsRow } from "@/settings/SettingsPageParts.js";
 import { StatusDot, type StatusDotTone } from "@/settings/StatusDot.js";
 
-/** P2 的 provider 集（Stripe read-only vertical —— doc 04 §1 事实；P3 扩展）。 */
-const PAYSWAP_P2_PROVIDERS = [{ providerId: "stripe", labelKey: "payswap.connections.provider.stripe" }] as const;
+/**
+ * 连接 UI 的 provider 集（P3 扩展）：key-prefix 模式规格（凭据自身编码
+ * test/live 环境 —— 连接无需显式模式输入；client-credentials 形态的 PayPal
+ * 需要 clientId/mode 输入面，随其 UI 切片落地）。
+ */
+const PAYSWAP_CONNECT_PROVIDERS = [
+  { providerId: "stripe", labelKey: "payswap.connections.provider.stripe" },
+  { providerId: "paystack", labelKey: "payswap.connections.provider.paystack" },
+] as const;
 
 const STATUS_TONE_TO_DOT: Record<"positive" | "warning" | "muted", StatusDotTone> = {
   positive: "green",
@@ -80,7 +87,7 @@ export function PayswapConnectionsSection(): React.ReactNode {
   const { intl } = useZCodeIntl();
   const rpc = platform?.payswapConnectionRpc;
 
-  const [providerId, setProviderId] = useState<string>(PAYSWAP_P2_PROVIDERS[0].providerId);
+  const [providerId, setProviderId] = useState<string>(PAYSWAP_CONNECT_PROVIDERS[0].providerId);
   const [operatorSecret, setOperatorSecret] = useState("");
   const [displayName, setDisplayName] = useState("");
   const [connecting, setConnecting] = useState(false);
@@ -196,7 +203,7 @@ export function PayswapConnectionsSection(): React.ReactNode {
                 value={providerId}
                 onChange={(event) => setProviderId(event.target.value)}
               >
-                {PAYSWAP_P2_PROVIDERS.map((provider) => (
+                {PAYSWAP_CONNECT_PROVIDERS.map((provider) => (
                   <option key={provider.providerId} value={provider.providerId}>
                     {intl.formatMessage({ id: provider.labelKey })}
                   </option>

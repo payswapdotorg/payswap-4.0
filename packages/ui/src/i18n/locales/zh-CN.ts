@@ -1420,6 +1420,7 @@ const zhCN: Record<string, string> = {
   "payswap.connections.unavailable": "支付连接仅在桌面应用中可用。",
   "payswap.connections.providerLabel": "服务商",
   "payswap.connections.provider.stripe": "Stripe",
+  "payswap.connections.provider.paystack": "Paystack",
   "payswap.connections.secretLabel": "密钥",
   "payswap.connections.secretPlaceholder": "sk_test_… 或 rk_test_…（推荐受限密钥）",
   "payswap.connections.secretHint": "推荐使用受限密钥（restricted key）。连接是否可信由服务商回读验证决定。",
