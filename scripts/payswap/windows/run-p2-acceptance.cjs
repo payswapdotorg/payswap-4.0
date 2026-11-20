@@ -292,6 +292,7 @@ async function stageWindowsSecureStorage(context) {
       "engineering",
       "packages/desktop/test/payswap-account-connection-ipc.test.ts",
       "packages/desktop/test/payswap-account-runtime-wiring.test.ts",
+      "packages/desktop/test/payswap-custodian-provisioning-fail-closed.test.ts",
       "packages/desktop/test/payswap-psp-key-store.test.ts",
       "packages/desktop/test/payswap-psp-warmup.test.ts",
       "packages/desktop/test/payswap-psp-storage-backend-policy.test.ts",
@@ -306,7 +307,7 @@ async function stageWindowsSecureStorage(context) {
     ],
     { timeoutMs: 15 * 60 * 1000 },
   );
-  steps.push({ name: "vitest: P2 engineering law battery (13 suites, CI-canonical surface)", code: vitest.code });
+  steps.push({ name: "vitest: P2 engineering law battery (14 suites, CI-canonical surface)", code: vitest.code });
 
   // 3) harness 平台门回归（win32 路径永不触碰 Linux-only API）。
   log.append("\n[runner] step: harness platform-gate regression (node --test)\n");
@@ -324,7 +325,7 @@ async function stageWindowsSecureStorage(context) {
     [path.join(REPO_ROOT, "scripts", "payswap", "security", "custodian-service-probe.cjs")],
     { timeoutMs: 5 * 60 * 1000 },
   );
-  steps.push({ name: "custodian service probe battery (28 checks: diag hygiene, exact gates, deadlines, durable custody, client contract, F6 impersonation incl. drop + restart + residual)", code: custodianProbe.code });
+  steps.push({ name: "custodian service probe battery (54 checks: diag hygiene, exact gates, deadlines, durable custody, client contract, F6 impersonation incl. drop + restart + residual, W1 registration race incl. attacker-wins honesty + genuine loud typed refusal + recovery)", code: custodianProbe.code });
 
   // 5) custodian 隔离验收探针（ADR-P2-3 §A6 —— meaningful-green：环境必须真实
   //    含新连接凭据；同用户敌意链（master key → file key → enc:v1 槽）对新鲜

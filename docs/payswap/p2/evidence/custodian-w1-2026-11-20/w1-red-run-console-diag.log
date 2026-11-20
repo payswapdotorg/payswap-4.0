@@ -1,0 +1,57 @@
+2026-11-20T15:55:06.7843476Z custodian:endpoint-written
+2026-11-20T15:55:06.9943606Z custodian:conn pid=21800
+2026-11-20T15:55:07.0066274Z custodian:parent pid=20692
+2026-11-20T15:55:07.0076105Z custodian:register-ok parent=20692
+2026-11-20T15:55:07.2106983Z custodian:conn pid=9372
+2026-11-20T15:55:07.2247508Z custodian:parent pid=20692
+2026-11-20T15:55:07.2317451Z custodian:push-ok len=69
+2026-11-20T15:55:07.4379949Z custodian:conn pid=15072
+2026-11-20T15:55:07.4525208Z custodian:parent pid=20692
+2026-11-20T15:55:09.0425971Z custodian:get-status=401
+2026-11-20T15:55:09.4661509Z custodian:conn pid=12192
+2026-11-20T15:55:09.4746650Z custodian:parent pid=9392
+2026-11-20T15:55:09.4756734Z custodian:register-alive-exists registered=20692
+2026-11-20T15:55:09.4766829Z custodian:register-gate-reject parent=9392
+2026-11-20T15:55:11.1335004Z custodian:conn pid=11304
+2026-11-20T15:55:11.1501552Z custodian:parent pid=9392
+2026-11-20T15:55:11.1511573Z custodian:register-gate-reject parent=9392
+2026-11-20T15:55:11.3682022Z custodian:conn pid=22132
+2026-11-20T15:55:11.3865498Z custodian:parent pid=8820
+2026-11-20T15:55:11.3885329Z custodian:register-rebind parent=8820
+2026-11-20T15:55:11.6026189Z custodian:conn pid=4368
+2026-11-20T15:55:11.6186424Z custodian:parent pid=8820
+2026-11-20T15:55:12.1741775Z custodian:get-status=401
+2026-11-20T15:55:12.3902360Z custodian:conn pid=7440
+2026-11-20T15:55:12.4094349Z custodian:parent pid=8820
+2026-11-20T15:55:12.4156248Z custodian:push-persist-failed
+2026-11-20T15:55:12.6203059Z custodian:conn pid=5500
+2026-11-20T15:55:12.6374117Z custodian:parent pid=8820
+2026-11-20T15:55:12.6384286Z custodian:drop-ok
+2026-11-20T15:55:12.8553909Z custodian:conn pid=10704
+2026-11-20T15:55:12.8729835Z custodian:parent pid=8820
+2026-11-20T15:55:12.8765193Z custodian:push-ok len=78
+2026-11-20T15:55:13.2968025Z custodian:conn pid=16772
+2026-11-20T15:55:13.3148705Z custodian:parent pid=2916
+2026-11-20T15:55:13.3148705Z custodian:register-alive-exists registered=8820
+2026-11-20T15:55:13.3148705Z custodian:register-gate-reject parent=2916
+2026-11-20T15:55:13.5219552Z custodian:conn pid=19048
+2026-11-20T15:55:13.5483048Z custodian:parent pid=2916
+2026-11-20T15:55:13.5483048Z custodian:data-gate-reject parent=2916
+2026-11-20T15:55:13.7575386Z custodian:conn pid=20532
+2026-11-20T15:55:13.7823146Z custodian:parent pid=2916
+2026-11-20T15:55:13.7823146Z custodian:data-gate-reject parent=2916
+2026-11-20T15:55:13.9878181Z custodian:conn pid=21044
+2026-11-20T15:55:14.0029948Z custodian:parent pid=2916
+2026-11-20T15:55:14.0029948Z custodian:data-gate-reject parent=2916
+2026-11-20T15:55:15.6595847Z custodian:conn pid=5344
+2026-11-20T15:55:15.6756317Z custodian:parent pid=22400
+2026-11-20T15:55:15.6766495Z custodian:register-rebind parent=22400
+2026-11-20T15:55:15.8815650Z custodian:conn pid=20952
+2026-11-20T15:55:15.9005180Z custodian:parent pid=22400
+2026-11-20T15:55:15.9030437Z custodian:push-persist-failed
+2026-11-20T15:55:16.1193677Z custodian:conn pid=19900
+2026-11-20T15:55:16.1422701Z custodian:parent pid=22400
+2026-11-20T15:55:16.7251779Z custodian:get-status=401
+2026-11-20T15:55:16.9434259Z custodian:conn pid=21096
+2026-11-20T15:55:16.9605393Z custodian:parent pid=22400
+2026-11-20T15:55:16.9615384Z custodian:drop-ok

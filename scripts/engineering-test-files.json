@@ -102,6 +102,7 @@
   "packages/desktop/test/packagedSourcemapCleanup.test.ts",
   "packages/desktop/test/payswap-account-connection-ipc.test.ts",
   "packages/desktop/test/payswap-account-runtime-wiring.test.ts",
+  "packages/desktop/test/payswap-custodian-provisioning-fail-closed.test.ts",
   "packages/desktop/test/payswap-psp-key-store.test.ts",
   "packages/desktop/test/payswap-psp-storage-backend-policy.test.ts",
   "packages/desktop/test/payswap-psp-warmup.test.ts",

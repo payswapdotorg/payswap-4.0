@@ -1,0 +1,57 @@
+custodian-service-probe: helper = C:\Users\Lenovo\source\repos\payswap-4.0\packages\desktop\bundled-tools\win32-x64\payswap-broker-peer\payswap-broker-peer-helper.exe
+PASS diag-hygiene:server-start
+PASS diag-hygiene:register-ok — exit=0
+PASS diag-hygiene:push-ok — exit=0
+PASS diag-hygiene:no-secret-in-diag — synthetic secret must never reach the diag file
+PASS diag-hygiene:no-secret-in-client-capture — client stdout/stderr never echoes the secret
+PASS diag-hygiene:no-opline-in-diag — diag must not carry operation payloads at all
+PASS diag-hygiene:drop-ok — exit=0
+PASS exact-gates:non-electron-register-refused — exit=70 (EOF no reply)
+PASS exact-gates:copied-helper-refused — exit=70 (copied image != configured client helper)
+PASS deadlines:valid-client-served-after-silent-client — exit=0
+PASS deadlines:valid-client-served-after-partial-token — exit=0
+PASS deadlines:valid-client-served-after-oversized-line — exit=0
+PASS deadlines:valid-client-served-while-held-open — exit=0
+PASS custody:push-ok — exit=0
+PASS custody:blob-persisted — blob present after verified push
+PASS custody:blob-not-plaintext — blob must be SYSTEM-DPAPI wrapped
+PASS custody:persist-seam-register-ok — exit=0
+PASS custody:persist-failure-not-confirmed — exit=72 (persist-failed must not ack ok)
+PASS custody:drop-ok — exit=0
+PASS custody:blob-verifiably-gone — blob absent after drop
+PASS custody:unreachable-exit-71 — exit=71
+PASS f6:genuine-registration-established — IDLE-REGISTER exit=0
+PASS f6:impersonator-register-refused-while-genuine-alive — exit=70 (in-registered main alive → rebind refused)
+PASS f6:impersonator-push-refused-while-genuine-alive — exit=70 (parent pid != registered pid)
+PASS f6:impersonator-get-refused-while-genuine-alive — exit=70
+PASS f6:impersonator-drop-refused-while-genuine-alive — exit=70 (all four custody ops blocked for the impersonator)
+PASS f6:residual-rebind-after-genuine-death-expected — fresh electron main rebinds once the registered main is dead (race window — must stay visible, not silently change)
+PASS f6:service-restart-registration-cleared — fresh registration after restart (in-memory state cleared)
+PASS w1:genuine-registers — pid=22364 exit=0
+PASS w1:genuine-get-empty-custody-no-key — exit=0 body=no-key (honest custody state — deterministic, network-free)
+PASS w1:genuine-push-establishes-custody — exit=0 (verified persistence = the channel is proven before the attack)
+PASS w1:genuine-custody-drop-verified — exit=0 (blob verifiably gone — custody empty at attack time)
+PASS w1:alive-gate-refuses-probe-while-genuine-alive — probe exit=70 diag alive-exists registered=22364 count=1
+PASS w1:genuine-death-clears-alive-state — probe exit=70 (refused by the IMAGE gate now, not the alive gate — alive-exists 1→1, register-gate-reject=2)
+PASS w1:attacker-wins-race-register — pid=11188 exit=0 (the documented race is real — recorded honestly, not hidden)
+PASS w1:attacker-rebind-recorded-in-diag — diag records the rebinding pid (ADR §A0.5 item 2)
+PASS w1:attacker-get-reaches-custody-no-key — exit=0 body=no-key (the winner queries custody and receives its honest state; the winner overwriting the INCUMBENT material is recorded on the live SYSTEM-service leg)
+PASS w1:attacker-push-controls-custody — exit=0 (attacker canary in custody — length 78; both attacker pushes are verified by the time this is evaluated)
+PASS w1:attacker-drop-destroys-custody — exit=0 (drop acks ok only after the blob is verifiably gone server-side — verify-before-ack; the subsequent attacker re-push succeeding on the CREATE path proves the blob was absent between the drop and the re-push)
+PASS w1:attacker-repush-restores-canary — exit=0 (custody holds attacker material again; diag push-ok len=78 x2)
+PASS w1:genuine-register-refused-while-attacker-holds — exit=70 stdout-empty=true (exit 70 EOF = the exact boundary custodianClient.ts maps to inactive register-refused → typed custodian_unavailable)
+PASS w1:genuine-push-refused-while-attacker-holds — exit=70 stdout-empty=true
+PASS w1:genuine-get-refused-while-attacker-holds — exit=70 stdout-empty=true (no reply bytes at all — attacker custody material cannot flow to the genuine app)
+PASS w1:genuine-drop-refused-while-attacker-holds — exit=70 stdout-empty=true (all four custody ops refused)
+PASS w1:diag-alive-exists-against-attacker-pid — diag alive-exists against attacker pid=1 (the genuine desktop's arrival was refused BECAUSE the attacker holds the registration — visible, not silent)
+PASS w1:diag-data-gate-reject-for-genuine — data-gate-reject parent=21680 count=3 (push/get/drop each refused at the data gate — kernel facts, not transport accidents)
+PASS w1:no-attacker-canary-reaches-genuine — attacker canary absent from every genuine-side stdout/stderr capture (no attacker credential material reached the genuine application)
+PASS w1:recovery-register-after-attacker-exit — pid=2752 exit=0 (documented rebind recovery path works once the attacker exits)
+PASS w1:recovery-rebind-recorded-in-diag — diag records the recovery rebind (old registration state discarded)
+PASS w1:recovery-drop-purges-attacker-material — exit=0 (the recovered genuine desktop purges the attacker's leftover custody material — drop acks ok only after the blob is verifiably gone server-side; the subsequent genuine push succeeding on the CREATE path proves the purge happened)
+PASS w1:recovery-get-empty-custody-no-key — exit=0 body=no-key (restored channel answers the genuine app with honest custody state — deterministic)
+PASS w1:recovery-push-restores-genuine-custody — exit=0 (custody restored to GENUINE material — diag push-ok len=74; the attacker's length-78 material was purged first)
+PASS w1:no-canary-material-anywhere-in-genuine-captures — no canary material echoed anywhere on the genuine side (A2 capture discipline holds under the race)
+PASS w1:no-canary-material-in-diag — no canary material in any diag decision line (A2 hygiene holds under the race)
+custodian-service-probe: artifacts kept at C:\Users\Lenovo\AppData\Local\Temp\payswap-custodian-probe-0yaw2P
+custodian-service-probe: 54/54 checks passed
