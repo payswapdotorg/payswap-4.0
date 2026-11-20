@@ -304,12 +304,13 @@ async function stageWindowsSecureStorage(context) {
       "packages/services/test/payswap-credential-security.test.ts",
       "packages/services/test/payswap-paystack-provider.test.ts",
       "packages/services/test/payswap-paypal-provider.test.ts",
+      "packages/services/test/payswap-paystack-data.test.ts",
       "packages/services/test/payswap-stripe-read-back.test.ts",
       "packages/ui/test/payswap-connection-ui-presentation.test.ts",
     ],
     { timeoutMs: 15 * 60 * 1000 },
   );
-  steps.push({ name: "vitest: P2 engineering law battery (16 suites, CI-canonical surface)", code: vitest.code });
+  steps.push({ name: "vitest: P2 engineering law battery (17 suites, CI-canonical surface)", code: vitest.code });
 
   // 3) harness 平台门回归（win32 路径永不触碰 Linux-only API）。
   log.append("\n[runner] step: harness platform-gate regression (node --test)\n");

@@ -631,25 +631,39 @@ export function createPayswapAccountService(
           },
         };
       }
-      const storageKey = payswapPspSecretCredentialKey(
-        record.providerId,
-        record.connectionId,
-        secretKind,
-      );
-      let secret: string | null;
-      try {
-        secret = await credentialPort.load(storageKey);
-      } catch (error) {
-        if (isPayswapPspSecureStorageUnavailableError(error)) {
+      // P3 client-credentials 记录携带凭据对 —— 全部声明种类现读（与
+      // refreshEvidence 同一多种类装载纪律），clientId 随端口输入。
+      const credentialValues = new Map<PayswapPspSecretKind, string>();
+      for (const kind of record.secretKinds) {
+        let value: string | null;
+        try {
+          value = await credentialPort.load(
+            payswapPspSecretCredentialKey(record.providerId, record.connectionId, kind),
+          );
+        } catch (error) {
+          if (isPayswapPspSecureStorageUnavailableError(error)) {
+            return {
+              kind: "refused",
+              refusal: { code: PAYSWAP_ACCOUNT_SECURE_STORAGE_REFUSAL_CODE, message: error.message },
+            };
+          }
+          throw error;
+        }
+        if (value === null) {
+          // 本地不一致（记录 connected 而键不在）：无 provider 证据不翻状态。
           return {
             kind: "refused",
-            refusal: { code: PAYSWAP_ACCOUNT_SECURE_STORAGE_REFUSAL_CODE, message: error.message },
+            refusal: {
+              code: "read_back_unavailable",
+              message: `The stored secret for connection '${record.connectionId}' is missing; revoke and re-connect, then retry.`,
+            },
           };
         }
-        throw error;
+        credentialValues.set(kind, value);
       }
-      if (secret === null) {
-        // 本地不一致（记录 connected 而键不在）：无 provider 证据不翻状态。
+      const secret = credentialValues.get(secretKind);
+      if (secret === undefined) {
+        // 不可达（上面逐种类检查过）—— 皮带扣。
         return {
           kind: "refused",
           refusal: {
@@ -667,6 +681,7 @@ export function createPayswapAccountService(
           mode: record.mode,
           secretKind,
           secret,
+          clientId: credentialValues.get("client-id"),
         });
         const parsed = payswapAccountReadBackOutcomeSchema.safeParse(rawOutcome);
         if (!parsed.success) {
