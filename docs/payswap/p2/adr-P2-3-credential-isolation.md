@@ -284,3 +284,51 @@ Live re-verification on the redeployed SYSTEM service (retained-handle binary
 `c670f706…`): the impersonator was refused at all four operations while the
 genuine main was alive; the fresh-main rebind after genuine death succeeded
 (residual visible); the genuine flow re-verified 4/4.
+
+### A0.6 Amendment 2026-11-20 (review round 3, item 2) — W1 permanent adversarial regression
+
+The round-3 task built the permanent adversarial regression for the W1
+residual itself (it does NOT close the race and does NOT reopen P2-Windows):
+
+1. **The race is now pinned end-to-end in the permanent battery**
+   (`batteryRegistrationRaceW1`, battery 54 checks incl. 26 `w1:` checks):
+   the attacker electron that wins the rebind race is recorded honestly
+   (register `ok:true`, `register-rebind parent=<attackerPid>` in the diag,
+   plus full winner control — get/push/drop/re-push over the custody channel
+   with a synthetic canary), and the arriving genuine desktop is refused
+   **loudly at all four custody ops** (exit 70, EOF, empty stdout — the exact
+   boundary `custodianClient.ts` maps to inactive `register-refused` → typed
+   `custodian_unavailable`), with the attacker canary asserted absent from
+   every genuine-side capture, the data-gate refusals asserted in the diag,
+   and the documented recovery (fresh genuine rebind after the attacker exits;
+   purge + re-push of genuine material) proven. RED-phase output against the
+   original behavior is retained
+   (`docs/payswap/p2/evidence/custodian-w1-2026-11-20/`); the loud-refusal
+   contract held on the original behavior — **no production gate was modified
+   to satisfy the regression** (only test seams with unchanged defaults:
+   `endpointFile`/`helperPath` options alongside the existing `runClient`
+   seam).
+2. **Desktop typed-refusal law is CI-canonical**
+   (`packages/desktop/test/payswap-custodian-provisioning-fail-closed.test.ts`,
+   8 cases, registered in the ci.yml P2 battery and the P2 runner vitest
+   list): register exit 70 → inactive `register-refused` with no bridge; data
+   ops exit 70 → exactly one full-gate re-register retry → typed
+   `custodian_unavailable`; recovery retry after the attacker exits; exit-72
+   unconfirmed outcomes typed, never faked; secret only via stdin.
+3. **Live SYSTEM-service confirmation (non-destructive)**: on the installed
+   service the race was won by an attacker electron (recorded honestly), the
+   arriving genuine desktop was refused at all four ops (70/EOF/empty), and
+   the fresh genuine main recovered with live Stripe 200s — custody blob/memory
+   never written. Evidence: `docs/payswap/p2/evidence/custodian-w1-2026-11-20/`.
+4. **Console-mode observation (fail-closed by design, no action)**: after a
+   verified push the blob is SYSTEM-only, so a console-mode service cannot
+   `File.Replace` an existing blob (honest `persist-failed`); the battery
+   sequences pushes onto absent blobs and Replace-while-exists is covered by
+   the live SYSTEM leg. Recorded as backlog observation H6 in
+   [post-p9-windows-security-backlog.md](post-p9-windows-security-backlog.md)
+   (H1–H6 consolidated there — **all `deferred_to_post_P9`**; none promoted
+   into current acceptance criteria).
+
+W1's status is unchanged: **OPEN by design, documented, loud, now
+battery-pinned end-to-end**. Its closure remains the OS-level identity
+separation task (backlog H2).

@@ -1,0 +1,63 @@
+{
+ "verdict": "W1 LOUD-REFUSAL CONTRACT HOLDS (race real + honest, genuine refused typed, recovery works)",
+ "date": "2026-11-20T16:19:22.815Z",
+ "gate": "first-alive-wins rebind race is REAL and recorded honestly; the arriving genuine desktop is refused at ALL FOUR custody ops (exit 70, EOF, empty stdout — the exact boundary custodianClient.ts maps to inactive register-refused → typed custodian_unavailable); no attacker material flows to the genuine app (refused before any reply bytes); documented recovery (fresh genuine rebind) works after the attacker exits",
+ "sequence": {
+  "genuineMain": {
+   "pid": 3088,
+   "registered": true,
+   "get": {
+    "exit": 0,
+    "stripeStatus": 200
+   }
+  },
+  "attackerWon": {
+   "pid": 1484,
+   "register": {
+    "code": 0,
+    "out": "{\"v\":1,\"ok\":true,\"registered\":1484}",
+    "err": ""
+   },
+   "incumbentGet": {
+    "exit": 0,
+    "stripeStatus": 200
+   }
+  },
+  "genuineRecoveryAttempt": {
+   "pid": 4596,
+   "refusals": {
+    "register": true,
+    "push": true,
+    "get": true,
+    "drop": true
+   },
+   "exits": {
+    "register": 70,
+    "push": 70,
+    "get": 70,
+    "drop": 70
+   }
+  },
+  "recovery": {
+   "pid": 15156,
+   "register": {
+    "exit": 0
+   },
+   "get": {
+    "exit": 0,
+    "stripeStatus": 200
+   }
+  }
+ },
+ "serviceIdentity": {
+  "serviceName": "PayswapCustodianSvc",
+  "binaryPath": "C:\\ProgramData\\payswap\\svc-bin\\payswap-custodian-svc.exe --svc-run --image C:\\Users\\Lenovo\\source\\repos\\payswap-4.0\\node_modules\\electron\\dist\\electron.exe",
+  "stagedBinarySha256": "92DF73184DB4E6B1A62C752C9E34C19B63165421E612D51B109982AA404ACBF3",
+  "deployedBy": "svc-install File.Copy of the staged binary (byte-identical); the deployed copy is SYSTEM+Admins ACL-denied to this user",
+  "configuredImage": "C:\\Users\\Lenovo\\source\\repos\\payswap-4.0\\node_modules\\electron\\dist\\electron.exe (sc qc BINARY_PATH)",
+  "note": "custody blob/memory are NEVER written by this test (attacker push/drop deliberately omitted live; read-only gets only)"
+ },
+ "nonDestructive": true,
+ "restoreNotes": "custody blob/memory never written (attacker push/drop omitted live by design; G2 push refused before any data flow) — no restore needed",
+ "consoleBatteryCompanion": "scripts/payswap/security/custodian-service-probe.cjs batteryRegistrationRaceW1 (54-check battery incl. 26 w1: checks — synthetic, private paths, all four ops for every actor)"
+}

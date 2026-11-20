@@ -122,19 +122,23 @@ function executeDataOp(
  * 构造 custodian 桥（fail-closed 词汇：托管缺席/门拒 = 显式 inactive 或 typed
  * 错误 —— 调用方不存在「undefined → legacy 回退」分支）。注册在装配时恰一次
  *（自报父 pid = electron main；映像/父链门在服务端以内核事实核验）。
+ * 测试缝（与 runClient 同族、helper 客户端的 --endpoint-file console 缝同纪律）：
+ * endpointFile / helperPath 可注入 —— 生产缺省恒为 CUSTODIAN_ENDPOINT_FILE 与
+ * 真实供给解析（不变；隔离测试绝不触碰生产端点文件、也绝不依赖 staged 产物）。
  */
 export function provisionDesktopCustodianBridge(
-  options?: { runClient?: typeof runClient },
+  options?: { runClient?: typeof runClient; endpointFile?: string; helperPath?: string },
 ): DesktopCustodianProvisioning {
   const run = options?.runClient ?? runClient;
-  if (!existsSync(CUSTODIAN_ENDPOINT_FILE)) {
+  const endpointFile = options?.endpointFile ?? CUSTODIAN_ENDPOINT_FILE;
+  if (!existsSync(endpointFile)) {
     return {
       state: "inactive",
       reason: "endpoint-absent",
       detail: "custodian endpoint file is absent (service not installed or not running)",
     };
   }
-  const helperPath = resolveHelperPath();
+  const helperPath = options?.helperPath ?? resolveHelperPath();
   if (helperPath === null) {
     return {
       state: "inactive",
