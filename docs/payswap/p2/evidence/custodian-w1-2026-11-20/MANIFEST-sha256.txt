@@ -4,3 +4,5 @@ ac82a85774d0e78496e7d4381391f1266c9e2cdfb2b1a210ff640fee9fcefab3 *w1-live-regist
 0eadf839a9ef0831a3f5c8486a51eb21d89f0709cd1a430a97bcffb6b72e13b2 *w1-battery-red-run-original-behavior.log
 dd86207b9c96b18a04c993aded2cbc7e184d8aa33b5eeedc160a9a259e592ccc *w1-battery-green-run-54of54.log
 c98f426f3030ea61fec1e6291306511d56a5155b8bbad140b18f6b7fa93106a7 *w1-red-run-console-diag.log
+8d25cf0e4818d9b88086c6b543a71600ef83565cf33e8c7c4c016ad73b6fa63e **w11-redeploy-verify.cjs
+a44830def893e4d869e7749e0202d36c56f2a24854495ef0d016942f6c35e31f **w11-redeploy-result.json
