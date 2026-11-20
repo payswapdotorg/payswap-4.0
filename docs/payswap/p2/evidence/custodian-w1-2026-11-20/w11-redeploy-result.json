@@ -1,0 +1,48 @@
+{
+ "verdict": "V1.1 REDEPLOY VERIFIED — named slots live, W1 loud-refusal contract holds, recovery works, custody left empty",
+ "date": "2026-11-20T23:27:35.614Z",
+ "serviceIdentity": {
+  "serviceName": "PayswapCustodianSvc",
+  "binaryPath": "C:\\ProgramData\\payswap\\svc-bin\\payswap-custodian-svc.exe (sc qc verified)",
+  "stagedBinarySha256": "e3902b3ae61bb3f08c47b54bb595e2ca20ea9f8076538adcb8804c017a35c90d",
+  "note": "svc-install File.Copy of the staged v1.1 binary (byte-identical)"
+ },
+ "sequence": {
+  "genuineMain": {
+   "pid": 6048,
+   "registered": true,
+   "namedSlotLifecycle": true
+  },
+  "attackerWon": {
+   "pid": 14608,
+   "register": {
+    "code": 0,
+    "outEmpty": false
+   }
+  },
+  "genuineRecoveryAttempt": {
+   "pid": 1836,
+   "refusals": {
+    "register": true,
+    "push": true,
+    "get": true,
+    "drop": true
+   },
+   "exits": {
+    "register": 70,
+    "push": 70,
+    "get": 70,
+    "drop": 70
+   }
+  },
+  "recovery": {
+   "pid": 6260,
+   "register": {
+    "exit": 0
+   }
+  }
+ },
+ "nonDestructive": true,
+ "custodyState": "starts empty (redeploy wipe) and stays empty — no provider material stored or read",
+ "restoreNotes": "reconnect the Stripe provider via the connection UI to restore live custody (the pre-deploy blob was wiped by the redeploy by design)"
+}
