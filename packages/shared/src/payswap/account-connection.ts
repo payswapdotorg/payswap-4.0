@@ -197,6 +197,89 @@ export const PAYSWAP_STRIPE_AUTH_SPEC: PayswapOperatorSecretAuthSpec = {
 };
 
 /**
+ * P3 provider-facts pin 的形态（doc 04 §5 dated-evidence discipline 的 provider
+ * 面 —— 与 protocols/ 的协议 pin 同纪律：每个编码事实都有官方 URL、检索日期与
+ * 再验证清单；未证实的事实绝不入实现）。
+ */
+export interface PayswapProviderEvidencePin {
+  readonly providerId: string;
+  /** 官方证据面（全部 https；逐条对应 verifiedBoundaryFacts 的来源）。 */
+  readonly officialSourceUrls: readonly string[];
+  /** 全部事实的检索日期（ISO 8601 — 重检索时整体翻新并记录新日期）。 */
+  readonly factsRetrievedAt: string;
+  /** 已验证的边界事实（实现只允许编码这里列出的面）。 */
+  readonly verifiedBoundaryFacts: readonly string[];
+  /** 再验证清单（非空 = 有在案的关注面；适配器使用的前置条件）。 */
+  readonly reverifyBeforeAdapterUse: readonly string[];
+}
+
+/**
+ * Paystack 官方事实 pin（P3 provider half，检索 2026-11-20）：
+ * - https://paystack.com/docs/api/authentication/ — Bearer SECRET_KEY；sk_test_/
+ *   sk_live_（secret，backend-only）与 pk_test_/pk_live_（public，frontend-only，
+ *   绝不作连接秘密）；无效凭据 401 Unauthorized；测试环境不处理结算。
+ * - https://paystack.com/docs/api/ — base URL https://api.paystack.co（test/live
+ *   同端点，键决定环境）；响应封套 {status: boolean, message, data}；金额为货币
+ *   最小单位。
+ * - https://paystack.com/docs/api/transfer-control/ — GET /balance「Fetch the
+ *   available balance on your integration」→ data: [{currency, balance}]。
+ * - https://paystack.com/docs/api/settlement/ — GET /settlement 条目含 integration
+ *   数值 id（商户身份的唯一官方踪迹；测试模式不产生结算 —— 见再验证清单）。
+ * 结构性缺口（typed refusal 面，见 reverifyBeforeAdapterUse）：官方 API 无
+ * merchant/business self-identity 端点 —— `verified` 结局的 providerAccountId
+ * 对 Paystack 没有官方事实来源；读回端口把成功的 balance 读回映射为显式 typed
+ * `unavailable`（状态不变，401 的 expiry 证据不受影响）。
+ */
+export const PAYSWAP_PAYSTACK_EVIDENCE_PIN: PayswapProviderEvidencePin = {
+  providerId: "paystack",
+  officialSourceUrls: [
+    "https://paystack.com/docs/api/authentication/",
+    "https://paystack.com/docs/api/",
+    "https://paystack.com/docs/api/transfer-control/",
+    "https://paystack.com/docs/api/settlement/",
+  ],
+  factsRetrievedAt: "2026-11-20",
+  verifiedBoundaryFacts: [
+    "Authorization: Bearer SECRET_KEY (secret key, backend API requests only; the public key pk_* is frontend-only and never a connection secret)",
+    "Base URL https://api.paystack.co for both test and live environments; the key determines the environment",
+    "Secret key prefixes sk_test_ (test) and sk_live_ (live)",
+    "Unauthenticated/invalid requests fail with HTTP 401 Unauthorized",
+    "JSON response envelope {status: boolean, message: string, data: ...}; amounts in currency subunits",
+    "GET /balance fetches the available balance on the integration (data: [{currency, balance}])",
+    "GET /settlement items carry an integration numeric id; settlements are not processed in test mode",
+    "No merchant/business self-identity endpoint exists in the official API reference (checked 2026-11-20)",
+  ],
+  reverifyBeforeAdapterUse: [
+    "Merchant/integration self-identity endpoint: none in the official API reference as of 2026-11-20 — when officially published, map the balance read-back's verified outcome to the official identifier instead of the typed identity-gap refusal",
+    "Paystack-Version header / API versioning: not documented on the official authentication page as of 2026-11-20",
+    "/balance currency coverage beyond the documented NGN samples",
+  ],
+};
+
+/**
+ * Paystack authSpec（P3 provider half；PAYSWAP_PAYSTACK_EVIDENCE_PIN 的事实，
+ * 检索 2026-11-20 在案）：operator-supplied secret key；sk_test_/sk_live_ 前缀
+ * 区分模式；public key（pk_*）是 frontend-only —— 绝不是连接秘密（formatCheck
+ * 拒绝）；revoke = delete-local-only（官方 deauthorize 面未证实 —— 不发明）。
+ */
+export const PAYSWAP_PAYSTACK_AUTH_SPEC: PayswapOperatorSecretAuthSpec = {
+  providerId: "paystack",
+  acquisition: {
+    kind: "operator-supplied-secret",
+    label: "Paystack secret key",
+    placeholder: "sk_live_<placeholder>",
+    formatCheck: /^sk_(?:test|live)_[A-Za-z0-9]{10,}$/,
+    modeDistinguishable: "key-prefix",
+    modePrefixes: [
+      { prefix: "sk_test_", mode: "test" },
+      { prefix: "sk_live_", mode: "live" },
+    ],
+  },
+  secretKinds: ["api-key"],
+  revoke: "delete-local-only",
+};
+
+/**
  * 按前缀推导连接模式（key-prefix 型规格）。无匹配前缀 → null（fail-closed：
  * 宁可拒绝，不可猜）。推导只是记录元数据；凭据有效性的最终权威是 provider
  * read-back（后续切片）。

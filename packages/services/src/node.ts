@@ -170,6 +170,15 @@ export {
   createStripeAccountReadBackPort,
   type PayswapStripeReadBackDependencies,
 } from "#src/payswap/index.js";
+// PaySwap P3 provider half：Paystack 读回 adapter + per-provider 路由器。
+export {
+  createPaystackAccountReadBackPort,
+  type PayswapPaystackReadBackDependencies,
+} from "#src/payswap/index.js";
+export {
+  createPayswapAccountReadBackRouter,
+  type PayswapAccountReadBackRouterDependencies,
+} from "#src/payswap/index.js";
 // PaySwap P2.2（ADR-P2-1）：真实 Stripe 只读数据 adapter ——
 // `PayswapAccountDataReadPort` 的 provider 运行时实现（getOverviewData 的四类别
 // 数据源；闭集类别、redaction-by-construction、no-write 的 wire 证明）。
@@ -184,6 +193,7 @@ export {
   createPayswapAccountRuntime,
   createPayswapCustodianUnavailableError,
   createCustodianRequiredRefusingCredentialPort,
+  CUSTODIAN_SECRET_MARKER,
   type PayswapAccountRuntime,
   type PayswapAccountRuntimeDependencies,
   type PayswapCustodianBridge,

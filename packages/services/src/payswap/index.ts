@@ -41,6 +41,14 @@ export {
   type PayswapStripeReadBackDependencies,
 } from "./providers/stripe/readBackAccount.js";
 export {
+  createPaystackAccountReadBackPort,
+  type PayswapPaystackReadBackDependencies,
+} from "./providers/paystack/readBackAccount.js";
+export {
+  createPayswapAccountReadBackRouter,
+  type PayswapAccountReadBackRouterDependencies,
+} from "./providers/readBackRouter.js";
+export {
   createStripeAccountDataReadPort,
   type PayswapStripeDataReadDependencies,
 } from "./providers/stripe/readAccountData.js";
