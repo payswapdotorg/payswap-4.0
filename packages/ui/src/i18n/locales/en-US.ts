@@ -1558,6 +1558,13 @@ const enUS: Record<string, string> = {
   "payswap.connections.providerLabel": "Provider",
   "payswap.connections.provider.stripe": "Stripe",
   "payswap.connections.provider.paystack": "Paystack",
+  "payswap.connections.provider.paypal": "PayPal",
+  "payswap.connections.clientIdLabel": "Client ID",
+  "payswap.connections.clientIdPlaceholder": "<client-id>",
+  "payswap.connections.modeLabel": "Environment",
+  "payswap.connections.modeHint": "Sandbox credentials verify against the sandbox; live credentials against production.",
+  "payswap.connections.modeTest": "Sandbox (test)",
+  "payswap.connections.modeLive": "Live (production)",
   "payswap.connections.secretLabel": "Secret key",
   "payswap.connections.secretPlaceholder": "sk_test_… or rk_test_… (restricted key preferred)",
   "payswap.connections.secretHint":

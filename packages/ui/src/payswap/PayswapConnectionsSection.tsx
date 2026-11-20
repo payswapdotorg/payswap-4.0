@@ -45,13 +45,27 @@ import { StatusDot, type StatusDotTone } from "@/settings/StatusDot.js";
 
 /**
  * 连接 UI 的 provider 集（P3 扩展）：key-prefix 模式规格（凭据自身编码
- * test/live 环境 —— 连接无需显式模式输入；client-credentials 形态的 PayPal
- * 需要 clientId/mode 输入面，随其 UI 切片落地）。
+ * test/live 环境 —— 连接无需显式模式输入）+ client-credentials 形态
+ * （PayPal —— 凭据对 + operator-declared 沙箱/生产模式：选中即出现
+ * clientId/mode 输入面）。
  */
 const PAYSWAP_CONNECT_PROVIDERS = [
   { providerId: "stripe", labelKey: "payswap.connections.provider.stripe" },
   { providerId: "paystack", labelKey: "payswap.connections.provider.paystack" },
+  {
+    providerId: "paypal",
+    labelKey: "payswap.connections.provider.paypal",
+    clientCredentials: true,
+  },
 ] as const;
+
+type PayswapConnectProvider = (typeof PAYSWAP_CONNECT_PROVIDERS)[number];
+
+function isClientCredentialsProvider(
+  provider: PayswapConnectProvider,
+): provider is PayswapConnectProvider & { clientCredentials: true } {
+  return "clientCredentials" in provider && provider.clientCredentials === true;
+}
 
 const STATUS_TONE_TO_DOT: Record<"positive" | "warning" | "muted", StatusDotTone> = {
   positive: "green",
@@ -89,12 +103,20 @@ export function PayswapConnectionsSection(): React.ReactNode {
 
   const [providerId, setProviderId] = useState<string>(PAYSWAP_CONNECT_PROVIDERS[0].providerId);
   const [operatorSecret, setOperatorSecret] = useState("");
+  const [clientId, setClientId] = useState("");
+  const [mode, setMode] = useState<"test" | "live">("test");
   const [displayName, setDisplayName] = useState("");
   const [connecting, setConnecting] = useState(false);
   const [notice, setNotice] = useState<PayswapConnectionNotice | null>(null);
   const [rows, setRows] = useState<PayswapConnectionStatusProjection[] | null>(null);
   const [busyConnectionId, setBusyConnectionId] = useState<string | null>(null);
   const mountedRef = useRef(true);
+
+  const selectedProvider = PAYSWAP_CONNECT_PROVIDERS.find(
+    (provider) => provider.providerId === providerId,
+  );
+  const clientCredentials =
+    selectedProvider !== undefined && isClientCredentialsProvider(selectedProvider);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -125,15 +147,23 @@ export function PayswapConnectionsSection(): React.ReactNode {
     if (!rpc || connecting) return;
     const secret = operatorSecret.trim();
     if (!secret) return;
+    // client-credentials 形态（PayPal）：clientId 与显式模式是凭据对的法定
+    // 一半 —— 服务侧规格法则做最终校验（这里只挡明显的空缺）。
+    const trimmedClientId = clientCredentials ? clientId.trim() : "";
+    if (clientCredentials && trimmedClientId.length === 0) return;
     setConnecting(true);
     // 法则 3：秘密单发 —— 提交即清空（不复显、不回填）。
     setOperatorSecret("");
     try {
-      const response = await rpc(
-        displayName.trim()
-          ? { op: "connect", providerId, operatorSecret: secret, displayName: displayName.trim() }
-          : { op: "connect", providerId, operatorSecret: secret },
-      );
+      const response = await rpc({
+        op: "connect",
+        providerId,
+        operatorSecret: secret,
+        ...(clientCredentials && trimmedClientId.length > 0
+          ? { clientId: trimmedClientId, mode }
+          : {}),
+        ...(displayName.trim() ? { displayName: displayName.trim() } : {}),
+      });
       if (!mountedRef.current) return;
       setNotice(presentPayswapConnectResponse(response));
       await refreshList();
@@ -145,7 +175,7 @@ export function PayswapConnectionsSection(): React.ReactNode {
     } finally {
       if (mountedRef.current) setConnecting(false);
     }
-  }, [rpc, connecting, operatorSecret, displayName, providerId, refreshList]);
+  }, [rpc, connecting, operatorSecret, displayName, providerId, clientCredentials, clientId, mode, refreshList]);
 
   const handleRowAction = useCallback(
     async (connectionId: string, action: "refresh" | "revoke") => {
@@ -231,6 +261,46 @@ export function PayswapConnectionsSection(): React.ReactNode {
               />
             }
           />
+          {clientCredentials && (
+            <>
+              <SettingsRow
+                label={intl.formatMessage({ id: "payswap.connections.clientIdLabel" })}
+                controlLayout="wide"
+                control={
+                  <Input
+                    id="payswap-connect-client-id"
+                    data-testid="payswap-connect-client-id"
+                    type="text"
+                    autoComplete="off"
+                    spellCheck={false}
+                    placeholder={intl.formatMessage({ id: "payswap.connections.clientIdPlaceholder" })}
+                    value={clientId}
+                    onChange={(event) => setClientId(event.target.value)}
+                  />
+                }
+              />
+              <SettingsRow
+                label={intl.formatMessage({ id: "payswap.connections.modeLabel" })}
+                description={intl.formatMessage({ id: "payswap.connections.modeHint" })}
+                control={
+                  <select
+                    data-testid="payswap-connect-mode"
+                    aria-label={intl.formatMessage({ id: "payswap.connections.modeLabel" })}
+                    className="h-9 min-w-0 flex-1 rounded-md border border-border bg-panel px-3 text-ui-sm text-foreground"
+                    value={mode}
+                    onChange={(event) => setMode(event.target.value === "live" ? "live" : "test")}
+                  >
+                    <option value="test">
+                      {intl.formatMessage({ id: "payswap.connections.modeTest" })}
+                    </option>
+                    <option value="live">
+                      {intl.formatMessage({ id: "payswap.connections.modeLive" })}
+                    </option>
+                  </select>
+                }
+              />
+            </>
+          )}
           <SettingsRow
             label={intl.formatMessage({ id: "payswap.connections.displayNameLabel" })}
             controlLayout="wide"
@@ -250,7 +320,11 @@ export function PayswapConnectionsSection(): React.ReactNode {
             <Button
               type="button"
               data-testid="payswap-connect-submit"
-              disabled={connecting || operatorSecret.trim().length === 0}
+              disabled={
+                connecting ||
+                operatorSecret.trim().length === 0 ||
+                (clientCredentials && clientId.trim().length === 0)
+              }
               onClick={() => void handleConnect()}
             >
               {intl.formatMessage({

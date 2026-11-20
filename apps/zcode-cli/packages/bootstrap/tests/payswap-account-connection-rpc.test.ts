@@ -313,6 +313,33 @@ describe("payswap connection rpc — operation round trips", () => {
     ]);
   });
 
+  it("connect forwards the client-credentials pair (P3: clientId + operator-declared mode) verbatim", async () => {
+    const { service, calls } = fakeService();
+    const host = makeHost(service);
+    const response = await host.handleConnectionRequest({
+      ipcEvent: mainFrameEvent(TRUSTED_URL),
+      payload: {
+        op: "connect",
+        providerId: "paypal",
+        operatorSecret: OPERATOR_SECRET,
+        clientId: "AeTestClientId1234567890",
+        mode: "test",
+      },
+    });
+    expect(response).toEqual({ ok: true, op: "connect", result: { kind: "connected", connection: PROJECTION_A } });
+    expect(calls).toEqual([
+      {
+        op: "connect",
+        input: {
+          providerId: "paypal",
+          operatorSecret: OPERATOR_SECRET,
+          clientId: "AeTestClientId1234567890",
+          mode: "test",
+        },
+      },
+    ]);
+  });
+
   it("revoke and refresh carry the connectionId verbatim", async () => {
     const { service, calls } = fakeService();
     const host = makeHost(service);

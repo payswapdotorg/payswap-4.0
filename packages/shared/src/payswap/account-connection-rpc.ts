@@ -70,6 +70,13 @@ export const payswapConnectionRpcRequestSchema = z.discriminatedUnion("op", [
       /** operator 供应的秘密（doc 04 §1.1）—— 只进不出的唯一字段。 */
       operatorSecret: z.string().min(1),
       displayName: z.string().trim().min(1).max(120).optional(),
+      /**
+       * P3 client-credentials 形态（PayPal）：凭据对的另一半 + operator-declared
+       * 沙箱/生产模式（凭据不编码环境 —— 不猜）。operator-supplied-secret 规格
+       * 的连接缺省缺席（声明了 mode 则 host 侧服务法则核对前缀一致性）。
+       */
+      clientId: z.string().trim().min(1).max(200).optional(),
+      mode: z.enum(["test", "live"]).optional(),
     })
     .strict(),
   z
@@ -158,6 +165,8 @@ export interface PayswapConnectionRpcServiceFace {
   connect(input: {
     providerId: string;
     operatorSecret: string;
+    clientId?: string;
+    mode?: "test" | "live";
     displayName?: string;
   }): Promise<PayswapConnectResult>;
   revoke(input: { connectionId: string }): Promise<PayswapRevokeResult>;
@@ -231,17 +240,17 @@ export function createPayswapDesktopConnectionHost(
         let result: unknown;
         switch (request.data.op) {
           case "connect": {
-            const input =
-              request.data.displayName !== undefined
-                ? {
-                    providerId: request.data.providerId,
-                    operatorSecret: request.data.operatorSecret,
-                    displayName: request.data.displayName,
-                  }
-                : {
-                    providerId: request.data.providerId,
-                    operatorSecret: request.data.operatorSecret,
-                  };
+            // P3：clientId/mode（client-credentials 形态）随请求转发 —— 服务侧
+            // 规格法则决定必填性/一致性（缺省缺席 = operator 流行为不变）。
+            const input = {
+              providerId: request.data.providerId,
+              operatorSecret: request.data.operatorSecret,
+              ...(request.data.displayName !== undefined
+                ? { displayName: request.data.displayName }
+                : {}),
+              ...(request.data.clientId !== undefined ? { clientId: request.data.clientId } : {}),
+              ...(request.data.mode !== undefined ? { mode: request.data.mode } : {}),
+            };
             result = await service.connect(input);
             break;
           }
