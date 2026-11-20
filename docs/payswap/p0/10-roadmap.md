@@ -27,6 +27,8 @@ Do not fork MetaMask or build a proprietary wallet/key-management service as par
 
 P0–P2 remain unchanged. P3 blockchain work is initially read-only plus wallet connection proof-of-control; no token approvals, transaction signing for payment, broadcast, relay or other blockchain write operation is enabled before P7. Chain/network selection is evidence-led and recorded in an ADR; the roadmap does not assume that every chain, token, bridge, wallet or jurisdiction is supported.
 
+**Current platform sequencing:** Windows desktop is the active implementation and acceptance leg. The Linux leg remains parked under the current product-owner direction; this blockchain addition does not reopen it. Implement and prove the blockchain rail and wallet-connector path on native Windows first. Keep contracts portable where practical, but do not claim Linux acceptance, start Linux work or use Windows evidence as a substitute for a future Linux gate.
+
 ## Live delivery status — single authoritative register
 
 This register is maintained **in this file only**. Update it in the same PR that proves a milestone gate. Issue trackers, PR descriptions, project boards, chat messages and dashboards may link here, but must not create competing status or acceptance records.
