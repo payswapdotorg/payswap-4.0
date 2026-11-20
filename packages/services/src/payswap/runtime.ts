@@ -29,6 +29,7 @@ import type {
   PayswapConnectionStatusProjection,
 } from "@zcode/shared/payswap";
 import {
+  PAYSWAP_PAYPAL_AUTH_SPEC,
   PAYSWAP_PAYSTACK_AUTH_SPEC,
   PAYSWAP_STRIPE_AUTH_SPEC,
 } from "@zcode/shared/payswap";
@@ -42,6 +43,7 @@ import {
 } from "./accounts/accountService.js";
 import { createPayswapConnectionRecordStore } from "./accounts/connectionRecordStore.js";
 import { createPaystackAccountReadBackPort } from "./providers/paystack/readBackAccount.js";
+import { createPaypalAccountReadBackPort } from "./providers/paypal/readBackAccount.js";
 import { createPayswapAccountReadBackRouter } from "./providers/readBackRouter.js";
 import { createStripeAccountDataReadPort } from "./providers/stripe/readAccountData.js";
 import { createStripeAccountReadBackPort } from "./providers/stripe/readBackAccount.js";
@@ -187,6 +189,12 @@ export function createPayswapAccountRuntime(
           ? `${dependencies.paystackApiBase.replace(/\/+$/, "")}/balance`
           : undefined,
       }),
+      paypal: createPaypalAccountReadBackPort({
+        // ADR-P2-3 纪律：同 Paystack —— custodian 标记凭据在 adapter 装配防线
+        // 零触达拒绝（Stripe 限定通道绝不借道）；多秘密凭据对在 connect 面被
+        // 服务端 typed 拒绝（单秘密槽托管边界）。
+        apiClient,
+      }),
     },
   });
   const readAccountData = createStripeAccountDataReadPort({
@@ -195,9 +203,9 @@ export function createPayswapAccountRuntime(
   });
   const accountService = createPayswapAccountService({
     credentialPort: custodianCredentialPort,
-    // P3 provider half：Paystack authSpec 注册（官方证据 pin 在 shared；
-    // Stripe 缺省行为不变 —— 两规格并注册，connect/refresh 按 providerId 分派）。
-    authSpecs: [PAYSWAP_STRIPE_AUTH_SPEC, PAYSWAP_PAYSTACK_AUTH_SPEC],
+    // P3 provider half：Paystack + PayPal authSpec 注册（官方证据 pin 在 shared；
+    // Stripe 缺省行为不变 —— 三规格并注册，connect/refresh 按 providerId 分派）。
+    authSpecs: [PAYSWAP_STRIPE_AUTH_SPEC, PAYSWAP_PAYSTACK_AUTH_SPEC, PAYSWAP_PAYPAL_AUTH_SPEC],
     // ADR-P2-3：桥必须转发给服务 —— revoke 臂的托管清除（drop）依赖它。此前
     // 装配漏传：服务的 custodianBridge 恒为 undefined，custodian 连接的撤销从未
     // 真正清托管（?. 静默吞掉）—— 本修复使「撤销必证实清除」成立。

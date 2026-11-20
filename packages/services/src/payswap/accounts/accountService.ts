@@ -44,16 +44,19 @@ import {
   PAYSWAP_STRIPE_AUTH_SPEC,
   projectPayswapConnectionStatus,
   createPayswapCustodianUnavailableError,
+  isPayswapClientCredentialsAuthSpec,
   isPayswapCustodianUnavailableError,
   type PayswapAccountDataReadPort,
   type PayswapAccountReadBackOutcome,
   type PayswapAccountReadBackPort,
   type PayswapAccountRefusal,
+  type PayswapClientCredentialsAuthSpec,
   type PayswapAccountOverviewDetail,
   type PayswapReadonlyCategoryResult,
   type PayswapAuthSpec,
   type PayswapConnectResult,
   type PayswapConnectionRecord,
+  type PayswapPspSecretKind,
   type PayswapConnectionStatusProjection,
   type PayswapRefreshResult,
   type PayswapRevokeResult,
@@ -138,10 +141,17 @@ export interface PayswapAccountServiceDependencies {
 }
 
 export interface PayswapAccountService {
-  /** 连接一个账户（operator-supplied-secret 流；typed refusal 语义见文件头）。 */
+  /**
+   * 连接一个账户（typed refusal 语义见文件头）。operator-supplied-secret 流 =
+   * operatorSecret（前缀区分模式）；P3 client-credentials 流（client-credentials
+   * 规格）= operatorSecret 携带 client secret + clientId 必填 + mode 显式声明
+   * （sandbox/live 凭据不编码环境 —— 不猜）。
+   */
   connect(input: {
     providerId: string;
     operatorSecret: string;
+    clientId?: string;
+    mode?: "test" | "live";
     displayName?: string;
   }): Promise<PayswapConnectResult>;
   /** 撤销连接（delete-local-only；幂等，补清残留秘密）。 */
@@ -215,6 +225,125 @@ export function createPayswapAccountService(
     return undefined;
   }
 
+  /**
+   * P3 client-credentials 连接流（PayPal 首落地）：凭据对（client-id +
+   * client-secret）各按其秘密种类存凭据 store；模式 = operator-declared
+   * （sandbox/live 凭据不编码环境 —— 官方无前缀记载，连接输入显式携带，不猜）。
+   * ADR-P2-3：托管通道当前是单秘密槽（P2 已验收边界）—— 托管在位时多秘密
+   * provider refuse typed（绝不部分入库制造损坏状态；多秘密托管随后续 P3
+   * 切片扩展）。拒绝先于记录 + 记录失败补偿删除的语义与 operator 流逐字同源。
+   */
+  async function connectWithClientCredentials(
+    spec: PayswapClientCredentialsAuthSpec,
+    input: {
+      providerId: string;
+      operatorSecret: string;
+      clientId?: string;
+      mode?: "test" | "live";
+      displayName?: string;
+    },
+  ): Promise<PayswapConnectResult> {
+    const clientId = input.clientId?.trim() ?? "";
+    if (clientId.length === 0) {
+      return refused(
+        "validation_failed",
+        `The ${spec.providerId} client id is required (the credential pair authenticates as a unit).`,
+      );
+    }
+    const clientSecret = input.operatorSecret.trim();
+    if (
+      clientSecret.length === 0 ||
+      !spec.acquisition.clientSecretFormatCheck.test(clientSecret)
+    ) {
+      return refused(
+        "validation_failed",
+        `The supplied secret does not match the expected ${spec.providerId} credential format.`,
+      );
+    }
+    const mode = input.mode;
+    if (mode !== "test" && mode !== "live") {
+      return refused(
+        "validation_failed",
+        `The ${spec.providerId} connection requires an explicit sandbox/live mode (the credentials do not encode the environment).`,
+      );
+    }
+    // ADR-P2-3：托管在位（Windows custodian 路径）= 单秘密槽 —— 多秘密凭据对
+    // 绝不部分入库（第二个 save 会覆盖第一个 —— 结构性拒绝，typed 可见）。
+    if (custodianBridge !== undefined && spec.secretKinds.length > 1) {
+      return refused(
+        PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE,
+        `The credential custodian currently holds a single managed secret (P2 acceptance boundary); ` +
+          `the ${spec.providerId} credential pair requires the tracked multi-secret custodian extension.`,
+      );
+    }
+    const connectionId = mintConnectionId();
+    const secretKinds = [...spec.secretKinds];
+    const secretValues: Partial<Record<PayswapPspSecretKind, string>> = {
+      "client-id": clientId,
+      "client-secret": clientSecret,
+    };
+    let record: PayswapConnectionRecord;
+    try {
+      record = payswapConnectionRecordSchema.parse({
+        connectionId,
+        providerId: spec.providerId,
+        mode,
+        displayName: input.displayName?.trim() || defaultDisplayName(spec.providerId, mode),
+        status: "connected",
+        secretKinds,
+        createdAt: now(),
+        updatedAt: now(),
+      });
+    } catch (error) {
+      return refused(
+        "validation_failed",
+        `The connection metadata is invalid: ${(error as Error).message}`,
+      );
+    }
+    // 拒绝先于记录：任一秘密存储失败 → typed 拒绝，零落盘（与 operator 流同源）。
+    const savedKinds: PayswapPspSecretKind[] = [];
+    try {
+      for (const secretKind of secretKinds) {
+        const value = secretValues[secretKind];
+        if (value === undefined) {
+          // 规格声明的种类无对应凭据值 = 注册表配置缺陷 → fail-closed。
+          throw new Error(`The ${spec.providerId} contract declared secret kind '${secretKind}' without a value.`);
+        }
+        await credentialPort.save(
+          payswapPspSecretCredentialKey(spec.providerId, connectionId, secretKind),
+          value,
+        );
+        savedKinds.push(secretKind);
+      }
+    } catch (error) {
+      // 补偿：删掉已入库的秘密（不留部分凭据对的孤儿密文），再映射 typed 拒绝。
+      for (const saved of savedKinds) {
+        await credentialPort
+          .delete(payswapPspSecretCredentialKey(spec.providerId, connectionId, saved))
+          .catch(() => undefined);
+      }
+      if (isPayswapPspSecureStorageUnavailableError(error)) {
+        return refused(PAYSWAP_ACCOUNT_SECURE_STORAGE_REFUSAL_CODE, error.message);
+      }
+      if (isPayswapCustodianUnavailableError(error)) {
+        return refused(PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE, error.message);
+      }
+      throw error;
+    }
+    // 补偿：记录写失败 → 尽力删除已存凭据对（不留无记录的孤儿密文），原错误上抛。
+    try {
+      await connectionStore.upsert(record);
+    } catch (error) {
+      for (const secretKind of secretKinds) {
+        await credentialPort
+          .delete(payswapPspSecretCredentialKey(spec.providerId, connectionId, secretKind))
+          .catch(() => undefined);
+      }
+      throw error;
+    }
+    return { kind: "connected", connection: projectPayswapConnectionStatus(record) };
+  }
+
   return {
     async connect(input) {
       const spec = authSpecs.find((entry) => entry.providerId === input.providerId);
@@ -223,6 +352,11 @@ export function createPayswapAccountService(
           "unsupported_provider",
           `No PaySwap provider contract is registered for '${input.providerId}'.`,
         );
+      }
+      // P3 client-credentials 形态（PayPal 首落地）：凭据对 + operator-declared
+      // 模式。operator-supplied-secret 流在其分支之后，行为逐字不变。
+      if (isPayswapClientCredentialsAuthSpec(spec)) {
+        return connectWithClientCredentials(spec, input);
       }
       const secret = input.operatorSecret.trim();
       if (!secret || !spec.acquisition.formatCheck.test(secret)) {
@@ -239,9 +373,15 @@ export function createPayswapAccountService(
           `The supplied ${spec.providerId} key does not carry a recognizable test/live prefix.`,
         );
       }
+      // P3：operator-declared 模式与 key-prefix 推导并存时必须一致（不猜、不静默）。
+      if (input.mode !== undefined && input.mode !== mode) {
+        return refused(
+          "validation_failed",
+          `The declared '${input.mode}' mode does not match the ${spec.providerId} key's prefix-derived mode ('${mode}'); connect without the declared mode or use the matching environment's key.`,
+        );
+      }
       const connectionId = mintConnectionId();
-      // P2 的 operator-supplied-secret 流恰好一种秘密；多秘密种类（client-id/secret
-      // 等）随 P3 的 oauth/client-credentials 形态落地，不提前发明。规格未声明任何
+      // P2 的 operator-supplied-secret 流恰好一种秘密。规格未声明任何
       // 秘密种类 = 注册表配置缺陷 → fail-closed 拒绝（不猜）。
       const secretKind = spec.secretKinds[0];
       if (secretKind === undefined) {
@@ -349,8 +489,9 @@ export function createPayswapAccountService(
           `No PaySwap provider read-back adapter is registered for '${record.providerId}'.`,
         );
       }
-      // P2 的 operator-supplied-secret 流恰一种秘密；多秘密形态随 P3 落地。
-      // 规格未声明秘密种类 = 记录/store 不一致 → fail-closed 拒绝（不猜）。
+      // P2 的 operator-supplied-secret 流恰一种秘密；P3 client-credentials 记录
+      // 携带凭据对（[0] = 主秘密，client-id 作为可选另一半随端口输入）。规格未
+      // 声明秘密种类 = 记录/store 不一致 → fail-closed 拒绝（不猜）。
       const secretKind = record.secretKinds[0];
       if (secretKind === undefined) {
         return refused(
@@ -358,25 +499,34 @@ export function createPayswapAccountService(
           `The connection record for '${record.connectionId}' carries no secret kinds; nothing to verify.`,
         );
       }
-      const storageKey = payswapPspSecretCredentialKey(
-        record.providerId,
-        record.connectionId,
-        secretKind,
-      );
-      // 秘密读取走凭据端口 load（Gate E2 键级政策在彼处：fail-closed typed 拒绝
+      // 全部声明种类现读凭据端口（Gate E2 键级政策在彼处：fail-closed typed 拒绝
       // 映射账户服务 refusal，code 逐字复用 —— 连接 UI 按 code 分流）。
-      let secret: string | null;
-      try {
-        secret = await credentialPort.load(storageKey);
-      } catch (error) {
-        if (isPayswapPspSecureStorageUnavailableError(error)) {
-          return refused(PAYSWAP_ACCOUNT_SECURE_STORAGE_REFUSAL_CODE, error.message);
+      const credentialValues = new Map<PayswapPspSecretKind, string>();
+      for (const kind of record.secretKinds) {
+        let value: string | null;
+        try {
+          value = await credentialPort.load(
+            payswapPspSecretCredentialKey(record.providerId, record.connectionId, kind),
+          );
+        } catch (error) {
+          if (isPayswapPspSecureStorageUnavailableError(error)) {
+            return refused(PAYSWAP_ACCOUNT_SECURE_STORAGE_REFUSAL_CODE, error.message);
+          }
+          throw error;
         }
-        throw error;
+        if (value === null) {
+          // 本地不一致（记录 connected 而键不在）：无 provider 证据不翻状态 ——
+          // typed 拒绝；操作员 revoke 或重连处置。
+          return refused(
+            "read_back_unavailable",
+            `The stored secret for connection '${record.connectionId}' is missing; revoke and re-connect, then retry.`,
+          );
+        }
+        credentialValues.set(kind, value);
       }
-      if (secret === null) {
-        // 本地不一致（记录 connected 而键不在）：无 provider 证据不翻状态 ——
-        // typed 拒绝；操作员 revoke 或重连处置。
+      const secret = credentialValues.get(secretKind);
+      if (secret === undefined) {
+        // 不可达（上面逐种类检查过）—— 皮带扣。
         return refused(
           "read_back_unavailable",
           `The stored secret for connection '${record.connectionId}' is missing; revoke and re-connect, then retry.`,
@@ -391,6 +541,7 @@ export function createPayswapAccountService(
           mode: record.mode,
           secretKind,
           secret,
+          clientId: credentialValues.get("client-id"),
         });
         const parsed = payswapAccountReadBackOutcomeSchema.safeParse(rawOutcome);
         if (!parsed.success) {
