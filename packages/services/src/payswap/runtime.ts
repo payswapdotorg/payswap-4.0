@@ -28,6 +28,10 @@ import type {
   PayswapAccountOverviewDetail,
   PayswapConnectionStatusProjection,
 } from "@zcode/shared/payswap";
+import {
+  PAYSWAP_PAYSTACK_AUTH_SPEC,
+  PAYSWAP_STRIPE_AUTH_SPEC,
+} from "@zcode/shared/payswap";
 import { createCredentialService } from "../credential/credentialService.js";
 import {
   CUSTODIAN_SECRET_MARKER,
@@ -37,6 +41,8 @@ import {
   type PayswapCustodianBridge,
 } from "./accounts/accountService.js";
 import { createPayswapConnectionRecordStore } from "./accounts/connectionRecordStore.js";
+import { createPaystackAccountReadBackPort } from "./providers/paystack/readBackAccount.js";
+import { createPayswapAccountReadBackRouter } from "./providers/readBackRouter.js";
 import { createStripeAccountDataReadPort } from "./providers/stripe/readAccountData.js";
 import { createStripeAccountReadBackPort } from "./providers/stripe/readBackAccount.js";
 
@@ -49,6 +55,8 @@ export interface PayswapAccountRuntimeDependencies {
   apiClient?: ApiClient;
   /** Stripe API 基 URL（缺省 = 生产 https://api.stripe.com）。 */
   stripeApiBase?: string;
+  /** Paystack API 基 URL（缺省 = 生产 https://api.paystack.co）。 */
+  paystackApiBase?: string;
   /** ISO 时间源（缺省 = 真实时钟）。 */
   now?(): string;
   /** 连接 ID 铸造（缺省 = shared 法则）。 */
@@ -162,11 +170,24 @@ export function createPayswapAccountRuntime(
         },
       }
     : dependencies.apiClient;
-  const readBackAccount = createStripeAccountReadBackPort({
-    apiClient,
-    accountUrl: dependencies.stripeApiBase
-      ? `${dependencies.stripeApiBase.replace(/\/+$/, "")}/v1/account`
-      : undefined,
+  const readBackAccount = createPayswapAccountReadBackRouter({
+    byProvider: {
+      stripe: createStripeAccountReadBackPort({
+        apiClient,
+        accountUrl: dependencies.stripeApiBase
+          ? `${dependencies.stripeApiBase.replace(/\/+$/, "")}/v1/account`
+          : undefined,
+      }),
+      paystack: createPaystackAccountReadBackPort({
+        // ADR-P2-3 纪律：custodian 通道是 Stripe 限定的（P2 已验收边界）——
+        // Paystack 的标记路由包装同样无害（adapter 的装配防线在零网络触达下
+        // typed 拒绝标记凭据），故传入同一 wrapper 保持单一 transport 面。
+        apiClient,
+        balanceUrl: dependencies.paystackApiBase
+          ? `${dependencies.paystackApiBase.replace(/\/+$/, "")}/balance`
+          : undefined,
+      }),
+    },
   });
   const readAccountData = createStripeAccountDataReadPort({
     apiClient,
@@ -174,6 +195,9 @@ export function createPayswapAccountRuntime(
   });
   const accountService = createPayswapAccountService({
     credentialPort: custodianCredentialPort,
+    // P3 provider half：Paystack authSpec 注册（官方证据 pin 在 shared；
+    // Stripe 缺省行为不变 —— 两规格并注册，connect/refresh 按 providerId 分派）。
+    authSpecs: [PAYSWAP_STRIPE_AUTH_SPEC, PAYSWAP_PAYSTACK_AUTH_SPEC],
     // ADR-P2-3：桥必须转发给服务 —— revoke 臂的托管清除（drop）依赖它。此前
     // 装配漏传：服务的 custodianBridge 恒为 undefined，custodian 连接的撤销从未
     // 真正清托管（?. 静默吞掉）—— 本修复使「撤销必证实清除」成立。

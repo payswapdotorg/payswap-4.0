@@ -173,6 +173,7 @@
   "packages/services/test/payswap-agent-helper-forward.test.ts",
   "packages/services/test/payswap-credential-security.test.ts",
   "packages/services/test/payswap-custodian-fail-closed.test.ts",
+  "packages/services/test/payswap-paystack-provider.test.ts",
   "packages/services/test/payswap-protocol-contract.test.ts",
   "packages/services/test/payswap-stripe-read-back.test.ts",
   "packages/ui/test/payswap-connection-ui-presentation.test.ts",
