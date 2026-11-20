@@ -180,6 +180,15 @@ export {
   createPaypalAccountReadBackPort,
   type PayswapPaypalReadBackDependencies,
 } from "#src/payswap/index.js";
+// PaySwap P3 provider half：Paystack 只读数据 adapter + 数据路由器。
+export {
+  createPaystackAccountDataReadPort,
+  type PayswapPaystackDataReadDependencies,
+} from "#src/payswap/index.js";
+export {
+  createPayswapAccountDataReadRouter,
+  type PayswapAccountDataReadRouterDependencies,
+} from "#src/payswap/index.js";
 export {
   createPayswapAccountReadBackRouter,
   type PayswapAccountReadBackRouterDependencies,

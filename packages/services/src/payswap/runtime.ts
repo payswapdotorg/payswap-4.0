@@ -44,6 +44,8 @@ import {
 import { createPayswapConnectionRecordStore } from "./accounts/connectionRecordStore.js";
 import { createPaystackAccountReadBackPort } from "./providers/paystack/readBackAccount.js";
 import { createPaypalAccountReadBackPort } from "./providers/paypal/readBackAccount.js";
+import { createPaystackAccountDataReadPort } from "./providers/paystack/readAccountData.js";
+import { createPayswapAccountDataReadRouter } from "./providers/readAccountDataRouter.js";
 import { createPayswapAccountReadBackRouter } from "./providers/readBackRouter.js";
 import { createStripeAccountDataReadPort } from "./providers/stripe/readAccountData.js";
 import { createStripeAccountReadBackPort } from "./providers/stripe/readBackAccount.js";
@@ -197,9 +199,21 @@ export function createPayswapAccountRuntime(
       }),
     },
   });
-  const readAccountData = createStripeAccountDataReadPort({
-    apiClient,
-    apiBase: dependencies.stripeApiBase,
+  const readAccountData = createPayswapAccountDataReadRouter({
+    byProvider: {
+      stripe: createStripeAccountDataReadPort({
+        apiClient,
+        apiBase: dependencies.stripeApiBase,
+      }),
+      paystack: createPaystackAccountDataReadPort({
+        // ADR-P2-3 纪律：同读回面 —— custodian 标记凭据在 adapter 装配防线零
+        // 触达拒绝（Stripe 限定通道绝不借道给 Paystack 数据面）。
+        apiClient,
+        apiBase: dependencies.paystackApiBase,
+      }),
+      // PayPal 数据面暂无 adapter（官方 client_credentials 数据面证据未落）——
+      // 路由器对未注册 provider 抛出，服务端映射 honest unavailable。
+    },
   });
   const accountService = createPayswapAccountService({
     credentialPort: custodianCredentialPort,
