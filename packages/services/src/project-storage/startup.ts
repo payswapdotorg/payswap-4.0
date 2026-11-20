@@ -42,6 +42,7 @@ export async function prepareTasksIndexStorage(
   report("checking");
   await mkdir(dirname(path), { recursive: true });
   const db = new DatabaseSync(path);
+  let closeError: unknown = null;
   let failure: unknown;
   let migration: DatabaseMigrationFacts | undefined;
   try {
@@ -93,11 +94,17 @@ export async function prepareTasksIndexStorage(
     }
     throw error;
   } finally {
+    // close 失败仅在主路径成功时才升级为返回路径异常（失败事实随原异常交给
+    // Worker）—— rethrow 移出 finally（no-unsafe-finally：finally 内抛出会
+    // 覆盖在途异常）。
     try {
       db.close();
     } catch (error) {
-      if (!failure) throw error;
+      if (!failure) closeError = error;
     }
+  }
+  if (closeError !== null) {
+    throw closeError;
   }
   markTasksStorageMigrated(path);
   const repos = [

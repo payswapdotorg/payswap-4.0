@@ -36,9 +36,6 @@ interface ClientCredentialsCredentialPort {
   save(key: string, value: string): Promise<void>;
   delete(key: string): Promise<void>;
 }
-interface ClientCredentialsCustodianBridge {
-  push(key: string): Promise<void>;
-}
 
 function refused(code: PayswapAccountRefusal["code"], message: string): {
   kind: "refused";
@@ -54,8 +51,6 @@ function defaultDisplayName(providerId: string, mode: "test" | "live"): string {
 export interface PayswapClientCredentialsConnectDependencies {
   readonly credentialPort: ClientCredentialsCredentialPort;
   readonly connectionStore: PayswapConnectionRecordStore;
-  /** ADR-P2-3 custodian 桥（在位 = 单秘密槽边界 —— 多秘密凭据对拒绝连接）。 */
-  readonly custodianBridge?: ClientCredentialsCustodianBridge;
   readonly now: () => string;
   readonly mintConnectionId: () => string;
 }
@@ -77,7 +72,7 @@ export function createPayswapClientCredentialsConnect(
     displayName?: string;
   },
 ) => Promise<PayswapConnectResult> {
-  const { credentialPort, connectionStore, custodianBridge, now, mintConnectionId } = dependencies;
+  const { credentialPort, connectionStore, now, mintConnectionId } = dependencies;
 
   return async (spec, input): Promise<PayswapConnectResult> => {
     const clientId = input.clientId?.trim() ?? "";
@@ -104,15 +99,10 @@ export function createPayswapClientCredentialsConnect(
         `The ${spec.providerId} connection requires an explicit sandbox/live mode (the credentials do not encode the environment).`,
       );
     }
-    // ADR-P2-3：托管在位（Windows custodian 路径）= 单秘密槽 —— 多秘密凭据对
-    // 绝不部分入库（第二个 save 会覆盖第一个 —— 结构性拒绝，typed 可见）。
-    if (custodianBridge !== undefined && spec.secretKinds.length > 1) {
-      return refused(
-        PAYSWAP_ACCOUNT_CUSTODIAN_UNAVAILABLE_CODE,
-        `The credential custodian currently holds a single managed secret (P2 acceptance boundary); ` +
-          `the ${spec.providerId} credential pair requires the tracked multi-secret custodian extension.`,
-      );
-    }
+    // ADR-P2-3 v1.1：托管在位 = 命名槽（每个秘密种类各一枚槽，槽名 = 凭据
+    // 存储键）—— 凭据对可以入库（旧「单秘密槽覆盖」边界由命名槽结构性解决）。
+    // 注意：client-credentials 的 refresh 在托管下仍诚实 unavailable（token
+    // 交换代理是后续 v1.2 切片）—— 连接可建、可撤销，读面拒绝可见。
     const connectionId = mintConnectionId();
     const secretKinds = [...spec.secretKinds];
     const secretValues: Partial<Record<PayswapPspSecretKind, string>> = {

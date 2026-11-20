@@ -141,7 +141,7 @@ function quoteForWindowsShell(token) {
 /** 子进程执行 + 全量日志捕获（stdout/stderr 合流、键值置换、超时保护）。 */
 function execStep(log, command, args, options = {}) {
   return new Promise((resolve) => {
-    const env = { ...process.env, ...(options.env || {}) };
+    const env = { ...process.env, ...options.env };
     // Windows 的 pnpm 是 .cmd shim —— Node >= 20 的 EINVAL 防线要求走 shell；
     // 命令词表为 runner 固定词（无用户输入拼接），引号由 quoteForWindowsShell 负责。
     const viaShell = process.platform === "win32" && command !== process.execPath;
@@ -328,7 +328,7 @@ async function stageWindowsSecureStorage(context) {
     [path.join(REPO_ROOT, "scripts", "payswap", "security", "custodian-service-probe.cjs")],
     { timeoutMs: 5 * 60 * 1000 },
   );
-  steps.push({ name: "custodian service probe battery (54 checks: diag hygiene, exact gates, deadlines, durable custody, client contract, F6 impersonation incl. drop + restart + residual, W1 registration race incl. attacker-wins honesty + genuine loud typed refusal + recovery)", code: custodianProbe.code });
+  steps.push({ name: "custodian service probe battery (60 checks: diag hygiene, exact gates, deadlines, durable custody, client contract, F6 impersonation incl. drop + restart + residual, W1 registration race incl. attacker-wins honesty + genuine loud typed refusal + recovery)", code: custodianProbe.code });
 
   // 5) custodian 隔离验收探针（ADR-P2-3 §A6 —— meaningful-green：环境必须真实
   //    含新连接凭据；同用户敌意链（master key → file key → enc:v1 槽）对新鲜

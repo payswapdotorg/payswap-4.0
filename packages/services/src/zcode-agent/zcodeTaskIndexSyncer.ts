@@ -624,11 +624,7 @@ export function createZCodeTaskIndexSyncer(
         // 终态读取完整 snapshot：v4 命令路径（createSession/sendText 走 v4/command）
         // 不经过 zcodeSessionService 的 op 驱动 snapshot 同步，行缺失/正文搜索/lastError
         // 全靠这里收敛；readSession(existing-only) 只读现有 runtime，不重新恢复 session。
-        void resyncTaskIndexRowFromAgent(target, failed ? "phase.error" : "phase.completed", {
-          // 修复原因：patch 已广播时不能让随后的 snapshot 回源再次制造完成提醒；
-          // 行缺失时则把同一 signal 交给回源结果，保证提醒既不丢也不重复。
-          ...(meta || !unreadSignal ? {} : { unreadSignal }),
-        });
+        void resyncTaskIndexRowFromAgent(target, failed ? "phase.error" : "phase.completed", (meta || !unreadSignal ? {} : { unreadSignal }));
       })
       .catch((error) => {
         logger.warn(

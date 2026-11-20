@@ -202,14 +202,10 @@ export function createPayswapDesktopApprovalHost(
   const ledgerHandle =
     options.ledger && options.minter
       ? { ledger: options.ledger, minter: options.minter }
-      : createPayswapGrantLedger({
-          ...(options.now !== undefined ? { now: options.now } : {}),
-        });
+      : createPayswapGrantLedger((options.now !== undefined ? { now: options.now } : {}));
   const challengeStore =
     options.challengeStore ??
-    createPayswapCardInstanceChallengeStore({
-      ...(options.now !== undefined ? { now: options.now } : {}),
-    });
+    createPayswapCardInstanceChallengeStore((options.now !== undefined ? { now: options.now } : {}));
   /** 法则持有的受信 origin 集（同一 Set 实例；host 每次解析前按现读刷新内容）。 */
   const trustedAppOrigins = new Set<string>();
   const flow: PayswapApprovalFlow = createPayswapApprovalFlow({
