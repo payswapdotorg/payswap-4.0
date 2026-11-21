@@ -43,7 +43,10 @@ import {
 } from "./accounts/accountService.js";
 import { createPayswapConnectionRecordStore } from "./accounts/connectionRecordStore.js";
 import { createPaystackAccountReadBackPort } from "./providers/paystack/readBackAccount.js";
-import { createPaypalAccountReadBackPort } from "./providers/paypal/readBackAccount.js";
+import {
+  createPaypalAccountReadBackPort,
+  type PayswapPaypalCustodianTokenPost,
+} from "./providers/paypal/readBackAccount.js";
 import { createPaystackAccountDataReadPort } from "./providers/paystack/readAccountData.js";
 import { createPayswapAccountDataReadRouter } from "./providers/readAccountDataRouter.js";
 import { createPayswapAccountReadBackRouter } from "./providers/readBackRouter.js";
@@ -174,7 +177,7 @@ export function createPayswapAccountRuntime(
           // 单槽（旧桌面 wire 兼容）。
           const slot = auth.slice(markerIndex + CUSTODIAN_SECRET_MARKER.length).replace(/^:/, "");
           const parsed = new URL(url);
-          const reply = await custodianBridge.get(parsed.pathname + parsed.search, slot);
+          const reply = await custodianBridge.get(parsed.pathname + parsed.search, slot, parsed.host);
           return new Response(reply.body, {
             status: reply.status === 0 ? 502 : reply.status,
           });
@@ -199,10 +202,18 @@ export function createPayswapAccountRuntime(
           : undefined,
       }),
       paypal: createPaypalAccountReadBackPort({
-        // ADR-P2-3 纪律：同 Paystack —— custodian 标记凭据在 adapter 装配防线
-        // 零触达拒绝（Stripe 限定通道绝不借道）；多秘密凭据对在 connect 面被
-        // 服务端 typed 拒绝（单秘密槽托管边界）。
+        // v1.2：托管 token 交换端口（PayPal 刷新在托管下经服务端双槽 Basic 完成；
+        // URL 闭集服务端强制）。
         apiClient,
+        custodianTokenPost: custodianBridge
+          ? (params: { mode: "test" | "live"; clientSlot: string; secretSlot: string }) => custodianBridge.post(
+              PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.apiBaseUrl[params.mode] +
+                PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.tokenPath,
+              params.clientSlot,
+              params.secretSlot,
+              "grant_type=client_credentials",
+            )
+          : undefined,
       }),
     },
   });

@@ -112,19 +112,9 @@ export function createPaystackAccountReadBackPort(
         `The Paystack read-back adapter received secret kind '${input.secretKind}'; the Paystack contract declares exactly [api-key].`,
       );
     }
-    // 装配防线 2（ADR-P2-3）：custodian 标记凭据 = Stripe 限定的托管通道 ——
-    // Paystack 绝不借道（零网络触达；typed unavailable，状态不变）。
-    if (input.secret.includes(CUSTODIAN_SECRET_MARKER)) {
-      return {
-        kind: "unavailable",
-        detail:
-          "The Paystack read-back requires a loadable provider credential; the custodian-managed " +
-          "credential channel is Stripe-scoped (ADR-P2-3 P2 acceptance) and cannot serve Paystack " +
-          "reads. Custodian support for Paystack is a separate tracked P3 slice.",
-      };
-    }
-    // 装配防线 3：秘密前缀推导的模式与记录 mode 不一致 = 本地不一致（不触网 ——
-    // 无 provider 证据不翻状态；操作员 revoke 或重连处置）。
+    // v1.2：custodian 标记凭据不再拒绝 —— 托管 GET 代理的 per-host 闭集已扩展
+    // （api.paystack.co 的四只读路径），标记请求经 wrapper 转发托管代理（服务端
+    // 按槽补真 Bearer）。模式一致性防线保留（见下）。
     const derivedMode = derivePayswapSecretKeyMode(input.secret, PAYSWAP_PAYSTACK_AUTH_SPEC);
     if (derivedMode === null || derivedMode !== input.mode) {
       return {

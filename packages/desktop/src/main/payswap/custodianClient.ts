@@ -81,6 +81,10 @@ function slotArgs(slot?: string): string[] {
   return slot !== undefined && slot.length > 0 ? ["--slot", slot] : [];
 }
 
+function hostArgs(host?: string): string[] {
+  return host !== undefined && host.length > 0 ? ["--host", host] : [];
+}
+
 type ClientReply = { ok?: boolean; registered?: number; status?: number; body?: string };
 
 /** 解析 helper 的 stdout reply（畸形 = 协议失败）。 */
@@ -202,16 +206,38 @@ export function provisionDesktopCustodianBridge(
         );
       }
     },
-    async get(path: string, slot?: string): Promise<{ status: number; body: string }> {
+    async get(path: string, slot?: string, host?: string): Promise<{ status: number; body: string }> {
       const attempt = executeDataOp(helperPath, clientArgs, run, [
         "--custodian-get",
         "--path",
         path,
         ...slotArgs(slot),
+        ...hostArgs(host),
       ]);
       if (attempt.exitCode !== 0) {
         // 传输面失败 → status 0（runtime 映射 502 → adapter typed unavailable），
         // 不上抛：读面语义 = unavailable，不是崩溃。
+        return { status: 0, body: "custodian-unavailable" };
+      }
+      const reply = parseReply(attempt.stdout);
+      return { status: reply.status ?? 0, body: reply.body ?? "" };
+    },
+    /** v1.2 PayPal token 交换代理（URL 闭集在服务端强制；Basic 从两槽现读 ——
+     *  明文绝不经桌面）。有应答的 4xx/5xx 以 status 透传（适配器按结局映射）；
+     *  传输面失败/门拒 → status 0 语义（读面 unavailable，不崩溃）。 */
+    async post(url: string, userSlot: string, passSlot: string, body: string): Promise<{ status: number; body: string }> {
+      const attempt = executeDataOp(helperPath, clientArgs, run, [
+        "--custodian-post",
+        "--url",
+        url,
+        "--user-slot",
+        userSlot,
+        "--pass-slot",
+        passSlot,
+        "--body",
+        body,
+      ]);
+      if (attempt.exitCode !== 0) {
         return { status: 0, body: "custodian-unavailable" };
       }
       const reply = parseReply(attempt.stdout);

@@ -44,12 +44,68 @@ import {
 } from "@zcode/shared/payswap";
 import { CUSTODIAN_SECRET_MARKER } from "../../accounts/accountService.js";
 
+/**
+ * v1.2 托管 token 交换端口（runtime 从 custodian 桥注入）：URL 由 mode 决定
+ * （官方 pin 的 token 端点），Basic 凭据由托管按双槽现读，应答 {status, body}。
+ */
+export interface PayswapPaypalCustodianTokenPost {
+  (params: {
+    readonly mode: "test" | "live";
+    readonly clientSlot: string;
+    readonly secretSlot: string;
+  }): Promise<{ status: number; body: string }>;
+}
+
+/** custodian 标记里的槽名（"…custodian-managed:<存储键>" 后缀；缺省 = 旧版单槽）。 */
+function slotFromMarker(value: string): string {
+  const markerIndex = value.indexOf(CUSTODIAN_SECRET_MARKER);
+  return value.slice(markerIndex + CUSTODIAN_SECRET_MARKER.length).replace(/^:/, "");
+}
+
+/** token 交换应答 → 读回结局（401 = 唯一 auth-failed；verified 需 access_token + app_id）。 */
+function mapTokenExchangeReply(reply: { status: number; body: string }): PayswapAccountReadBackOutcome {
+  if (reply.status === 401) {
+    return {
+      kind: "auth-failed",
+      detail:
+        "PayPal rejected the client credentials (HTTP 401). Rotate or re-enter the key, then refresh again.",
+    };
+  }
+  if (reply.status !== 200) {
+    return {
+      kind: "unavailable",
+      detail: `PayPal answered HTTP ${reply.status} on the credential read-back; no account evidence.`,
+    };
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(reply.body);
+  } catch {
+    return {
+      kind: "unavailable",
+      detail: "The PayPal credential read-back returned a malformed (non-JSON) body; no account evidence.",
+    };
+  }
+  const token = (parsed as { access_token?: unknown } | null)?.access_token;
+  const appId = (parsed as { app_id?: unknown } | null)?.app_id;
+  if (typeof token !== "string" || token.trim().length === 0 || typeof appId !== "string" || appId.trim().length === 0) {
+    return {
+      kind: "unavailable",
+      detail: "The PayPal credential read-back returned no access token or app identity; no account evidence.",
+    };
+  }
+  return { kind: "verified", providerAccountId: appId };
+}
+
 /** 缺省读回超时（用户面验证读回 —— 悬挂端点必须被切断，永不无限等待）。 */
 const DEFAULT_READ_BACK_TIMEOUT_MS = 10_000;
 
 export interface PayswapPaypalReadBackDependencies {
   /** HTTP transport（缺省 = globalThis.fetch + AbortController 超时执行）。 */
   apiClient?: ApiClient;
+  /** v1.2 托管 token 交换端口（runtime 从 custodian 桥注入；缺席 = 托管凭据
+   *  typed unavailable 零触达 —— 单测注入面 preserved）。 */
+  custodianTokenPost?: PayswapPaypalCustodianTokenPost;
   /** 读回超时（缺省 10 s；随 init 传递给 transport —— 执行归实现）。 */
   timeoutMs?: number;
   /** token 端点覆盖（缺省 = 官方 pin 的 base[mode] + tokenPath；测试注入本地服务）。 */
@@ -91,6 +147,7 @@ export function createPaypalAccountReadBackPort(
   dependencies: PayswapPaypalReadBackDependencies = {},
 ): PayswapAccountReadBackPort {
   const timeoutMs = dependencies.timeoutMs ?? DEFAULT_READ_BACK_TIMEOUT_MS;
+  const custodianTokenPost = dependencies.custodianTokenPost;
   const apiClient = dependencies.apiClient ?? createDefaultPaypalApiClient(timeoutMs);
 
   return async (input: PayswapAccountReadBackInput): Promise<PayswapAccountReadBackOutcome> => {
@@ -106,16 +163,27 @@ export function createPaypalAccountReadBackPort(
         `The PayPal read-back adapter received secret kind '${input.secretKind}'; the PayPal contract's primary secret is exactly [client-secret].`,
       );
     }
-    // 装配防线 2（ADR-P2-3）：custodian 标记凭据 = Stripe 限定的托管通道 ——
-    // PayPal 绝不借道（零网络触达；typed unavailable，状态不变）。
-    if (input.secret.includes(CUSTODIAN_SECRET_MARKER)) {
-      return {
-        kind: "unavailable",
-        detail:
-          "The PayPal read-back requires a loadable credential pair; the custodian-managed " +
-          "credential channel is Stripe-scoped (ADR-P2-3 P2 acceptance) and cannot serve PayPal. " +
-          "Custodian support for multi-secret providers is a separate tracked P3 slice.",
-      };
+    // v1.2 装配防线 2（ADR-P2-3 托管凭据）：凭据对是 custodian 标记 = 走注入的
+    // token 交换代理（服务端按双槽补 Basic 凭据；URL 闭集服务端强制）。代理缺席
+    // （纯单测注入面）或只有一半标记 = typed unavailable，零网络触达。
+    const secretIsMarker = input.secret.includes(CUSTODIAN_SECRET_MARKER);
+    const clientIdIsMarker =
+      input.clientId !== undefined && input.clientId.includes(CUSTODIAN_SECRET_MARKER);
+    if (secretIsMarker || clientIdIsMarker) {
+      if (!custodianTokenPost || !secretIsMarker || !clientIdIsMarker) {
+        return {
+          kind: "unavailable",
+          detail:
+            "The PayPal read-back under credential custody requires the custodian token-exchange " +
+            "proxy and both credential slots; the proxy is absent or the pair is incomplete " +
+            "(no wire touch; state unchanged).",
+        };
+      }
+      return custodianTokenPost({
+        mode: input.mode,
+        clientSlot: slotFromMarker(input.clientId),
+        secretSlot: slotFromMarker(input.secret),
+      }).then((reply) => mapTokenExchangeReply(reply));
     }
     // 装配防线 3：client-credentials 读回需要凭据对的另一半 —— clientId 缺席 =
     // 记录/装配不一致（不触网 —— 无 provider 证据不翻状态）。

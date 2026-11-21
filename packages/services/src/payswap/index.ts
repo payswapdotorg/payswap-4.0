@@ -46,6 +46,7 @@ export {
 } from "./providers/paystack/readBackAccount.js";
 export {
   createPaypalAccountReadBackPort,
+  type PayswapPaypalCustodianTokenPost,
   type PayswapPaypalReadBackDependencies,
 } from "./providers/paypal/readBackAccount.js";
 export {

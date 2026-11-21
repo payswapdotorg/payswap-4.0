@@ -451,6 +451,32 @@ async function batteryNamedSlots() {
     pushLegacy.code === 0 && pushLegacy.out.includes('"ok":true'),
     "exit=" + pushLegacy.code + " (no-slot push = the legacy single-slot wire, unchanged)",
   );
+  // v1.2 egress closed-set: hostile host / cross-host path / post-URL out of set
+  // → network-free egress-forbidden (never an outbound request).
+  const getEvilHost = client(server.endpointFile, ["--custodian-get", "--path", "/v1/balance", "--slot", slotB, "--host", "evil.com"]);
+  record(
+    "slot:v12-get-host-not-in-set",
+    getEvilHost.code === 0 && getEvilHost.out.includes('"body":"egress-forbidden"'),
+    "exit=" + getEvilHost.code + " (host not in the per-host closed set → network-free refusal)",
+  );
+  const getCrossHost = client(server.endpointFile, ["--custodian-get", "--path", "/v1/account", "--slot", slotB, "--host", "api.paystack.co"]);
+  record(
+    "slot:v12-get-cross-host-path-refused",
+    getCrossHost.code === 0 && getCrossHost.out.includes('"body":"egress-forbidden"'),
+    "exit=" + getCrossHost.code + " (stripe path on the paystack host → refused)",
+  );
+  const postEvil = client(server.endpointFile, ["--custodian-post", "--url", "https://evil.example.com/v1/oauth2/token", "--user-slot", slotA, "--pass-slot", slotB, "--body", "grant_type=client_credentials"]);
+  record(
+    "slot:v12-post-url-not-in-set",
+    postEvil.code === 0 && postEvil.out.includes('"body":"egress-forbidden"'),
+    "exit=" + postEvil.code + " (post URL not in the token allowlist → network-free refusal)",
+  );
+  const postMissing = client(server.endpointFile, ["--custodian-post", "--url", "https://api-m.sandbox.paypal.com/v1/oauth2/token", "--user-slot", "payswap:psp:probe:no-such", "--pass-slot", slotB, "--body", "grant_type=client_credentials"]);
+  record(
+    "slot:v12-post-missing-slot-no-key",
+    postMissing.code === 0 && postMissing.out.includes('"body":"no-key"'),
+    "exit=" + postMissing.code + " (either slot missing → no-key; never partial auth)",
+  );
   server.child.kill();
 }
 
