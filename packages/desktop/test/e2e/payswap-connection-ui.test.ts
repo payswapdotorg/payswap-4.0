@@ -568,7 +568,8 @@ describe("P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC
     const connectionId = (await rowIds()).find((id) => !rowsBefore.includes(id));
     const row = $(`[data-testid="${TID_ROW}"][data-connection-id="${connectionId}"]`);
     expect(await row.getAttribute("data-connection-status")).toBe("connected");
-    const name = await $('[data-testid="payswap-connection-name"]').getText();
+    // 行内作用域取 name（列表含 Stripe 臂的既有 revoked 行 —— 全局首匹配会错抓）。
+    const name = await row.$(sel("payswap-connection-name")).getText();
     expect(name).toContain("E2E PayPal");
 
     // at-rest（架构感知）：记录无明文；凭据面按架构分支 —— custodian 路径 =
@@ -626,7 +627,11 @@ describe("P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC
       this.skip();
       return;
     }
-    await clickVisibleTestId(TID_ROW_REVOKE, "没有找到撤销按钮");
+    // 行内作用域点击撤销（列表含 Stripe 臂的既有 revoked 行 —— 全局首匹配会
+    // 点错行：PayPal 行永不撤销而 Stripe 行幂等重撤，revoke 断言超时）。
+    const revokeBtn = await row.$(sel(TID_ROW_REVOKE));
+    await revokeBtn.waitForDisplayed({ timeout: 10_000 });
+    await revokeBtn.click();
     const notice = await waitForNotice(
       (candidate) => candidate.key === "payswap.connections.result.revoked",
       "revoke 应呈现终态（muted）",
@@ -727,12 +732,14 @@ describe("Gate E2 损坏键臂（存储可用环境）—— 有意置于 PayPal
     expect(notice.code).toBe(STORAGE_REFUSAL_CODE);
     expect(notice.tone).toBe("danger");
 
-    // at-rest：拒绝先于记录写 —— 无新连接记录、无新 PSP 密文。
+    // at-rest：拒绝先于记录写 —— 无新连接记录、无新 Stripe 密文。作用域精确化：
+    // 此臂运行时 PayPal 连接（先于本臂完成）可能仍持其槽位 —— 断言不得要求
+    // 全 store 无 PSP 键，只要求无 stripe 槽（被拒连接零写入）。
     const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
     expect(connections).not.toContain("E2E Stripe Fallback");
     const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
     if (credentials !== null) {
-      expect(credentials).not.toContain("payswap:psp:");
+      expect(credentials).not.toContain("payswap:psp:stripe:");
     }
   });
 });
