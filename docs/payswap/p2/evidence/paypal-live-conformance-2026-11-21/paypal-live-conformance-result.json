@@ -1,0 +1,28 @@
+{
+  "date": "2026-11-21",
+  "suite": "packages/services/test/payswap-paypal-live-conformance.test.ts",
+  "provider": "paypal",
+  "mode": "test (sandbox)",
+  "transport": "real network (api-m.sandbox.paypal.com; default fetch + AbortController timeout)",
+  "result": "PASSED (1 test, ~4.0s)",
+  "rows": {
+    "connect": "connected (mode test; zero network at connect)",
+    "verified": "real token exchange 200; providerAccountId = official app_id (APP-80W284485P519543T observed live)",
+    "overviewGate": "refused/read_back_unavailable (verified outcome carries no capability evidence by design — fail-closed, nothing fabricated)",
+    "dataReads": {
+      "balance": "unavailable (real empty-state: balances envelope key absent for the fresh sandbox account — no fabricated empty projection)",
+      "payment_objects": "unavailable (same real empty-state: transaction_details key absent)",
+      "customers": "refused/unsupported_operation (official absence, zero wire touch)",
+      "disputes": "ok (official items envelope present, empty rows projection)"
+    },
+    "securityRow": "bogus secret pair -> real 401 invalid_client -> expired",
+    "atRest": "connection record store contains zero credential material"
+  },
+  "credentialDiscipline": "pair existed only as run-env vars extracted from the account owner's dashboard session; temp file (0600, outside repo) deleted immediately after the run together with all probe artifacts",
+  "skipBehavior": "suite skips when the env pair is absent (CI/network-free batteries unaffected)",
+  "boundaries": [
+    "fresh-sandbox empty states pinned as observed (adapter fail-closed unavailable); ok-shape for populated envelopes pinned by the unit battery",
+    "overview gate refuses for PayPal by design (no official capability evidence source for client_credentials)",
+    "sandbox only; live leg gated on the live URL go-live confirmation"
+  ]
+}
