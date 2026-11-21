@@ -514,3 +514,167 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC 链）—— provider
+// picker 切换出 clientId/mode 输入面，凭据对经真实 renderer UI → 真实 ipcMain
+// 通道 → 真实 PSP 键 store / 托管的闭集结局。通道级法则行（validation/refusals/
+// verified{app_id}/revoke 双槽清除）已在 payswap-paypal-connection-ipc 电池；
+// 本臂是运行时呈现与 at-rest 的真实窗口证明。
+// ---------------------------------------------------------------------------
+
+const PAYPAL_CLIENT_ID = "AXe2payswapRealWindowClientId";
+const PAYPAL_CLIENT_SECRET = `EXe2payswapRealWindowSecret${"4".repeat(52)}`;
+
+describe("P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC 链）", () => {
+  before(async function () {
+    this.timeout(60_000);
+    await openPayswapSettingsSection();
+    // provider picker 切到 PayPal：clientId + mode 输入面出现（client-credentials
+    // 形态的法定一半的 UI 面）。
+    const providerSelect = $(sel("payswap-connect-provider"));
+    await providerSelect.waitForDisplayed({ timeout: 10_000 });
+    await providerSelect.selectByAttribute("value", "paypal");
+    await $(sel("payswap-connect-client-id")).waitForDisplayed({ timeout: 10_000 });
+    await $(sel("payswap-connect-mode")).waitForDisplayed({ timeout: 10_000 });
+  });
+
+  it("本地守卫行：缺 clientId 提交是 no-op（UI 法则 —— 不发起、秘密不清空、无结局呈现）", async () => {
+    const rowsBefore = await rowIds();
+    await $(sel(TID_SECRET_INPUT)).setValue(PAYPAL_CLIENT_SECRET);
+    await clickVisibleTestId(TID_SUBMIT, "没有找到连接提交按钮");
+    await browser.pause(400);
+    // 本地守卫：clientId 空 → handleConnect 直接 return —— 秘密不清空（单发
+    // 清空只发生在真正提交时）、无 notice、列表不变。
+    const secretValue = await $(sel(TID_SECRET_INPUT)).getValue();
+    expect(String(secretValue)).toBe(PAYPAL_CLIENT_SECRET);
+    const noticeExisting = await $(sel(TID_NOTICE)).isExisting().catch(() => false);
+    expect(noticeExisting).toBe(false);
+    const rowsAfter = await rowIds();
+    expect(rowsAfter.length).toBe(rowsBefore.length);
+    // 复位：清掉未消耗的秘密（后续行重新填）。
+    await $(sel(TID_SECRET_INPUT)).setValue("");
+  });
+
+  it("connect 凭据对：闭集结局按 law 呈现（存储拒绝 / custodian 拒绝 / connected 行 + at-rest 密文）", async function () {
+    const rowsBefore = await rowIds();
+    await $(sel("payswap-connect-client-id")).setValue(PAYPAL_CLIENT_ID);
+    await $(sel(TID_SECRET_INPUT)).setValue(PAYPAL_CLIENT_SECRET);
+    await $(sel(TID_DISPLAY_NAME_INPUT)).setValue("E2E PayPal");
+    await clickVisibleTestId(TID_SUBMIT, "没有找到连接提交按钮");
+
+    const notice = await waitForNotice(
+      (candidate) =>
+        candidate.key === "payswap.connections.result.connected" ||
+        (candidate.key === "payswap.connections.refusal.secure_storage_unavailable" &&
+          candidate.code === STORAGE_REFUSAL_CODE) ||
+        (candidate.key === "payswap.connections.refusal.custodian_unavailable" &&
+          candidate.code === CUSTODIAN_REFUSAL_CODE),
+      "PayPal connect 应呈现闭集结局（存储 typed 拒绝 / custodian typed 拒绝 / connected）",
+    );
+
+    // 秘密单发（法则 3）：真正提交后输入清空。
+    const secretValue = await $(sel(TID_SECRET_INPUT)).getValue();
+    expect(String(secretValue)).toBe("");
+
+    if (notice.code === STORAGE_REFUSAL_CODE || notice.code === CUSTODIAN_REFUSAL_CODE) {
+      // 拒绝先于记录写 —— 无 PayPal 记录、无 PayPal 明文（与 Stripe 臂同款纪律）。
+      const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
+      if (credentials !== null) {
+        expect(credentials).not.toContain(PAYPAL_CLIENT_SECRET);
+        expect(credentials).not.toContain(PAYPAL_CLIENT_ID);
+      }
+      const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
+      if (connections !== null) {
+        expect(connections).not.toContain("E2E PayPal");
+      }
+      return;
+    }
+
+    expect(notice.tone).toBe("positive");
+    // connected：列表恰多一行；行状态 connected；display name 呈现。
+    await browser.waitUntil(
+      async () => (await rowIds()).length === rowsBefore.length + 1,
+      { timeout: 15_000, timeoutMsg: "connected 后列表应恰多一行" },
+    );
+    const connectionId = (await rowIds()).find((id) => !rowsBefore.includes(id));
+    const row = $(`[data-testid="${TID_ROW}"][data-connection-id="${connectionId}"]`);
+    expect(await row.getAttribute("data-connection-status")).toBe("connected");
+    const name = await $('[data-testid="payswap-connection-name"]').getText();
+    expect(name).toContain("E2E PayPal");
+
+    // at-rest（架构感知）：记录无明文；凭据面按架构分支 —— custodian 路径 =
+    // 本地 store 无本连接槽位（托管保管）；legacy 路径 = 密文（含 id 与两个槽
+    // 名，不含明文）。
+    const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
+    expect(connections).toContain('"providerId":"paypal"');
+    expect(connections).not.toContain(PAYPAL_CLIENT_SECRET);
+    expect(connections).not.toContain(PAYPAL_CLIENT_ID);
+    const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
+    if (custodianBackedAtRest()) {
+      if (credentials !== null) {
+        expect(credentials).not.toContain(connectionId);
+        expect(credentials).not.toContain(PAYPAL_CLIENT_SECRET);
+        expect(credentials).not.toContain(PAYPAL_CLIENT_ID);
+      }
+    } else {
+      expect(credentials).not.toBeNull();
+      expect(credentials).toContain(connectionId);
+      expect(credentials).toContain("client-id");
+      expect(credentials).toContain("client-secret");
+      expect(credentials).not.toContain(PAYPAL_CLIENT_SECRET);
+      expect(credentials).not.toContain(PAYPAL_CLIENT_ID);
+    }
+  });
+
+  it("revoke：终态 revoked + at-rest 双槽清除（custodian 路径 = 托管 blob 证实不在）", async function () {
+    const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
+    if (connections === null || !connections.includes("E2E PayPal")) {
+      this.skip();
+      return;
+    }
+    const storeJson = JSON.parse(connections) as Array<{
+      connectionId?: string;
+      displayName?: string;
+      status?: string;
+    }>;
+    const paypalRecord = (Array.isArray(storeJson) ? storeJson : [storeJson]).find(
+      (record) => record.displayName === "E2E PayPal",
+    );
+    if (paypalRecord?.connectionId === undefined) {
+      this.skip();
+      return;
+    }
+    const connectionId = paypalRecord.connectionId;
+    const row = $(`[data-testid="${TID_ROW}"][data-connection-id="${connectionId}"]`);
+    if (!(await row.isExisting().catch(() => false))) {
+      this.skip();
+      return;
+    }
+    await clickVisibleTestId(TID_ROW_REVOKE, "没有找到撤销按钮");
+    const notice = await waitForNotice(
+      (candidate) => candidate.key === "payswap.connections.result.revoked",
+      "revoke 应呈现终态（muted）",
+    );
+    expect(notice.tone).toBe("muted");
+    await browser.waitUntil(
+      async () => (await row.getAttribute("data-connection-status")) === "revoked",
+      { timeout: 15_000, timeoutMsg: "revoke 后行状态应为 revoked" },
+    );
+
+    // at-rest：双槽清除 —— legacy 路径凭据 store 无本连接槽位；custodian 路径
+    // 托管 blob 证实不在（撤销必证实清除，与 Stripe 臂同款法则）。
+    const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
+    if (credentials !== null) {
+      expect(credentials).not.toContain(connectionId);
+      expect(credentials).not.toContain(PAYPAL_CLIENT_SECRET);
+      expect(credentials).not.toContain(PAYPAL_CLIENT_ID);
+    }
+    if (custodianBackedAtRest()) {
+      expect(existsSync(CUSTODIAN_KEY_BLOB_FILE)).toBe(false);
+    }
+    const connectionsAfter = await readTextIfExists(CONNECTIONS_STORE_FILE);
+    expect(connectionsAfter).toContain(connectionId);
+    expect(connectionsAfter).toContain('"revoked"');
+  });
+});
