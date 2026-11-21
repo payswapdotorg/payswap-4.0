@@ -1,6 +1,6 @@
 {
  "verdict": "V1.3 REDEPLOY VERIFIED — named slots live, token+data proxy live (real PayPal 401), data URL closed-set holds, W1 loud-refusal contract holds, recovery works, custody left empty",
- "date": "2026-11-21T11:59:28.512Z",
+ "date": "2026-11-21T13:56:49.571Z",
  "serviceIdentity": {
   "serviceName": "PayswapCustodianSvc",
   "binaryPath": "C:\\ProgramData\\payswap\\svc-bin\\payswap-custodian-svc.exe (sc qc verified)",
@@ -9,7 +9,7 @@
  },
  "sequence": {
   "genuineMain": {
-   "pid": 1764,
+   "pid": 14216,
    "registered": true,
    "namedSlotLifecycle": true,
    "tokenGetPaypalStatus": 401,
@@ -19,13 +19,13 @@
    }
   },
   "attackerWon": {
-   "pid": 3684,
+   "pid": 7416,
    "register": {
     "exit": 0
    }
   },
   "genuineRecoveryAttempt": {
-   "pid": 10264,
+   "pid": 6460,
    "refusals": {
     "register": true,
     "push": true,
@@ -40,7 +40,7 @@
    }
   },
   "recovery": {
-   "pid": 14364,
+   "pid": 19652,
    "register": {
     "exit": 0
    }
