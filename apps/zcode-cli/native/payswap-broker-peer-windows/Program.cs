@@ -79,6 +79,7 @@ namespace PayswapBrokerPeerHelper
                 if (HasArgument(args, "--custodian-get")) return CustodianClient(args, "get");
                 if (HasArgument(args, "--custodian-drop")) return CustodianClient(args, "drop");
                 if (HasArgument(args, "--custodian-post")) return CustodianClient(args, "post");
+                if (HasArgument(args, "--custodian-token-get")) return CustodianClient(args, "token-get");
                 return RunRelay(args);
             }
             catch
@@ -1192,7 +1193,21 @@ namespace PayswapBrokerPeerHelper
             "https://api-m.sandbox.paypal.com/v1/oauth2/token",
             "https://api-m.paypal.com/v1/oauth2/token",
         };        // A4 服务可执行边界：服务二进制必须住在受保护目录（显式 ACL：SYSTEM +
-        // Administrators 全控、Users/Everyone 零访问 —— 安装时复制 + 启动时自检，
+
+        // v1.3 数据面闭集（token-get 的 dataUrl）：恰两台 api-m 主机 + 三条只读
+        // reporting 路径（查询串允许 —— 前缀匹配路径部分）。非 https / 表外主机 /
+        // 表外路径一律 data-url-forbidden（network-free 拒绝）。
+        private static readonly string[] CustodianTokenGetDataHosts =
+        {
+            "api-m.sandbox.paypal.com",
+            "api-m.paypal.com",
+        };
+        private static readonly string[] CustodianTokenGetDataPaths =
+        {
+            "/v1/reporting/transactions",
+            "/v1/customer/disputes",
+            "/v1/reporting/balances",
+        };        // Administrators 全控、Users/Everyone 零访问 —— 安装时复制 + 启动时自检，
         // 安装/更新绝不悄悄弱化 ACL）。用户可写的应用目录不被接受为 SYSTEM 服务宿主。
         private const string CustodianServiceBinDir = CustodianProgramDataDir + "\\svc-bin";
         private const string CustodianServiceImage = CustodianServiceBinDir + "\\payswap-custodian-svc.exe";
@@ -1687,6 +1702,7 @@ namespace PayswapBrokerPeerHelper
             if (op == "drop") { ServeCustodianDrop(pipe, opLine); return; }
             if (op == "get") { ServeCustodianGet(pipe, opLine); return; }
             if (op == "post") { ServeCustodianPost(pipe, opLine); return; }
+            if (op == "token-get") { ServeCustodianTokenGet(pipe, opLine); return; }
             Diag("custodian:op-unknown");
         }
 
@@ -1908,6 +1924,111 @@ namespace PayswapBrokerPeerHelper
             }
         }
 
+        /** v1.3 token+data 代理（PayPal 数据面托管臂）：tokenUrl 恰在闭集内（两枚
+            官方 token URL）；Basic 凭据从两个命名槽现读；换取的 access_token 只
+            进数据端点 Bearer 头（内存瞬态 —— 绝不持久化/投影）；dataUrl 必须
+            https + 表内主机 + 表内只读路径（查询串允许）。应答 {v:1,status,body}
+            （body 转义）。越界 = network-free 拒绝。 */
+        private static void ServeCustodianTokenGet(NamedPipeServerStream pipe, string opLine)
+        {
+            string tokenUrl = ExtractJsonString(opLine, "\"tokenUrl\":\"");
+            string userSlot = ExtractJsonString(opLine, "\"userSlot\":\"");
+            string passSlot = ExtractJsonString(opLine, "\"passSlot\":\"");
+            string dataUrl = ExtractJsonString(opLine, "\"dataUrl\":\"");
+            if (tokenUrl == null || !CustodianPostUrlAllowList.Contains(tokenUrl))
+            {
+                Diag("custodian:token-get-token-url-forbidden");
+                WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"egress-forbidden\"}");
+                return;
+            }
+            string userValue;
+            string passValue;
+            lock (CustodianStateLock)
+            {
+                if (userSlot == null || !IsValidCustodianSlot(userSlot) ||
+                    passSlot == null || !IsValidCustodianSlot(passSlot) ||
+                    !CustodianKeySlots.TryGetValue(userSlot, out userValue) ||
+                    !CustodianKeySlots.TryGetValue(passSlot, out passValue))
+                {
+                    Diag("custodian:token-get-no-key");
+                    WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"no-key\"}");
+                    return;
+                }
+            }
+            Uri dataUri;
+            try { dataUri = new Uri(dataUrl ?? ""); } catch { dataUri = null; }
+            if (dataUri == null || dataUri.Scheme != "https" ||
+                !CustodianTokenGetDataHosts.Contains(dataUri.Host) ||
+                !CustodianTokenGetDataPaths.Any(p => dataUri.AbsolutePath.StartsWith(p, StringComparison.Ordinal)))
+            {
+                Diag("custodian:token-get-data-url-forbidden");
+                WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"data-url-forbidden\"}");
+                return;
+            }
+            try
+            {
+                System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12;
+                string token;
+                {
+                    var tokenRequest = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(tokenUrl);
+                    tokenRequest.Method = "POST";
+                    string basic = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(userValue + ":" + passValue));
+                    tokenRequest.Headers.Add("Authorization", "Basic " + basic);
+                    tokenRequest.ContentType = "application/x-www-form-urlencoded";
+                    tokenRequest.Timeout = 30000;
+                    tokenRequest.ReadWriteTimeout = 30000;
+                    tokenRequest.Proxy = null;
+                    tokenRequest.KeepAlive = false;
+                    tokenRequest.UserAgent = "payswap-custodian";
+                    byte[] bodyBytes = System.Text.Encoding.UTF8.GetBytes("grant_type=client_credentials");
+                    tokenRequest.ContentLength = bodyBytes.Length;
+                    using (var stream = tokenRequest.GetRequestStream())
+                    {
+                        stream.Write(bodyBytes, 0, bodyBytes.Length);
+                    }
+                    var tokenResponse = (System.Net.HttpWebResponse)tokenRequest.GetResponse();
+                    string tokenBody = new StreamReader(tokenResponse.GetResponseStream(), System.Text.Encoding.UTF8).ReadToEnd();
+                    var parsed = DeserializeJsonObject(tokenBody);
+                    token = parsed == null ? null : ExtractJsonString(parsed, "\"access_token\":\"");
+                    if (string.IsNullOrEmpty(token))
+                    {
+                        Diag("custodian:token-get-no-access-token");
+                        WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"no-access-token\"}");
+                        return;
+                    }
+                }
+                var dataRequest = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(dataUrl);
+                dataRequest.Method = "GET";
+                dataRequest.Headers.Add("Authorization", "Bearer " + token);
+                dataRequest.Timeout = 30000;
+                dataRequest.ReadWriteTimeout = 30000;
+                dataRequest.Proxy = null;
+                dataRequest.KeepAlive = false;
+                dataRequest.UserAgent = "payswap-custodian";
+                var dataResponse = (System.Net.HttpWebResponse)dataRequest.GetResponse();
+                string dataBody = new StreamReader(dataResponse.GetResponseStream(), System.Text.Encoding.UTF8).ReadToEnd();
+                Diag("custodian:token-get-status=" + (int)dataResponse.StatusCode + " bodyLen=" + dataBody.Length);
+                WritePipeLine(pipe, "{\"v\":1,\"status\":" + (int)dataResponse.StatusCode + ",\"body\":\"" + EscapeJson(dataBody) + "\"}");
+            }
+            catch (System.Net.WebException e)
+            {
+                var response = e.Response as System.Net.HttpWebResponse;
+                if (response != null)
+                {
+                    string responseBody = new StreamReader(response.GetResponseStream(), System.Text.Encoding.UTF8).ReadToEnd();
+                    Diag("custodian:token-get-status=" + (int)response.StatusCode);
+                    WritePipeLine(pipe, "{\"v\":1,\"status\":" + (int)response.StatusCode + ",\"body\":\"" + EscapeJson(responseBody) + "\"}");
+                    return;
+                }
+                Diag("custodian:token-get-network-error status=" + e.Status);
+                WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"network-error\"}");
+            }
+            catch
+            {
+                WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"network-error\"}");
+            }
+        }
+
         /** 有界只读代理 GET（五路径闭集服务端强制；key 只进 Authorization 头）。 */
         private static void ServeCustodianGet(NamedPipeServerStream pipe, string opLine)
         {
@@ -2000,6 +2121,15 @@ namespace PayswapBrokerPeerHelper
             {
                 WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"network-error\"}");
             }
+        }
+
+        /** 最简 JSON 顶层面板提取（token 交换应答）：返回第一个 '{' 到最后一个 '}'
+            之间的原文（供 ExtractJsonString 取字段；非 JSON = null）。 */
+        private static string DeserializeJsonObject(string text)
+        {
+            int start = text.IndexOf('{');
+            int end = text.LastIndexOf('}');
+            return (start >= 0 && end > start) ? text.Substring(start, end - start + 1) : null;
         }
 
         private static string EscapeJson(string value)
@@ -2322,6 +2452,17 @@ namespace PayswapBrokerPeerHelper
                         ? "{\"op\":\"push\",\"key\":\"" + key + "\"}"
                         : "{\"op\":\"push\",\"slot\":\"" + slot.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\",\"key\":\"" + key + "\"}";
                 }
+                else if (op == "token-get")
+                {
+                    // v1.3 PayPal 数据面托管臂：token 交换 + 数据 GET 都在服务端
+                    // 完成 —— access_token 绝不出服务；dataUrl 闭集服务端强制。
+                    string tokenUrl = RequireArgument(parsed, "--token-url");
+                    string userSlot = RequireArgument(parsed, "--user-slot");
+                    string passSlot = RequireArgument(parsed, "--pass-slot");
+                    string dataUrl = RequireArgument(parsed, "--data-url");
+                    Func<string, string> esc3 = (v) => v.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                    opLine = "{\"op\":\"token-get\",\"tokenUrl\":\"" + esc3(tokenUrl) + "\",\"userSlot\":\"" + esc3(userSlot) + "\",\"passSlot\":\"" + esc3(passSlot) + "\",\"dataUrl\":\"" + esc3(dataUrl) + "\"}";
+                }
                 else if (op == "post")
                 {
                     // v1.2 PayPal token 交换代理：URL 闭集在服务端强制；Basic 凭据从
@@ -2364,7 +2505,7 @@ namespace PayswapBrokerPeerHelper
                     Console.Error.WriteLine("custodian_client:protocol-failed");
                     return 72;
                 }
-                if (op == "get" || op == "post")
+                if (op == "get" || op == "post" || op == "token-get")
                 {
                     // get/post 应答 = {status, body} 结局（非 ok:true 语义）—— 原样交桌面（适配器按 status/body 映射）。
                     Console.Out.WriteLine(reply.Trim());
