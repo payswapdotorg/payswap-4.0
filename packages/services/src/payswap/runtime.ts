@@ -48,6 +48,7 @@ import {
   type PayswapPaypalCustodianTokenPost,
 } from "./providers/paypal/readBackAccount.js";
 import { createPaystackAccountDataReadPort } from "./providers/paystack/readAccountData.js";
+import { createPaypalAccountDataReadPort } from "./providers/paypal/readAccountData.js";
 import { createPayswapAccountDataReadRouter } from "./providers/readAccountDataRouter.js";
 import { createPayswapAccountReadBackRouter } from "./providers/readBackRouter.js";
 import { createStripeAccountDataReadPort } from "./providers/stripe/readAccountData.js";
@@ -229,8 +230,11 @@ export function createPayswapAccountRuntime(
         apiClient,
         apiBase: dependencies.paystackApiBase,
       }),
-      // PayPal 数据面暂无 adapter（官方 client_credentials 数据面证据未落）——
-      // 路由器对未注册 provider 抛出，服务端映射 honest unavailable。
+      paypal: createPaypalAccountDataReadPort({
+        // v1.2：托管下 PayPal 数据面 typed unavailable（适配器防线零触达 ——
+        // token 交换需要明文凭据对；数据面托管代理是 v1.3 追踪项）。
+        apiClient,
+      }),
     },
   });
   const accountService = createPayswapAccountService({
