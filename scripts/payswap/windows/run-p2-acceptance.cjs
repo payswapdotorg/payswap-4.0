@@ -291,6 +291,7 @@ async function stageWindowsSecureStorage(context) {
       "--project",
       "engineering",
       "packages/desktop/test/payswap-account-connection-ipc.test.ts",
+      "packages/desktop/test/payswap-paypal-connection-ipc.test.ts",
       "packages/desktop/test/payswap-account-runtime-wiring.test.ts",
       "packages/desktop/test/payswap-custodian-provisioning-fail-closed.test.ts",
       "packages/desktop/test/payswap-psp-key-store.test.ts",
