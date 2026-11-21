@@ -41,14 +41,25 @@ describe("PAYSWAP_PROTOCOL_PIN_REGISTRY invariants (doc 04 §5 dated-evidence di
     expect([...PAYSWAP_PROTOCOL_PIN_REGISTRY.keys()].sort()).toEqual(["ap2", "mpp", "x402"]);
   });
 
-  it("every pin carries an https official source, a parseable ISO retrieval date, verified facts and an open re-verification list", () => {
+  it("every pin carries an https official source, a parseable ISO retrieval date, verified facts and a re-verification list", () => {
     for (const pin of PAYSWAP_PROTOCOL_PIN_REGISTRY.values()) {
       expect(pin.officialSourceUrl.startsWith("https://")).toBe(true);
       expect(ISO_DATE.test(pin.factsRetrievedAt)).toBe(true);
       expect(pin.verifiedBoundaryFacts.length).toBeGreaterThan(0);
-      // P3 二批检索后仍如实：三个协议的消息面再验证清单都未清空（适配器实现被挡）。
-      expect(pin.reverifyBeforeAdapter.length).toBeGreaterThan(0);
     }
+    // 三批检索（2026-11-21）如实状态：AP2 的消息面再验证清单已清空（agent
+    // authorization 与 checkout mandate 字段级 schema 逐字段入 facts）—— 消息面
+    // 实现门打开；x402 与 MPP 的清单仍未清空（适配器实现仍被挡）。
+    expect(PAYSWAP_PROTOCOL_PIN_AP2.reverifyBeforeAdapter.length).toBe(0);
+    expect(PAYSWAP_PROTOCOL_PIN_X402.reverifyBeforeAdapter.length).toBeGreaterThan(0);
+    expect(PAYSWAP_PROTOCOL_PIN_MPP.reverifyBeforeAdapter.length).toBeGreaterThan(0);
+    const ap2Facts = PAYSWAP_PROTOCOL_PIN_AP2.verifiedBoundaryFacts.join("\n");
+    expect(ap2Facts).toContain("2026-11-21");
+    expect(ap2Facts).toContain("mandate.checkout.1");
+    expect(ap2Facts).toContain("invalid_credential");
+    const mppFacts = PAYSWAP_PROTOCOL_PIN_MPP.verifiedBoundaryFacts.join("\n");
+    expect(mppFacts).toContain("Expired Internet-Draft");
+    expect(mppFacts).toContain("2026-11-21");
   });
 
   it("pins exact version strings from specification documents (second retrieval pass 2026-11-15)", () => {
