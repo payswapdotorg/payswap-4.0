@@ -477,6 +477,31 @@ async function batteryNamedSlots() {
     postMissing.code === 0 && postMissing.out.includes('"body":"no-key"'),
     "exit=" + postMissing.code + " (either slot missing → no-key; never partial auth)",
   );
+  // re-push both slots (slotA was dropped by the earlier drop arm; slotB by nothing —
+  // but the v1.2 post arms may have consumed state; re-push for determinism).
+  client(server.endpointFile, ["--custodian-push", "--slot", slotA], "rk_slot_a_" + "1".repeat(60) + "\n");
+  client(server.endpointFile, ["--custodian-push", "--slot", slotB], "rk_slot_b_" + "2".repeat(60) + "\n");
+  client(server.endpointFile, ["--custodian-push", "--slot", slotB], "rk_slot_b_" + "2".repeat(60) + "\n");
+  // v1.3 token+data closed-set: token URL out of set / data URL out of set /
+  // missing slots → network-free refusals (never an outbound request).
+  const tgEvilToken = client(server.endpointFile, ["--custodian-token-get", "--token-url", "https://evil.example.com/v1/oauth2/token", "--user-slot", slotA, "--pass-slot", slotB, "--data-url", "https://api-m.sandbox.paypal.com/v1/reporting/transactions"]);
+  record(
+    "slot:v13-token-get-token-url-forbidden",
+    tgEvilToken.code === 0 && tgEvilToken.out.includes('"body":"egress-forbidden"'),
+    "exit=" + tgEvilToken.code + " (token URL not in the allowlist → network-free refusal)",
+  );
+  const tgEvilData = client(server.endpointFile, ["--custodian-token-get", "--token-url", "https://api-m.sandbox.paypal.com/v1/oauth2/token", "--user-slot", slotA, "--pass-slot", slotB, "--data-url", "https://evil.example.com/v1/reporting/transactions"]);
+  record(
+    "slot:v13-token-get-data-url-forbidden",
+    tgEvilData.code === 0 && tgEvilData.out.includes('"body":"data-url-forbidden"'),
+    "exit=" + tgEvilData.code + " (data URL host/path out of the closed set → network-free refusal)",
+  );
+  const tgMissing = client(server.endpointFile, ["--custodian-token-get", "--token-url", "https://api-m.sandbox.paypal.com/v1/oauth2/token", "--user-slot", "payswap:psp:probe:no-such", "--pass-slot", slotB, "--data-url", "https://api-m.sandbox.paypal.com/v1/reporting/transactions"]);
+  record(
+    "slot:v13-token-get-missing-slot-no-key",
+    tgMissing.code === 0 && tgMissing.out.includes('"body":"no-key"'),
+    "exit=" + tgMissing.code + " (either slot missing → no-key; never partial auth)",
+  );
   server.child.kill();
 }
 
