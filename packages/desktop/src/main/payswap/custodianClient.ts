@@ -243,6 +243,22 @@ export function provisionDesktopCustodianBridge(
       const reply = parseReply(attempt.stdout);
       return { status: reply.status ?? 0, body: reply.body ?? "" };
     },
+    /** v1.3 token+data 代理：token 交换 + 数据 GET 都在服务端完成（access_token
+     *  瞬态绝不出代理）。dataUrl 闭集在服务端强制。 */
+    async tokenGet(tokenUrl: string, userSlot: string, passSlot: string, dataUrl: string): Promise<{ status: number; body: string }> {
+      const attempt = executeDataOp(helperPath, clientArgs, run, [
+        "--custodian-token-get",
+        "--token-url", tokenUrl,
+        "--user-slot", userSlot,
+        "--pass-slot", passSlot,
+        "--data-url", dataUrl,
+      ]);
+      if (attempt.exitCode !== 0) {
+        return { status: 0, body: "custodian-unavailable" };
+      }
+      const reply = parseReply(attempt.stdout);
+      return { status: reply.status ?? 0, body: reply.body ?? "" };
+    },
     async drop(slot?: string): Promise<void> {
       const attempt = executeDataOp(
         helperPath,

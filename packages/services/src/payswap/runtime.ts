@@ -48,7 +48,10 @@ import {
   type PayswapPaypalCustodianTokenPost,
 } from "./providers/paypal/readBackAccount.js";
 import { createPaystackAccountDataReadPort } from "./providers/paystack/readAccountData.js";
-import { createPaypalAccountDataReadPort } from "./providers/paypal/readAccountData.js";
+import {
+  createPaypalAccountDataReadPort,
+  type PayswapPaypalCustodianTokenGet,
+} from "./providers/paypal/readAccountData.js";
 import { createPayswapAccountDataReadRouter } from "./providers/readAccountDataRouter.js";
 import { createPayswapAccountReadBackRouter } from "./providers/readBackRouter.js";
 import { createStripeAccountDataReadPort } from "./providers/stripe/readAccountData.js";
@@ -218,6 +221,16 @@ export function createPayswapAccountRuntime(
       }),
     },
   });
+  // v1.3 托管 token+data 代理端口（PayPal 数据面托管臂；custodian token-get op）。
+  const paypalTokenGet: PayswapPaypalCustodianTokenGet | undefined = custodianBridge
+    ? (params) => custodianBridge.tokenGet(
+        PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.apiBaseUrl[params.mode] +
+          PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.tokenPath,
+        params.clientSlot,
+        params.secretSlot,
+        params.dataUrl,
+      )
+    : undefined;
   const readAccountData = createPayswapAccountDataReadRouter({
     byProvider: {
       stripe: createStripeAccountDataReadPort({
@@ -231,9 +244,11 @@ export function createPayswapAccountRuntime(
         apiBase: dependencies.paystackApiBase,
       }),
       paypal: createPaypalAccountDataReadPort({
-        // v1.2：托管下 PayPal 数据面 typed unavailable（适配器防线零触达 ——
-        // token 交换需要明文凭据对；数据面托管代理是 v1.3 追踪项）。
+        // v1.3：托管下数据面走 token+data 代理（custodian token-get op：服务端
+        // 交换 token + GET 数据端点；access_token 瞬态绝不出代理；URL 闭集
+        // 服务端强制）。代理端口从桥注入。
         apiClient,
+        custodianTokenGet: paypalTokenGet,
       }),
     },
   });
