@@ -73,11 +73,11 @@ export const PAYSWAP_PROTOCOL_PIN_AP2: PayswapProtocolPin = {
     "Agent Authorization 机制页已公布（agent_authorization.md：OpenID4VP User Credential delegation（transaction_data 携 base64url 编码的 mandate-delegation 对象，type 必须为 `delegate`）；Mandate Delegation / Mandate Structure / Action Authorization / Errors 各节在案）",
     "Checkout Mandate + Receipt 与 Payment Mandate + Receipt 成对，作为争议时点的证据（spec 自述）",
     "AP2 自述「operates as a security feature within a Commerce Protocol」（协议是 Commerce Protocol 内的安全特性，不是支付执行引擎 —— 与 addendum §10 边界一致）；自述「designed explicitly to be compatible with the Universal Commerce Protocol (UCP)」",
+    "OpenID4VP delegation 对象字段级（agent_authorization.md，检索 2026-11-21）：Authorization Request 的 transaction_data 数组承载 base64url 编码 JSON 对象；mandate delegation 对象字段 = type（REQUIRED，MUST 为字符串 \"delegate\"）/ format（REQUIRED，返回 Mandate 的 VDC format，例 \"dc+sd-jwt\"）/ delegate_payload（REQUIRED，Mandate Content payload JSON 对象数组 —— 单请求可委托多项）/ delegate_disclosures（OPTIONAL，delegate_payload 的选择性披露数组）；规范句：「When constructing the Authorization Response, the delegate_payload MUST be included as part of the Key Binding」；「Any unknown Constraints MUST be treated as failing evaluation」；open Mandate 必须密码学 Key Binding（cnf 在 Mandate 仍 open 时 REQUIRED）",
+    "Action Authorization 错误语义（agent_authorization.md，检索 2026-11-21）：Verifier MUST 返回签名 Mandate Receipt（字段 iss / result（枚举 success|error）/ reference（链内最终 SD-JWT 的 base64url 哈希 —— _sd_alg 或缺省 sha-256，同 sd_hash 语义）/ 可选 error / error_description）；错误码四枚：invalid_credential（Mandate 验证失败 —— 终态）/ unresolved_constraint（未知约束或无法确认 closed Mandate 满足约束 —— 可触发回退直接批准 closed Mandate 或非代理流）/ invalid_mandate（Mandate 不批准请求动作 —— 终态）/ mandates_not_supported（Verifier 不支持该动作的 mandate —— 可触发非代理回退）；页面不定义 HTTP 状态码 —— 错误经签名 receipt 传达",
+    "Checkout Mandate 字段级 schema（checkout_mandate.md，检索 2026-11-21）：closed MUST 用 vct = mandate.checkout.1，open MUST 用 mandate.checkout.open.1；closed 字段集 = vct（string，必填，不可披露）/ checkout_jwt（string，必填，可披露 —— merchant 签名的 base64url serialized Checkout payload JWT）/ checkout_hash（string，必填，不可披露 —— checkout_jwt 的 base64url 哈希，算法 MUST 同 SD-JWT 的 _sd_alg，缺省 sha-256 MUST）/ iat、exp（integer，可选 Unix epoch）；示例签名结构 ES256 SD-JWT（closed 为 kb+sd-jwt，payload 含 delegate_payload/iat/aud:\"merchant\"/nonce/sd_hash/_sd_alg）；约束集 = checkout.allowed_merchants（type + allowed 数组，Merchant MUST 出现在 revealed elements 中，缺失或空 = 约束无效）与 checkout.line_items（type + items：id/acceptable_items/quantity，每项数量须匹配且不得复用）；Checkout Receipt schema = status（Success|Error）/ iss / iat / reference（绑定的 closed Mandate 哈希）/ 可选 error、error_description（仅 Error）与 order_id（仅 Success）",
   ],
-  reverifyBeforeAdapter: [
-    "OpenID4VP delegation 对象与 Action Authorization 错误语义的字段级抽取（页面已公布 —— 适配器消息面测试需逐字段钉住并引证，不是重新检索）",
-    "checkout mandate 字段集的字段级抽取（同上：页面已公布，逐字段钉进消息面测试）",
-  ],
+  reverifyBeforeAdapter: [],
 };
 
 /**
@@ -145,9 +145,9 @@ export const PAYSWAP_PROTOCOL_PIN_MPP: PayswapProtocolPin = {
     "草案套件广度（paymentauth.org）：core（-01）+ discovery/charge/session/subscription/transport-mcp 各 rail 分册（多为 -00）",
     "mpp.dev 页面载有 <body data-version=1.0> —— 观察到但语义未标注，不作为协议版本引用（草案修订号才是可辩护的 pin）",
     "SDK 生态（mpp-specs README）：TS wevm/mppx（npm mppx 0.19.0）/ Python tempoxyz/pympp / Rust tempoxyz/mpp-rs / Go tempoxyz/mpp-go / Ruby stripe/mpp-rb",
+    "IETF datatracker 直读（https://datatracker.ietf.org/doc/draft-ryan-httpauth-payment/，检索 2026-11-21，浏览器渲染会话）：draft-ryan-httpauth-payment-01，「The \"Payment\" HTTP Authentication Scheme」；Document Type = Expired Internet-Draft (individual)、Expired & archived；版本 00/01；Last updated 2026-09-18（Latest revision 2026-03-17）；RFC stream (None)、Intended RFC status (None)；作者 Brendan Ryan / Jake Moxey / Tom Meagher（tempo.xyz）+ Jeff Weinstein（meer.net）+ Steve Kaliski（stripe.com）；datatracker 免责「not endorsed by the IETF … no formal standing」—— IETF 锚定指 IETF Trust 许可，非在案活动草案",
   ],
   reverifyBeforeAdapter: [
-    "IETF datatracker 直读 draft-ryan-httpauth-payment 的修订/状态/有效期（本批 Cloudflare 403 —— 后续浏览器渲染会话重试）",
     "各 rail 分册（charge/session/subscription，多为 -00 修订）的字段级 wire 细节钉进消息面测试",
     "MCP transport 草案（draft-payment-transport-mcp-00）语义",
   ],
