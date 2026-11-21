@@ -251,18 +251,19 @@ describe("payswap paystack read-back adapter (P3 provider half) — assembly gua
     expect(client.calls.length).toBe(0);
   });
 
-  it("ADR-P2-3: the custodian-managed placeholder credential is refused typed BEFORE any wire touch — the Stripe-scoped custody channel is never borrowed for Paystack", async () => {
+  it("v1.2: the custodian-managed marker credential rides the injected transport (the wrapper forwards it to the custodian GET proxy with the per-host closed set) — the identity-gap outcome applies as usual", async () => {
     const client = recordingApiClient(() => jsonResponse(200, VALID_BALANCE_ENVELOPE));
     const port = createPaystackAccountReadBackPort({ apiClient: client });
+    const markerSecret = "sk_test_custodian-managed:payswap:psp:paystack:c1:api-key";
     const outcome = await port(
-      baseInput({ secret: `sk_test_${CUSTODIAN_SECRET_MARKER}` }),
+      baseInput({ secret: markerSecret }),
     );
+    // v1.2: the marker goes OUT as the Bearer (the production wrapper intercepts
+    // marker-bearing requests and forwards them to the custodian GET proxy with
+    // the per-host closed set — the adapter no longer pre-refuses).
+    expect((client.calls[0]?.init?.headers as Record<string, string>)?.Authorization).toBe("Bearer " + markerSecret);
+    expect(client.calls[0]?.input).toBe("https://api.paystack.co/balance");
     expect(outcome.kind).toBe("unavailable");
-    if (outcome.kind === "unavailable") {
-      expect(outcome.detail).toMatch(/custodian|Stripe-scoped/i);
-      expect(outcome.detail.includes(TEST_SECRET)).toBe(false);
-    }
-    expect(client.calls.length).toBe(0);
   });
 
   it("without an injected apiClient the port uses globalThis.fetch with AbortController timeout enforcement — a hanging endpoint answers unavailable, never hangs", async () => {

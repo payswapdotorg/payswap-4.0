@@ -178,6 +178,7 @@ export {
 // PaySwap P3 provider half：PayPal 读回 adapter（client-credentials token 交换）。
 export {
   createPaypalAccountReadBackPort,
+  type PayswapPaypalCustodianTokenPost,
   type PayswapPaypalReadBackDependencies,
 } from "#src/payswap/index.js";
 // PaySwap P3 provider half：Paystack 只读数据 adapter + 数据路由器。

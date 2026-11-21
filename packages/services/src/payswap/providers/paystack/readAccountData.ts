@@ -118,16 +118,8 @@ export function createPaystackAccountDataReadPort(
         `The Paystack data-read adapter received secret kind '${input.secretKind}'; the Paystack contract declares exactly [api-key].`,
       );
     }
-    // ADR-P2-3：custodian 标记凭据 = Stripe 限定的托管通道 —— Paystack 绝不借道。
-    if (input.secret.includes(CUSTODIAN_SECRET_MARKER)) {
-      return {
-        status: "unavailable",
-        detail:
-          "The Paystack data reads require a loadable provider credential; the custodian-managed " +
-          "credential channel is Stripe-scoped (ADR-P2-3 P2 acceptance) and cannot serve Paystack. " +
-          "Custodian support for Paystack is a separate tracked P3 slice.",
-      };
-    }
+    // v1.2：custodian 标记凭据不再拒绝 —— 托管 GET 代理的 per-host 闭集已扩展
+    // （api.paystack.co 四只读路径），标记请求经 wrapper 转发托管代理。
     const derivedMode = derivePayswapSecretKeyMode(input.secret, PAYSWAP_PAYSTACK_AUTH_SPEC);
     if (derivedMode === null || derivedMode !== input.mode) {
       return {

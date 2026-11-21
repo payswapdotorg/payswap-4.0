@@ -237,14 +237,14 @@ describe("payswap paystack data-read adapter (P3 provider half) — assembly gua
     expect(client.calls.length).toBe(0);
   });
 
-  it("the custodian-managed placeholder credential is refused BEFORE any wire touch (the Stripe-scoped custody channel is never borrowed)", async () => {
-    const { port, client } = makePort(() => jsonResponse(200, { status: true, data: [] }));
-    const result = await port(baseInput({ secret: `sk_test_${CUSTODIAN_SECRET_MARKER}` }));
-    expect(result.status).toBe("unavailable");
-    if (result.status === "unavailable") {
-      expect(result.detail).toMatch(/custodian|Stripe-scoped/i);
-    }
-    expect(client.calls.length).toBe(0);
+  it("v1.2: the custodian-managed marker credential rides the injected transport (the wrapper forwards it to the custodian GET proxy) — the per-host closed set is enforced server-side", async () => {
+    const client = recordingApiClient(() => jsonResponse(200, { status: true, message: "Balances retrieved", data: [{ currency: "NGN", balance: 1700000 }] }));
+    const port = createPaystackAccountDataReadPort({ apiClient: client });
+    const markerSecret = "sk_test_custodian-managed:payswap:psp:paystack:c1:api-key";
+    const result = await port(baseInput({ secret: markerSecret, category: "balance" }));
+    expect((client.calls[0]?.init?.headers as Record<string, string>)?.Authorization).toBe("Bearer " + markerSecret);
+    expect(client.calls[0]?.input).toBe("https://api.paystack.co/balance");
+    expect(result.status).toBe("ok");
   });
 
   it("secret-prefix mode disagreeing with the record's mode is a local inconsistency: unavailable, zero transport calls", async () => {

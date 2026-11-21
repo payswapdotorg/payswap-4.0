@@ -78,6 +78,7 @@ namespace PayswapBrokerPeerHelper
                 if (HasArgument(args, "--custodian-push")) return CustodianClient(args, "push");
                 if (HasArgument(args, "--custodian-get")) return CustodianClient(args, "get");
                 if (HasArgument(args, "--custodian-drop")) return CustodianClient(args, "drop");
+                if (HasArgument(args, "--custodian-post")) return CustodianClient(args, "post");
                 return RunRelay(args);
             }
             catch
@@ -1174,7 +1175,23 @@ namespace PayswapBrokerPeerHelper
         private const string CustodianDiagFile = CustodianProgramDataDir + "\\custodian-diag.log";
         private const string CustodianAllowedPaths =
             "/v1/balance|/v1/charges|/v1/customers|/v1/disputes|/v1/account";
-        // A4 服务可执行边界：服务二进制必须住在受保护目录（显式 ACL：SYSTEM +
+
+        // v1.2 多主机出站闭集：host → 允许路径（GET）。旧版单主机行为 = 缺省
+        // host（api.stripe.com —— 旧 wire 无 host 字段时逐字不变）。闭集在服务端
+        // 强制：不在集内的 host/路径一律 egress-forbidden（network-free 拒绝）。
+        private static readonly Dictionary<string, string> CustodianEgressHostPaths =
+            new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            { "api.stripe.com", "/v1/balance|/v1/charges|/v1/customers|/v1/disputes|/v1/account" },
+            { "api.paystack.co", "/balance|/transaction|/customer|/dispute" },
+        };
+
+        // v1.2 POST 出站闭集（PayPal token 交换）：恰两枚官方 token URL（精确匹配）。
+        private static readonly HashSet<string> CustodianPostUrlAllowList = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "https://api-m.sandbox.paypal.com/v1/oauth2/token",
+            "https://api-m.paypal.com/v1/oauth2/token",
+        };        // A4 服务可执行边界：服务二进制必须住在受保护目录（显式 ACL：SYSTEM +
         // Administrators 全控、Users/Everyone 零访问 —— 安装时复制 + 启动时自检，
         // 安装/更新绝不悄悄弱化 ACL）。用户可写的应用目录不被接受为 SYSTEM 服务宿主。
         private const string CustodianServiceBinDir = CustodianProgramDataDir + "\\svc-bin";
@@ -1669,6 +1686,7 @@ namespace PayswapBrokerPeerHelper
             if (op == "push") { ServeCustodianPush(pipe, opLine); return; }
             if (op == "drop") { ServeCustodianDrop(pipe, opLine); return; }
             if (op == "get") { ServeCustodianGet(pipe, opLine); return; }
+            if (op == "post") { ServeCustodianPost(pipe, opLine); return; }
             Diag("custodian:op-unknown");
         }
 
@@ -1808,6 +1826,88 @@ namespace PayswapBrokerPeerHelper
             WritePipeLine(pipe, "{\"v\":1,\"ok\":true}");
         }
 
+        /** v1.2 有界 POST 代理（PayPal token 交换）：URL 恰在闭集内（两枚官方
+            token URL）；Basic 凭据从两个命名槽现读（client-id + client-secret ——
+            明文绝不经桌面、绝不出现在本进程日志）；form body 有界透传。应答
+            {v:1,status,body}（body 转义）—— 短期 access_token 随应答交桌面（不
+            落盘、不缓存），app_id 为官方身份面。任何越界 = network-free
+            egress-forbidden/no-key 拒绝。 */
+        private static void ServeCustodianPost(NamedPipeServerStream pipe, string opLine)
+        {
+            string url = ExtractJsonString(opLine, "\"url\":\"");
+            string userSlot = ExtractJsonString(opLine, "\"userSlot\":\"");
+            string passSlot = ExtractJsonString(opLine, "\"passSlot\":\"");
+            string body = ExtractJsonString(opLine, "\"body\":\"");
+            if (url == null || !CustodianPostUrlAllowList.Contains(url))
+            {
+                Diag("custodian:post-egress-forbidden url=" + (url == null ? "null" : url.Substring(0, Math.Min(64, url.Length))));
+                WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"egress-forbidden\"}");
+                return;
+            }
+            if (body == null || body.Length == 0 || body.Length > 256)
+            {
+                Diag("custodian:post-body-invalid len=" + (body == null ? -1 : body.Length));
+                WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"egress-forbidden\"}");
+                return;
+            }
+            string userValue;
+            string passValue;
+            lock (CustodianStateLock)
+            {
+                // 槽合法性（v1.1 法则）+ 双槽必须都存在（缺一 = no-key，绝不部分认证）。
+                if (userSlot == null || !IsValidCustodianSlot(userSlot) ||
+                    passSlot == null || !IsValidCustodianSlot(passSlot) ||
+                    !CustodianKeySlots.TryGetValue(userSlot, out userValue) ||
+                    !CustodianKeySlots.TryGetValue(passSlot, out passValue))
+                {
+                    Diag("custodian:post-no-key userOk=" + (userSlot != null && IsValidCustodianSlot(userSlot) && CustodianKeySlots.ContainsKey(userSlot)) + " passOk=" + (passSlot != null && IsValidCustodianSlot(passSlot) && CustodianKeySlots.ContainsKey(passSlot)));
+                    WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"no-key\"}");
+                    return;
+                }
+            }
+            try
+            {
+                System.Net.ServicePointManager.SecurityProtocol |= System.Net.SecurityProtocolType.Tls12;
+                var request = (System.Net.HttpWebRequest)System.Net.WebRequest.Create(url);
+                request.Method = "POST";
+                string basic = Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(userValue + ":" + passValue));
+                request.Headers.Add("Authorization", "Basic " + basic);
+                request.ContentType = "application/x-www-form-urlencoded";
+                request.Timeout = 30000;
+                request.ReadWriteTimeout = 30000;
+                request.Proxy = null;
+                request.KeepAlive = false;
+                request.UserAgent = "payswap-custodian";
+                byte[] bodyBytes = System.Text.Encoding.UTF8.GetBytes(body);
+                request.ContentLength = bodyBytes.Length;
+                using (var stream = request.GetRequestStream())
+                {
+                    stream.Write(bodyBytes, 0, bodyBytes.Length);
+                }
+                var response = (System.Net.HttpWebResponse)request.GetResponse();
+                string responseBody = new StreamReader(response.GetResponseStream(), System.Text.Encoding.UTF8).ReadToEnd();
+                Diag("custodian:post-status=" + (int)response.StatusCode + " bodyLen=" + responseBody.Length);
+                WritePipeLine(pipe, "{\"v\":1,\"status\":" + (int)response.StatusCode + ",\"body\":\"" + EscapeJson(responseBody) + "\"}");
+            }
+            catch (System.Net.WebException e)
+            {
+                var response = e.Response as System.Net.HttpWebResponse;
+                if (response != null)
+                {
+                    string responseBody = new StreamReader(response.GetResponseStream(), System.Text.Encoding.UTF8).ReadToEnd();
+                    Diag("custodian:post-status=" + (int)response.StatusCode);
+                    WritePipeLine(pipe, "{\"v\":1,\"status\":" + (int)response.StatusCode + ",\"body\":\"" + EscapeJson(responseBody) + "\"}");
+                    return;
+                }
+                Diag("custodian:post-network-error status=" + e.Status);
+                WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"network-error\"}");
+            }
+            catch
+            {
+                WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"network-error\"}");
+            }
+        }
+
         /** 有界只读代理 GET（五路径闭集服务端强制；key 只进 Authorization 头）。 */
         private static void ServeCustodianGet(NamedPipeServerStream pipe, string opLine)
         {
@@ -1817,9 +1917,15 @@ namespace PayswapBrokerPeerHelper
                 Diag("custodian:get-shape-invalid");
                 return;
             }
-            if (!CustodianAllowedPaths.Split('|').Contains(path.Split('?')[0]))
+                        // v1.2：op 行可选 host —— 缺省 api.stripe.com（旧 wire 逐字不变）；
+            // host 与 path 都在 per-host 闭集内才放行（network-free 拒绝）。
+            string host = ExtractJsonString(opLine, "\"host\":\"") ?? "api.stripe.com";
+            string allowedPaths;
+            if (!CustodianEgressHostPaths.TryGetValue(host, out allowedPaths) ||
+                !allowedPaths.Split('|').Contains(path.Split('?')[0]))
             {
-                Diag("custodian:get-path-not-allowed");
+                Diag("custodian:get-egress-forbidden host=" + host + " path=" + path.Split('?')[0]);
+                WritePipeLine(pipe, "{\"v\":1,\"status\":0,\"body\":\"egress-forbidden\"}");
                 return;
             }
             string key;
@@ -1854,7 +1960,7 @@ namespace PayswapBrokerPeerHelper
                 {
                     try
                     {
-                        var request = (System.Net.HttpWebRequest)System.Net.WebRequest.Create("https://api.stripe.com" + path);
+                        var request = (System.Net.HttpWebRequest)System.Net.WebRequest.Create("https://" + host + path);
                         request.Method = "GET";
                         request.Headers.Add("Authorization", "Bearer " + key);
                         request.Timeout = 30000;
@@ -2216,15 +2322,30 @@ namespace PayswapBrokerPeerHelper
                         ? "{\"op\":\"push\",\"key\":\"" + key + "\"}"
                         : "{\"op\":\"push\",\"slot\":\"" + slot.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\",\"key\":\"" + key + "\"}";
                 }
+                else if (op == "post")
+                {
+                    // v1.2 PayPal token 交换代理：URL 闭集在服务端强制；Basic 凭据从
+                    // 两个命名槽现读 —— 明文绝不经 argv/env/桌面。
+                    string url = RequireArgument(parsed, "--url");
+                    string userSlot = RequireArgument(parsed, "--user-slot");
+                    string passSlot = RequireArgument(parsed, "--pass-slot");
+                    string body = RequireArgument(parsed, "--body");
+                    Func<string, string> esc = (v) => v.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                    opLine = "{\"op\":\"post\",\"url\":\"" + esc(url) + "\",\"userSlot\":\"" + esc(userSlot) + "\",\"passSlot\":\"" + esc(passSlot) + "\",\"body\":\"" + esc(body) + "\"}";
+                }
                 else
                 {
                     string path = RequireArgument(parsed, "--path");
                     string slot = parsed.ContainsKey("--slot") && !string.IsNullOrWhiteSpace(parsed["--slot"])
                         ? parsed["--slot"]
                         : null;
-                    opLine = slot == null
-                        ? "{\"op\":\"get\",\"path\":\"" + path + "\"}"
-                        : "{\"op\":\"get\",\"slot\":\"" + slot.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\",\"path\":\"" + path + "\"}";
+                    string host = parsed.ContainsKey("--host") && !string.IsNullOrWhiteSpace(parsed["--host"])
+                        ? parsed["--host"]
+                        : null;
+                    Func<string, string> esc = (v) => v.Replace("\\", "\\\\").Replace("\"", "\\\"");
+                    opLine = (slot == null && host == null)
+                        ? "{\"op\":\"get\",\"path\":\"" + esc(path) + "\"}"
+                        : "{\"op\":\"get\",\"host\":\"" + esc(host ?? "api.stripe.com") + "\",\"slot\":\"" + esc(slot ?? "") + "\",\"path\":\"" + esc(path) + "\"}";
                 }
                 byte[] opBytes = System.Text.Encoding.UTF8.GetBytes(opLine + "\n");
                 pipe.Write(opBytes, 0, opBytes.Length);
@@ -2243,8 +2364,9 @@ namespace PayswapBrokerPeerHelper
                     Console.Error.WriteLine("custodian_client:protocol-failed");
                     return 72;
                 }
-                if (op == "get")
+                if (op == "get" || op == "post")
                 {
+                    // get/post 应答 = {status, body} 结局（非 ok:true 语义）—— 原样交桌面（适配器按 status/body 映射）。
                     Console.Out.WriteLine(reply.Trim());
                     return 0;
                 }

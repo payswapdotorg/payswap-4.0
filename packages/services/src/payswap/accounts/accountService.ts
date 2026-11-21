@@ -83,7 +83,13 @@ export interface PayswapAccountCredentialPort {
  */
 export interface PayswapCustodianBridge {
   push(key: string, slot?: string): Promise<void>;
-  get(path: string, slot?: string): Promise<{ status: number; body: string }>;
+  /** v1.2：host 可选（缺省 api.stripe.com —— 旧 wire 逐字不变）；per-host 路径
+   *  闭集在服务端强制（PayStack = /balance|/transaction|/customer|/dispute）。 */
+  get(path: string, slot?: string, host?: string): Promise<{ status: number; body: string }>;
+  /** v1.2 PayPal token 交换代理：URL 闭集在服务端强制（恰两枚官方 token URL）；
+   *  Basic 凭据从两个命名槽现读 —— 明文绝不经桌面。应答 {status, body}。
+   *  body = 非秘密 form 体（grant_type=client_credentials —— 有界透传）。 */
+  post(url: string, userSlot: string, passSlot: string, body: string): Promise<{ status: number; body: string }>;
   drop(slot?: string): Promise<void>;
 }
 
