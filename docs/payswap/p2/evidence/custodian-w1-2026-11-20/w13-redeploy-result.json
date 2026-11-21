@@ -1,0 +1,52 @@
+{
+ "verdict": "V1.3 REDEPLOY VERIFIED — named slots live, token+data proxy live (real PayPal 401), data URL closed-set holds, W1 loud-refusal contract holds, recovery works, custody left empty",
+ "date": "2026-11-21T11:59:28.512Z",
+ "serviceIdentity": {
+  "serviceName": "PayswapCustodianSvc",
+  "binaryPath": "C:\\ProgramData\\payswap\\svc-bin\\payswap-custodian-svc.exe (sc qc verified)",
+  "stagedBinarySha256": "19b6e9a1bd6353f431d6fb987c9eaa2c046c3a7f485be869fbbb9d54f1b61a23",
+  "note": "svc-install File.Copy of the staged v1.3 binary (byte-identical)"
+ },
+ "sequence": {
+  "genuineMain": {
+   "pid": 1764,
+   "registered": true,
+   "namedSlotLifecycle": true,
+   "tokenGetPaypalStatus": 401,
+   "tokenGetEvilDataUrl": {
+    "status": 0,
+    "body": "data-url-forbidden"
+   }
+  },
+  "attackerWon": {
+   "pid": 3684,
+   "register": {
+    "exit": 0
+   }
+  },
+  "genuineRecoveryAttempt": {
+   "pid": 10264,
+   "refusals": {
+    "register": true,
+    "push": true,
+    "get": true,
+    "drop": true
+   },
+   "exits": {
+    "register": 70,
+    "push": 70,
+    "get": 70,
+    "drop": 70
+   }
+  },
+  "recovery": {
+   "pid": 14364,
+   "register": {
+    "exit": 0
+   }
+  }
+ },
+ "nonDestructive": true,
+ "custodyState": "starts empty (redeploy wipe); only synthetic slot material stored then dropped; no provider credentials stored or read",
+ "restoreNotes": "reconnect providers via the connection UI to restore live custody"
+}
