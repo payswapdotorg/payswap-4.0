@@ -78,10 +78,33 @@ const ISO4217_EXPONENTS: Readonly<Record<string, number>> = {
 export interface PayswapPaypalDataReadDependencies {
   /** HTTP transport（缺省 = globalThis.fetch + AbortController 超时执行）。 */
   apiClient?: ApiClient;
+  /** v1.3 托管 token+data 代理端口（runtime 从 custodian 桥注入；缺席 = 托管凭据
+   *  typed unavailable 零触达 —— 单测注入面 preserved）。端口做 token 交换 + 数据
+   *  GET 服务端完成，access_token 绝不出代理。 */
+  custodianTokenGet?: PayswapPaypalCustodianTokenGet;
   /** 数据读超时（缺省 10 s）。 */
   timeoutMs?: number;
   /** API base（缺省 = 官方 pin 的 base[mode]；本地真连线测试可注入）。 */
   apiBase?: string;
+}
+
+/**
+ * v1.3 托管 token+data 代理端口（custodian token-get op 的 wrapper；runtime 从桥
+ * 注入）。端口做 token 交换 + 数据 GET 服务端完成，access_token 绝不出代理。
+ */
+export interface PayswapPaypalCustodianTokenGet {
+  (params: {
+    readonly mode: "test" | "live";
+    readonly clientSlot: string;
+    readonly secretSlot: string;
+    readonly dataUrl: string;
+  }): Promise<{ status: number; body: string }>;
+}
+
+/** custodian 标记里的槽名（"…custodian-managed:<存储键>" 后缀；缺省 = 旧版单槽）。 */
+function slotFromCustodianMarker(value: string): string {
+  const markerIndex = value.indexOf(CUSTODIAN_SECRET_MARKER);
+  return value.slice(markerIndex + CUSTODIAN_SECRET_MARKER.length).replace(/^:/, "");
 }
 
 /** 缺省 transport：globalThis.fetch + AbortController 超时执行（ApiClient 契约）。 */
@@ -131,6 +154,173 @@ function rfc3339Seconds(now: Date, daysAgo: number): string {
   return new Date(now.getTime() - daysAgo * 86_400_000).toISOString().replace(/\.\d{3}Z$/, "Z");
 }
 
+/** 类别 → 官方数据端点路径+查询串（customers 在调用方已 refused —— 不可达）。 */
+function categoryPathAndQuery(category: "balance" | "payment_objects" | "disputes"): string {
+  if (category === "balance") return "/v1/reporting/balances";
+  if (category === "payment_objects") {
+    // 官方窗口上限 31 天；固定最近 31 天（start_date/end_date 必填，RFC3339 秒精度）。
+    const now = new Date();
+    const endDate = rfc3339Seconds(now, 0);
+    const startDate = rfc3339Seconds(now, TRANSACTION_WINDOW_DAYS);
+    return `/v1/reporting/transactions?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`;
+  }
+  return "/v1/customer/disputes";
+}
+
+/**
+ * 类别数据投影（共享面 —— 直连与托管两臂同投影）：官方载 envelopes/
+ * transaction_details/items → redacted 行（ISO 4217 minor-unit 换算、PII 零携带、
+ * all-or-nothing 畸形拒绝）。畸形 → unavailable（诚实 fail-closed）。
+ */
+function projectPaypalCategoryData(
+  category: "balance" | "payment_objects" | "disputes",
+  data: unknown,
+): PayswapReadonlyCategoryResult {
+  if (category === "balance") {
+    const envelopes = (data as { balances?: unknown } | null)?.balances;
+    if (!Array.isArray(envelopes)) {
+      return { status: "unavailable", detail: "The PayPal balances read returned an unexpected envelope; no data evidence." };
+    }
+    const available: { amount: string; currency: string }[] = [];
+    for (const raw of envelopes) {
+      const item = raw as {
+        currency?: unknown;
+        total_balance?: { value?: unknown } | null;
+        available_balance?: { value?: unknown } | null;
+      } | null;
+      if (typeof item !== "object" || item === null || typeof item.currency !== "string" || item.currency.trim().length === 0) {
+        return { status: "unavailable", detail: "The PayPal balances read returned a malformed entry; no data evidence (all-or-nothing)." };
+      }
+      const exponent = ISO4217_EXPONENTS[item.currency];
+      if (exponent === undefined) {
+        return { status: "unavailable", detail: `The PayPal currency exponent table has no entry for '${item.currency}'; no data evidence (honest fail-closed).` };
+      }
+      const source = item.available_balance ?? item.total_balance;
+      const value = typeof source === "object" && source !== null && typeof (source as { value?: unknown }).value === "string"
+        ? (source as { value: string }).value
+        : null;
+      if (value === null) {
+        return { status: "unavailable", detail: "The PayPal balances read returned a malformed balance value; no data evidence (all-or-nothing)." };
+      }
+      const minor = decimalToMinorUnits(value, exponent);
+      if (minor === null) {
+        return { status: "unavailable", detail: "The PayPal balances read returned a value that cannot be projected without precision loss; no data evidence." };
+      }
+      available.push({ amount: minor, currency: item.currency });
+    }
+    // PayPal 的 withheld_balance 是独立概念 —— pending: [] 是显式缺席投影。
+    return { status: "ok", data: { available, pending: [] } };
+  }
+
+  if (category === "payment_objects") {
+    const details = (data as { transaction_details?: unknown } | null)?.transaction_details;
+    if (!Array.isArray(details)) {
+      return { status: "unavailable", detail: "The PayPal transactions read returned an unexpected envelope; no data evidence." };
+    }
+    const rows: {
+      id: string;
+      amount: string;
+      currency: string;
+      status: string;
+      created: number;
+      description: string | null;
+    }[] = [];
+    for (const raw of details) {
+      const info = (raw as { transaction_info?: unknown } | null)?.transaction_info as {
+        transaction_id?: unknown;
+        transaction_amount?: { currency_code?: unknown; value?: unknown } | null;
+        transaction_status?: unknown;
+        transaction_initiation_date?: unknown;
+        transaction_subject?: unknown;
+      } | null;
+      if (typeof info !== "object" || info === null) {
+        return { status: "unavailable", detail: "The PayPal transactions read returned a malformed entry; no data evidence (all-or-nothing)." };
+      }
+      const exponent = typeof info.transaction_amount === "object" && info.transaction_amount !== null
+        ? ISO4217_EXPONENTS[(info.transaction_amount as { currency_code?: unknown }).currency_code as string]
+        : undefined;
+      const currency = typeof info.transaction_amount === "object" && info.transaction_amount !== null
+        ? (info.transaction_amount as { currency_code?: unknown }).currency_code
+        : null;
+      const created = typeof info.transaction_initiation_date === "string" ? epochSeconds(info.transaction_initiation_date) : null;
+      if (
+        typeof info.transaction_id !== "string" ||
+        info.transaction_id.trim().length === 0 ||
+        typeof info.transaction_amount !== "object" ||
+        info.transaction_amount === null ||
+        typeof currency !== "string" ||
+        currency.trim().length === 0 ||
+        typeof info.transaction_amount.value !== "string" ||
+        typeof info.transaction_status !== "string" ||
+        info.transaction_status.trim().length === 0 ||
+        created === null
+      ) {
+        return { status: "unavailable", detail: "The PayPal transactions read returned a malformed entry; no data evidence (all-or-nothing)." };
+      }
+      const minor = decimalToMinorUnits(info.transaction_amount.value, exponent ?? -1);
+      if (minor === null) {
+        return { status: "unavailable", detail: "The PayPal transactions read returned an amount that cannot be projected without precision loss or an unpinned currency; no data evidence." };
+      }
+      const subject = typeof info.transaction_subject === "string" && info.transaction_subject.trim().length > 0
+        ? info.transaction_subject
+        : null;
+      rows.push({ id: info.transaction_id, amount: minor, currency, status: info.transaction_status, created, description: subject });
+    }
+    return { status: "ok", data: rows };
+  }
+
+  // disputes：items[] 投影。
+  const items = (data as { items?: unknown } | null)?.items;
+  if (!Array.isArray(items)) {
+    return { status: "unavailable", detail: "The PayPal disputes read returned an unexpected envelope; no data evidence." };
+  }
+  const rows: {
+    id: string;
+    amount: string;
+    currency: string;
+    status: string;
+    reason: string | null;
+    created: number;
+  }[] = [];
+  for (const raw of items) {
+    const item = raw as {
+      dispute_id?: unknown;
+      status?: unknown;
+      reason?: unknown;
+      create_time?: unknown;
+      dispute_amount?: { currency_code?: unknown; value?: unknown } | null;
+    } | null;
+    const created = typeof item?.create_time === "string" ? epochSeconds(item.create_time) : null;
+    const currency = typeof item?.dispute_amount === "object" && item?.dispute_amount !== null
+      ? (item.dispute_amount as { currency_code?: unknown }).currency_code
+      : null;
+    if (
+      typeof item !== "object" ||
+      item === null ||
+      typeof item.dispute_id !== "string" ||
+      item.dispute_id.trim().length === 0 ||
+      typeof item.status !== "string" ||
+      item.status.trim().length === 0 ||
+      typeof item.dispute_amount !== "object" ||
+      item.dispute_amount === null ||
+      typeof currency !== "string" ||
+      currency.trim().length === 0 ||
+      typeof item.dispute_amount.value !== "string" ||
+      created === null
+    ) {
+      return { status: "unavailable", detail: "The PayPal disputes read returned a malformed entry; no data evidence (all-or-nothing)." };
+    }
+    const exponent = ISO4217_EXPONENTS[currency];
+    const minor = decimalToMinorUnits(item.dispute_amount.value, exponent ?? -1);
+    if (minor === null) {
+      return { status: "unavailable", detail: "The PayPal disputes read returned an amount that cannot be projected without precision loss or an unpinned currency; no data evidence." };
+    }
+    const reason = typeof item.reason === "string" && item.reason.trim().length > 0 ? item.reason : null;
+    rows.push({ id: item.dispute_id, amount: minor, currency, status: item.status, reason, created });
+  }
+  return { status: "ok", data: rows };
+}
+
 /**
  * 创建真实 PayPal 数据读端口（`PayswapAccountDataReadPort` 的 PayPal 实现）。
  * 类别映射、ISO 4217 金额换算与结局纪律见文件头法则；凭据只进 token 交换的
@@ -141,6 +331,7 @@ export function createPaypalAccountDataReadPort(
 ): PayswapAccountDataReadPort {
   const timeoutMs = dependencies.timeoutMs ?? DEFAULT_READ_TIMEOUT_MS;
   const apiClient = dependencies.apiClient ?? createDefaultPaypalApiClient(timeoutMs);
+  const custodianTokenGet = dependencies.custodianTokenGet;
   const base = (mode: "test" | "live") =>
     (dependencies.apiBase ?? PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.apiBaseUrl[mode]).replace(/\/+$/, "");
   let cachedToken: { token: string; expiresAt: number; mode: "test" | "live"; secret: string; clientId: string } | null = null;
@@ -255,18 +446,61 @@ export function createPaypalAccountDataReadPort(
         `The PayPal data-read adapter received secret kind '${input.secretKind}'; the PayPal contract's primary secret is exactly [client-secret].`,
       );
     }
-    // v1.2：托管标记凭据 → typed unavailable 零触达（token 交换需要明文凭据对 ——
-    // 托管下明文不经桌面；数据面托管代理是 v1.3 追踪项）。
+    // customers：PayPal 官方商户 REST API 无 customers 列举端点（provider 缺席
+    // 事实，pin 在案）—— 任何路径都零触达直拒。
+    if (input.category === "customers") {
+      return {
+        status: "refused",
+        refusal: {
+          code: "unsupported_operation",
+          message:
+            "PayPal's official merchant REST API exposes no customers listing endpoint " +
+            "(provider-absence fact, pinned 2026-11-20); the category is not fabricatable.",
+        },
+      };
+    }
+    // v1.3：托管标记凭据 → 走注入的 token+data 代理端口（custodian token-get op:
+    // 服务端完成 token 交换 + 数据 GET；access_token 瞬态绝不出代理）。代理缺席 =
+    // typed unavailable 零触达（不降级、不猜）。非托管路径继续走明文凭据对。
     const secretIsMarker = input.secret.includes(CUSTODIAN_SECRET_MARKER);
     const clientIdIsMarker = input.clientId !== undefined && input.clientId.includes(CUSTODIAN_SECRET_MARKER);
     if (secretIsMarker || clientIdIsMarker) {
-      return {
-        status: "unavailable",
-        detail:
-          "The PayPal data reads under credential custody require the custodian token+data proxy " +
-          "(v1.3 tracked slice); the v1.2 custody surface covers only the read-back token exchange. " +
-          "No wire touch; state unchanged.",
-      };
+      if (!custodianTokenGet || !secretIsMarker || !clientIdIsMarker) {
+        return {
+          status: "unavailable",
+          detail:
+            "The PayPal data reads under credential custody require the custodian token+data proxy " +
+            "(v1.3); the proxy is absent or the credential pair is incomplete (no wire touch; state unchanged).",
+        };
+      }
+      // 托管臂：按类别构建 dataUrl → 调端口（custodian 服务端完成 token 交换 + 数据
+      // GET）→ 应答 {status, body} → 共享投影。
+      const clientSlot = slotFromCustodianMarker(input.clientId);
+      const secretSlot = slotFromCustodianMarker(input.secret);
+      const dataUrl = base(input.mode) + categoryPathAndQuery(input.category);
+      const reply = await custodianTokenGet({ mode: input.mode, clientSlot, secretSlot, dataUrl });
+      if (reply.status === 401) {
+        return { status: "auth-failed", detail: "PayPal rejected the credential (HTTP 401 on the token+data proxy)." };
+      }
+      if (reply.status === 403) {
+        return {
+          status: "refused",
+          refusal: {
+            code: "insufficient_permission",
+            message: "PayPal answered HTTP 403 on the token+data proxy; the app lacks the required scope for this surface.",
+          },
+        };
+      }
+      if (reply.status !== 200) {
+        return { status: "unavailable", detail: `PayPal answered HTTP ${reply.status} on the token+data proxy; no data evidence.` };
+      }
+      let data: unknown;
+      try {
+        data = JSON.parse(reply.body);
+      } catch {
+        return { status: "unavailable", detail: `The PayPal ${input.category} read (via custody) returned a malformed body; no data evidence.` };
+      }
+      return projectPaypalCategoryData(input.category, data);
     }
     const clientId = input.clientId?.trim() ?? "";
     if (clientId.length === 0) {
@@ -283,219 +517,9 @@ export function createPaypalAccountDataReadPort(
     }
     const token = tokenResult.token;
 
-    if (input.category === "balance") {
-      let data: unknown;
-      try {
-        const response = await apiClient.request(base(input.mode) + "/v1/reporting/balances", {
-          method: "GET",
-          headers: { Authorization: `Bearer ${token}` },
-          timeoutMs,
-        });
-        if (response.status === 401) {
-          return { status: "auth-failed", detail: "PayPal rejected the token (HTTP 401 on the balances read)." };
-        }
-        if (response.status !== 200) {
-          return { status: "unavailable", detail: `PayPal answered HTTP ${response.status} on the balances read; no data evidence.` };
-        }
-        data = await response.json();
-      } catch (error) {
-        return { status: "unavailable", detail: transportFailureDetail(error, "balances") };
-      }
-      const envelopes = (data as { balances?: unknown } | null)?.balances;
-      if (!Array.isArray(envelopes)) {
-        return { status: "unavailable", detail: "The PayPal balances read returned an unexpected envelope; no data evidence." };
-      }
-      const available: { amount: string; currency: string }[] = [];
-      for (const raw of envelopes) {
-        const item = raw as {
-          currency?: unknown;
-          total_balance?: { value?: unknown } | null;
-          available_balance?: { value?: unknown } | null;
-        } | null;
-        if (typeof item !== "object" || item === null || typeof item.currency !== "string" || item.currency.trim().length === 0) {
-          return { status: "unavailable", detail: "The PayPal balances read returned a malformed entry; no data evidence (all-or-nothing)." };
-        }
-        const exponent = ISO4217_EXPONENTS[item.currency];
-        if (exponent === undefined) {
-          return { status: "unavailable", detail: `The PayStack/PayPal currency exponent table has no entry for '${item.currency}'; no data evidence (honest fail-closed).` };
-        }
-        const source = item.available_balance ?? item.total_balance;
-        const value = typeof source === "object" && source !== null && typeof (source as { value?: unknown }).value === "string"
-          ? (source as { value: string }).value
-          : null;
-        if (value === null) {
-          return { status: "unavailable", detail: "The PayPal balances read returned a malformed balance value; no data evidence (all-or-nothing)." };
-        }
-        const minor = decimalToMinorUnits(value, exponent);
-        if (minor === null) {
-          return { status: "unavailable", detail: "The PayPal balances read returned a value that cannot be projected without precision loss; no data evidence." };
-        }
-        available.push({ amount: minor, currency: item.currency });
-      }
-      // PayPal 的 withheld_balance 是独立概念 —— pending: [] 是显式缺席投影。
-      return { status: "ok", data: { available, pending: [] } };
-    }
-
-    if (input.category === "payment_objects") {
-      // 官方窗口上限 31 天；固定最近 31 天（start_date/end_date 必填，RFC3339 秒精度）。
-      const now = new Date();
-      const endDate = rfc3339Seconds(now, 0);
-      const startDate = rfc3339Seconds(now, TRANSACTION_WINDOW_DAYS);
-      let data: unknown;
-      try {
-        const response = await apiClient.request(
-          `${base(input.mode)}/v1/reporting/transactions?start_date=${encodeURIComponent(startDate)}&end_date=${encodeURIComponent(endDate)}`,
-          {
-            method: "GET",
-            headers: { Authorization: `Bearer ${token}` },
-            timeoutMs,
-          },
-        );
-        if (response.status === 401) {
-          return { status: "auth-failed", detail: "PayPal rejected the token (HTTP 401 on the transactions read)." };
-        }
-        if (response.status !== 200) {
-          return { status: "unavailable", detail: `PayPal answered HTTP ${response.status} on the transactions read; no data evidence.` };
-        }
-        data = await response.json();
-      } catch (error) {
-        return { status: "unavailable", detail: transportFailureDetail(error, "transactions") };
-      }
-      const details = (data as { transaction_details?: unknown } | null)?.transaction_details;
-      if (!Array.isArray(details)) {
-        return { status: "unavailable", detail: "The PayPal transactions read returned an unexpected envelope; no data evidence." };
-      }
-      const rows: {
-        id: string;
-        amount: string;
-        currency: string;
-        status: string;
-        created: number;
-        description: string | null;
-      }[] = [];
-      for (const raw of details) {
-        const info = (raw as { transaction_info?: unknown } | null)?.transaction_info as {
-          transaction_id?: unknown;
-          transaction_amount?: { currency_code?: unknown; value?: unknown } | null;
-          transaction_status?: unknown;
-          transaction_initiation_date?: unknown;
-          transaction_subject?: unknown;
-        } | null;
-        if (typeof info !== "object" || info === null) {
-          return { status: "unavailable", detail: "The PayPal transactions read returned a malformed entry; no data evidence (all-or-nothing)." };
-        }
-        const exponent = typeof info.transaction_amount === "object" && info.transaction_amount !== null
-          ? ISO4217_EXPONENTS[(info.transaction_amount as { currency_code?: unknown }).currency_code as string]
-          : undefined;
-        const currency = typeof info.transaction_amount === "object" && info.transaction_amount !== null
-          ? (info.transaction_amount as { currency_code?: unknown }).currency_code
-          : null;
-        const created = typeof info.transaction_initiation_date === "string" ? epochSeconds(info.transaction_initiation_date) : null;
-        if (
-          typeof info.transaction_id !== "string" ||
-          info.transaction_id.trim().length === 0 ||
-          typeof info.transaction_amount !== "object" ||
-          info.transaction_amount === null ||
-          typeof currency !== "string" ||
-          currency.trim().length === 0 ||
-          typeof info.transaction_amount.value !== "string" ||
-          typeof info.transaction_status !== "string" ||
-          info.transaction_status.trim().length === 0 ||
-          created === null
-        ) {
-          return { status: "unavailable", detail: "The PayPal transactions read returned a malformed entry; no data evidence (all-or-nothing)." };
-        }
-        const minor = decimalToMinorUnits(info.transaction_amount.value, exponent ?? -1);
-        if (minor === null) {
-          return { status: "unavailable", detail: "The PayPal transactions read returned an amount that cannot be projected without precision loss or an unpinned currency; no data evidence." };
-        }
-        const subject = typeof info.transaction_subject === "string" && info.transaction_subject.trim().length > 0
-          ? info.transaction_subject
-          : null;
-        rows.push({ id: info.transaction_id, amount: minor, currency, status: info.transaction_status, created, description: subject });
-      }
-      return { status: "ok", data: rows };
-    }
-
-    if (input.category === "customers") {
-      // PayPal 官方商户 REST API 无 customers 列举端点（provider 缺席事实，pin 在案）。
-      return {
-        status: "refused",
-        refusal: {
-          code: "unsupported_operation",
-          message:
-            "PayPal's official merchant REST API exposes no customers listing endpoint " +
-            "(provider-absence fact, pinned 2026-11-20); the category is not fabricatable.",
-        },
-      };
-    }
-
-    // disputes：GET /v1/customer/disputes → items[] 投影。
-    let disputeData: unknown;
-    try {
-      const response = await apiClient.request(base(input.mode) + "/v1/customer/disputes", {
-        method: "GET",
-        headers: { Authorization: `Bearer ${token}` },
-        timeoutMs,
-      });
-      if (response.status === 401) {
-        return { status: "auth-failed", detail: "PayPal rejected the token (HTTP 401 on the disputes read)." };
-      }
-      if (response.status !== 200) {
-        return { status: "unavailable", detail: `PayPal answered HTTP ${response.status} on the disputes read; no data evidence.` };
-      }
-      disputeData = await response.json();
-    } catch (error) {
-      return { status: "unavailable", detail: transportFailureDetail(error, "disputes") };
-    }
-    const items = (disputeData as { items?: unknown } | null)?.items;
-    if (!Array.isArray(items)) {
-      return { status: "unavailable", detail: "The PayPal disputes read returned an unexpected envelope; no data evidence." };
-    }
-    const rows: {
-      id: string;
-      amount: string;
-      currency: string;
-      status: string;
-      reason: string | null;
-      created: number;
-    }[] = [];
-    for (const raw of items) {
-      const item = raw as {
-        dispute_id?: unknown;
-        status?: unknown;
-        reason?: unknown;
-        create_time?: unknown;
-        dispute_amount?: { currency_code?: unknown; value?: unknown } | null;
-      } | null;
-      const created = typeof item?.create_time === "string" ? epochSeconds(item.create_time) : null;
-      const currency = typeof item?.dispute_amount === "object" && item?.dispute_amount !== null
-        ? (item.dispute_amount as { currency_code?: unknown }).currency_code
-        : null;
-      if (
-        typeof item !== "object" ||
-        item === null ||
-        typeof item.dispute_id !== "string" ||
-        item.dispute_id.trim().length === 0 ||
-        typeof item.status !== "string" ||
-        item.status.trim().length === 0 ||
-        typeof item.dispute_amount !== "object" ||
-        item.dispute_amount === null ||
-        typeof currency !== "string" ||
-        currency.trim().length === 0 ||
-        typeof item.dispute_amount.value !== "string" ||
-        created === null
-      ) {
-        return { status: "unavailable", detail: "The PayPal disputes read returned a malformed entry; no data evidence (all-or-nothing)." };
-      }
-      const exponent = ISO4217_EXPONENTS[currency];
-      const minor = decimalToMinorUnits(item.dispute_amount.value, exponent ?? -1);
-      if (minor === null) {
-        return { status: "unavailable", detail: "The PayPal disputes read returned an amount that cannot be projected without precision loss or an unpinned currency; no data evidence." };
-      }
-      const reason = typeof item.reason === "string" && item.reason.trim().length > 0 ? item.reason : null;
-      rows.push({ id: item.dispute_id, amount: minor, currency, status: item.status, reason, created });
-    }
-    return { status: "ok", data: rows };
+    // 直连臂：token → 类别 GET（官方闭集路径 + 查询串）→ 共享投影。
+    const fetched = await categoryGet(input.mode, token, categoryPathAndQuery(input.category), input.category);
+    if (!fetched.ok) return fetched.result;
+    return projectPaypalCategoryData(input.category, fetched.data);
   };
 }

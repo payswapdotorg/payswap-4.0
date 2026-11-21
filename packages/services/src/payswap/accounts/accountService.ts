@@ -90,6 +90,8 @@ export interface PayswapCustodianBridge {
    *  Basic 凭据从两个命名槽现读 —— 明文绝不经桌面。应答 {status, body}。
    *  body = 非秘密 form 体（grant_type=client_credentials —— 有界透传）。 */
   post(url: string, userSlot: string, passSlot: string, body: string): Promise<{ status: number; body: string }>;
+  /** v1.3 token+data 代理：token 交换 + 数据 GET 服务端完成（access_token 瞬态）。 */
+  tokenGet(tokenUrl: string, userSlot: string, passSlot: string, dataUrl: string): Promise<{ status: number; body: string }>;
   drop(slot?: string): Promise<void>;
 }
 
