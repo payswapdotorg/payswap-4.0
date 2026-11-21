@@ -50,6 +50,10 @@ export {
   type PayswapPaypalReadBackDependencies,
 } from "./providers/paypal/readBackAccount.js";
 export {
+  createPaypalAccountDataReadPort,
+  type PayswapPaypalDataReadDependencies,
+} from "./providers/paypal/readAccountData.js";
+export {
   createPaystackAccountDataReadPort,
   type PayswapPaystackDataReadDependencies,
 } from "./providers/paystack/readAccountData.js";

@@ -678,6 +678,7 @@ export function createPayswapAccountService(
             mode: record.mode,
             secretKind,
             secret,
+            clientId: credentialValues.get("client-id"),
             category,
           });
           const parsed = payswapReadonlyCategoryResultSchemas[category].safeParse(rawResult);

@@ -181,6 +181,9 @@ export interface PayswapAccountDataReadInput {
   readonly mode: "test" | "live";
   readonly secretKind: PayswapPspSecretKind;
   readonly secret: string;
+  /** P3 client-credentials 形态（PayPal）：凭据对的另一半（token 交换的 Basic
+   *  user）。operator-supplied-secret 记录缺省缺席 —— wire 行为不变。 */
+  readonly clientId?: string;
   readonly category: PayswapReadonlyCategory;
 }
 
