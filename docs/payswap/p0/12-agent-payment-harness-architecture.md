@@ -17,7 +17,7 @@ PaySwap orchestrates payments; it does not take custody of customer funds.
 - Do not fork or replace ZCode's agent runtime, model-provider stack, task/session semantics, MCP, plugins, skills, workflows, automations, permission system or New Task shell.
 - Do not add a second agent runtime, payment broker, account registry, provider-capability registry, authorization authority, execution engine, ledger or reconciliation system.
 - Do not vendor/copy TReg source. Its product concepts may inform an independent implementation; source reuse requires separate licence and legal review.
-- Do not add wallets, deposits, stored value, escrow, credit/lending, custody, pooling/float, merchant-of-record or PaySwap-operated settlement.
+- Do not issue or manage customer wallets/keys, accept deposits, maintain stored value, escrow, extend credit/lend, custody or pool customer funds, hold float, become merchant of record or operate settlement. Users may connect wallets they already control through a separate WalletConnector; that connector cannot import/export keys, create a PaySwap wallet or grant ambient spending permission.
 - Do not let a model, agent, plugin, protocol adapter, webhook or automation mint financial authority.
 - No provider writes before P7 acceptance; no live-money operation before the separate operator-controlled live gate.
 
@@ -177,6 +177,52 @@ External protocols exchange mandates, challenges, agent identities, payment requ
 
 Every protocol adapter pins an exact version and official evidence URL/retrieval date, verifies signatures/issuer/audience/replay/expiry/nonce as applicable, validates feature support, tests malformed/stale/forged messages and fails closed on unknown versions. Receipts are emitted only from verified execution/reconciliation state; a protocol "accepted" event is not settlement. Unsupported features are unavailable, not simulated as production support.
 
+### 6.1 Blockchain rail and external-wallet boundary
+
+Blockchain is a first-class rail in the existing PaySwap financial core,
+not a conventional PSP and not a second payment engine. Keep four interfaces
+distinct:
+
+- `BlockchainRailAdapter`: chain-specific transaction construction,
+  simulation, submission lifecycle and finality/event observation.
+- `WalletConnector`: connects an externally user-controlled wallet, proves
+  address control and requests signatures for exact host-approved
+  transactions. It is not an authority or custody service.
+- `ChainInfrastructureProvider`: RPC, gas, indexer, simulation and event
+  observations. Infrastructure output is evidence, not eligibility or
+  settlement truth.
+- `PaymentProtocolAdapter`: AP2/x402/MPP and other protocol translation;
+  it does not become a wallet or chain executor.
+
+Wallet proof-of-control is a single-use, expiring, origin/domain/audience/
+chain-bound challenge. A connected wallet may expose supported public
+balances and capabilities, but connection is not transaction consent.
+PaySwap never asks for or stores seed phrases/private keys. The first
+transaction path is human-present: PaySwap constructs and validates an
+exact transaction, obtains the existing host Authorization Grant, asks
+the external wallet to sign, verifies binding, and lets exactly one
+designated submission owner broadcast. No blockchain write or token
+approval ships before P7.
+
+The P7 grant binds the connected address, chain/network identity, sender,
+recipient, native value, token contract/amount/decimals, method and calldata
+hash, spender/allowance if applicable, nonce/replay domain, fee ceiling,
+beneficiary, route and expiry. Any material change needs a new grant and
+signature. Approval transactions are separately granted; unlimited
+approvals are prohibited by default. Autonomous chain execution is not
+available to ordinary EOAs; it requires a separately specified and audited
+user-controlled smart-account policy that enforces the FAE constraints.
+
+Chain submission, mempool acceptance and block inclusion are not finality.
+Reconciliation must account for confirmations/finality, expected events,
+reorganizations, replacement/dropped/reverted transactions, RPC disagreement
+and unknown outcomes. Unknown outcomes are not blindly retried. Bridges,
+swaps and wrapped assets are conditional until their own risk, legal and
+conformance gates pass. This roadmap does not authorize PaySwap-issued
+wallets, PaySwap-managed keys, custody, a proprietary chain/rollup or
+PaySwap-operated settlement.
+
+
 Official references checked 2026-11-15 (they establish initiative scope, not PaySwap certification, partner access or Ghana availability):
 - AP2 specification: https://ap2-protocol.org/ap2/specification/
 - Google AP2 v0.2 / FIDO Alliance announcement, 2026-04-28: https://blog.google/products-and-platforms/platforms/google-pay/agent-payments-protocol-fido-alliance/
@@ -220,6 +266,9 @@ These are target boundaries for P3 onward, not claims about existing source file
 | Delegation law | `packages/shared/src/payswap/delegation/` plus existing host authorization service | Pure schema/intersection rules and one host-owned writer |
 | Protocol schemas | `packages/shared/src/payswap/protocols/` | Versioned typed contracts; no I/O or credentials |
 | Protocol adapters | `packages/services/src/payswap/protocols/<protocolId>/` | Boundary translation to common financial contracts |
+| Blockchain rail adapters | `packages/services/src/payswap/blockchain/<chainFamily>/` | Chain-specific transaction and finality boundary; no authority or ledger |
+| Wallet connectors | `packages/services/src/payswap/wallet-connectors/<connectorId>/` | External wallet connection/signature transport; no key custody or policy |
+| Chain infrastructure | Existing provider/infrastructure seam, with chain-scoped adapters | RPC/indexer/gas/simulation observations; not account or settlement authority |
 | UI | Existing New Task, plugin and approved host surfaces | Additive projections; Class-B approval remains host-rendered |
 
 Before adding any store, identify the existing authoritative owner, migration, lock/fencing rule and read model. Protocol transport state may be bounded adapter state; financial facts and mandate/transaction history remain in the one PaySwap ledger.
@@ -238,3 +287,8 @@ Before adding any store, identify the existing authoritative owner, migration, l
 10. No custody; provider/bank evidence is the settlement truth.
 11. External provider/protocol facts are versioned, dated and re-verified.
 12. All non-financial ZCode behavior remains preserved.
+13. Blockchain rail, wallet connector, chain infrastructure and payment protocol are distinct contracts.
+14. Wallet connection proves address control only; it does not create spend permission or financial authority.
+15. All chain writes pass through the same host grant and single execution authority; agents never receive keys/signers.
+16. Chain transaction inclusion is not finality; reconciliation handles reorgs and unknown outcomes without blind retries.
+17. No PaySwap-issued wallet, key custody, proprietary chain/rollup or settlement business is implied by external wallet connectivity.
