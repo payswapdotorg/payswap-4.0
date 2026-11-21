@@ -1,0 +1,56 @@
+{
+ "verdict": "V1.2 REDEPLOY VERIFIED — POST proxy live (real PayPal 401), multi-host GET closed-set holds, named slots live, W1 loud-refusal contract holds, recovery works, custody left empty",
+ "date": "2026-11-21T09:36:39.214Z",
+ "serviceIdentity": {
+  "serviceName": "PayswapCustodianSvc",
+  "binaryPath": "C:\\ProgramData\\payswap\\svc-bin\\payswap-custodian-svc.exe (sc qc verified)",
+  "stagedBinarySha256": "b3374f7b7528378cfc8d76ff45e056c990fc91237e9c50601b877cc2b2b747ac",
+  "note": "svc-install File.Copy of the staged v1.2 binary (byte-identical)"
+ },
+ "sequence": {
+  "genuineMain": {
+   "pid": 19712,
+   "registered": true,
+   "namedSlotLifecycle": true
+  },
+  "postProxyLive": {
+   "paypalSandboxStatus": 401,
+   "interpretation": "401 invalid_client for the synthetic pair = the in-custodian token-exchange path works end-to-end against the real sandbox endpoint"
+  },
+  "postClosedSet": 0,
+  "paystackMultiHostNoKey": {
+   "status": 0,
+   "body": "no-key"
+  },
+  "attackerWon": {
+   "pid": 19196,
+   "register": {
+    "exit": 0
+   }
+  },
+  "genuineRecoveryAttempt": {
+   "pid": 1504,
+   "refusals": {
+    "register": true,
+    "push": true,
+    "get": true,
+    "drop": true
+   },
+   "exits": {
+    "register": 70,
+    "push": 70,
+    "get": 70,
+    "drop": 70
+   }
+  },
+  "recovery": {
+   "pid": 16012,
+   "register": {
+    "exit": 0
+   }
+  }
+ },
+ "nonDestructive": true,
+ "custodyState": "starts empty (redeploy wipe); only synthetic slot material stored then dropped; no provider credentials stored or read",
+ "restoreNotes": "reconnect providers via the connection UI to restore live custody"
+}
