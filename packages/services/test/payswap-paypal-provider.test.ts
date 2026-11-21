@@ -126,14 +126,14 @@ describe("PAYSWAP_PAYPAL_AUTH_SPEC + evidence pin (P3 provider half — dated-ev
     expect(PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.clientSecretFormatCheck.test(CLIENT_SECRET)).toBe(true);
     expect(PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.clientSecretFormatCheck.test("short")).toBe(false);
     expect(PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.clientSecretFormatCheck.test("has space inside")).toBe(false);
-    // 端点面 = 官方 pin（sandbox 直接记载；live 为官方 scope-string host，经
-    // 再验证清单确认后才能承载 live 验收）。
+    // 端点面 = 官方 pin（sandbox/live 均官方直接记载 —— API requests 页
+    // 2026-11-21 在案；go-live 清单指示换基址承载 live 验收）。
     expect(PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.apiBaseUrl.test).toBe("https://api-m.sandbox.paypal.com");
     expect(PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.apiBaseUrl.live).toBe("https://api-m.paypal.com");
     expect(PAYSWAP_PAYPAL_AUTH_SPEC.acquisition.tokenPath).toBe("/v1/oauth2/token");
   });
 
-  it("the evidence pin carries https sources, an ISO retrieval date, verified facts and the live-URL + userinfo re-verification items", () => {
+  it("the evidence pin carries https sources, an ISO retrieval date, verified facts and the userinfo re-verification item (the live-URL row resolved 2026-11-21)", () => {
     const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
     expect(PAYSWAP_PAYPAL_EVIDENCE_PIN.providerId).toBe("paypal");
     expect(PAYSWAP_PAYPAL_EVIDENCE_PIN.factsRetrievedAt).toMatch(ISO_DATE);
@@ -141,8 +141,13 @@ describe("PAYSWAP_PAYPAL_AUTH_SPEC + evidence pin (P3 provider half — dated-ev
       expect(url.startsWith("https://")).toBe(true);
     }
     expect(PAYSWAP_PAYPAL_EVIDENCE_PIN.verifiedBoundaryFacts.length).toBeGreaterThan(0);
+    // live URL 行已于 2026-11-21 官方确认（API requests 页直接记载服务 URL；
+    // go-live 清单指示换基址）—— 从再验证清单移入已验证事实。
+    const verified = PAYSWAP_PAYPAL_EVIDENCE_PIN.verifiedBoundaryFacts.join("\n");
+    expect(verified).toMatch(/api-m\.paypal\.com/);
+    expect(verified).toMatch(/retrieved 2026-11-21/);
     const reverify = PAYSWAP_PAYPAL_EVIDENCE_PIN.reverifyBeforeAdapterUse.join("\n");
-    expect(reverify).toMatch(/go-live|live server/i);
+    expect(reverify).not.toMatch(/live server/i);
     expect(reverify).toMatch(/userinfo|client_credentials/i);
   });
 });
