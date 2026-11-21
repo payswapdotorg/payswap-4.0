@@ -445,75 +445,6 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
     expect(connections).toContain('"revoked"');
   });
 
-  it("Gate E2 行（存储可用环境）：损坏键 + 真实重启 → typed 存储 refusal 呈现；既有记录仍可列表", async function () {
-    if (storageUnavailableInEnv) {
-      // 该环境的 Gate E2 行已在「首次合法 connect」行本体证明（环境只有 fallback）。
-      this.skip();
-      return;
-    }
-    const idsBeforeRestart = await rowIds();
-    expect(idsBeforeRestart.length).toBeGreaterThan(0);
-
-    // 损坏键文件（safeStorage 包裹产物之外的任意字节）→ 重启后 app-ready 预热
-    // 解包失败（typed unwrap 错误）→ fail-safe 空集 env（accountWarmup 法则 2）。
-    await restartIntoWorkspacePreservingProfile(DEFAULT_WORKSPACE, {
-      afterElectronProcessExit: async () => {
-        await writeFile(KEY_STORE_FILE, "corrupted-key-material-not-a-safestorage-blob", {
-          mode: 0o600,
-        });
-      },
-    });
-
-    await openPayswapSettingsSection();
-    // 键故障不吞数据面：既有记录仍可列表（readers 诚实）。
-    await browser.waitUntil(
-      async () => (await rowIds()).length === idsBeforeRestart.length,
-      { timeout: 15_000, timeoutMsg: "键故障后既有连接记录仍应可列表" },
-    );
-
-    await submitConnect(VALID_FORMAT_TEST_SECRET, "E2 Stripe Fallback");
-    // 架构分支：ADR-P2-3 custodian-required 路径不触 legacy 键仓（F5 —— 预热跳过
-    //，解包永远不会为保管路径运行）—— 损坏的 legacy 包裹键与 connect 无关，
-    // 托管在场的 lawful 结局是 connected（走托管）；托管缺席时 lawful 结局是
-    // typed custodian_unavailable。legacy 路径保留原 Gate E2 存储 refusal 断言。
-    if (custodianBackedAtRest()) {
-      const custodianNotice = await waitForNotice(
-        (candidate) =>
-          candidate.key === "payswap.connections.result.connected" ||
-          (candidate.key === "payswap.connections.refusal.custodian_unavailable" &&
-            candidate.code === CUSTODIAN_REFUSAL_CODE),
-        "托管在场时损坏 legacy 键不影响 connect —— lawful 结局为 connected（托管）/ custodian_unavailable（托管缺席）",
-      );
-      // at-rest：connected 分支 = 托管保管（本地 store 无本连接槽位；blob 在场）。
-      if (custodianNotice.key === "payswap.connections.result.connected") {
-        const connectionsCustodian = await readTextIfExists(CONNECTIONS_STORE_FILE);
-        expect(connectionsCustodian).toContain("E2 Stripe Fallback");
-        const credentialsCustodian = await readTextIfExists(CREDENTIALS_STORE_FILE);
-        if (credentialsCustodian !== null) {
-          expect(credentialsCustodian).not.toContain(VALID_FORMAT_TEST_SECRET);
-        }
-        expect(existsSync(CUSTODIAN_KEY_BLOB_FILE)).toBe(true);
-      }
-      return;
-    }
-    const notice = await waitForNotice(
-      (candidate) =>
-        candidate.key === "payswap.connections.refusal.secure_storage_unavailable" &&
-        candidate.code === STORAGE_REFUSAL_CODE,
-      "损坏键下 connect 应呈现 Gate E2 typed 存储 refusal（E2E 条款）",
-    );
-    expect(notice.code).toBe(STORAGE_REFUSAL_CODE);
-    expect(notice.tone).toBe("danger");
-
-    // at-rest：拒绝先于记录写 —— 无新连接记录、无新 PSP 密文。
-    const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
-    expect(connections).not.toContain("E2E Stripe Fallback");
-    const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
-    if (credentials !== null) {
-      expect(credentials).not.toContain("payswap:psp:");
-    }
-  });
-});
 
 // ---------------------------------------------------------------------------
 // P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC 链）—— provider
@@ -522,6 +453,8 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
 // verified{app_id}/revoke 双槽清除）已在 payswap-paypal-connection-ipc 电池；
 // 本臂是运行时呈现与 at-rest 的真实窗口证明。
 // ---------------------------------------------------------------------------
+
+});
 
 const PAYPAL_CLIENT_ID = "AXe2payswapRealWindowClientId";
 const PAYPAL_CLIENT_SECRET = `EXe2payswapRealWindowSecret${"4".repeat(52)}`;
@@ -591,6 +524,27 @@ describe("P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC
     const secretValue = await $(sel(TID_SECRET_INPUT)).getValue();
     expect(String(secretValue)).toBe("");
 
+    // 环境严格断言（false-green 修复 — 评审 2026-11-21 第 4 节）：闭集结局按
+    // 环境期望收敛 —— gnome-libsecret 腿（存储可用）里 PayPal connect 必须
+    // connected（refusal = 键仓损坏/后端选择缺陷，测试失败）；absent 腿（无
+    // custodian 的 Linux CI）里 connected = 存储不该在场（测试失败）。discover
+    // （本地开发）保持闭集两支皆 lawful 的历史自适应。
+    if (KEYRING_EXPECTATION === "gnome-libsecret") {
+      if (notice.code === STORAGE_REFUSAL_CODE || notice.code === CUSTODIAN_REFUSAL_CODE) {
+        throw new Error(
+          "ZCODE_E2E_KEYRING=gnome-libsecret 腿期望 PayPal connected，但 connect 呈现 " +
+            notice.code +
+            " —— 键仓损坏或 Electron 后端选择缺陷（存储可用腿不得静默退化成 fallback-only）",
+        );
+      }
+    } else if (KEYRING_EXPECTATION === "absent" && !custodianBackedAtRest()) {
+      if (notice.key === "payswap.connections.result.connected") {
+        throw new Error(
+          "ZCODE_E2E_KEYRING=absent 腿期望 typed refusal（Gate E2 条款），但 PayPal connect 成功 —— absent 腿里存储不该在场",
+        );
+      }
+    }
+
     if (notice.code === STORAGE_REFUSAL_CODE || notice.code === CUSTODIAN_REFUSAL_CODE) {
       // 拒绝先于记录写 —— 无 PayPal 记录、无 PayPal 明文（与 Stripe 臂同款纪律）。
       const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
@@ -614,14 +568,18 @@ describe("P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC
     const connectionId = (await rowIds()).find((id) => !rowsBefore.includes(id));
     const row = $(`[data-testid="${TID_ROW}"][data-connection-id="${connectionId}"]`);
     expect(await row.getAttribute("data-connection-status")).toBe("connected");
-    const name = await $('[data-testid="payswap-connection-name"]').getText();
+    // 行内作用域取 name（列表含 Stripe 臂的既有 revoked 行 —— 全局首匹配会错抓）。
+    const name = await row.$(sel("payswap-connection-name")).getText();
     expect(name).toContain("E2E PayPal");
 
     // at-rest（架构感知）：记录无明文；凭据面按架构分支 —— custodian 路径 =
     // 本地 store 无本连接槽位（托管保管）；legacy 路径 = 密文（含 id 与两个槽
-    // 名，不含明文）。
+    // 名，不含明文）。store 为 pretty-printed JSON —— 解析断言（不依赖格式）。
     const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
-    expect(connections).toContain('"providerId":"paypal"');
+    const storeRecords = connections === null ? [] : (JSON.parse(connections) as Array<{ providerId?: string; displayName?: string }>);
+    expect(
+      storeRecords.some((record) => record.providerId === "paypal" && record.displayName === "E2E PayPal"),
+    ).toBe(true);
     expect(connections).not.toContain(PAYPAL_CLIENT_SECRET);
     expect(connections).not.toContain(PAYPAL_CLIENT_ID);
     const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
@@ -644,6 +602,13 @@ describe("P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC
   it("revoke：终态 revoked + at-rest 双槽清除（custodian 路径 = 托管 blob 证实不在）", async function () {
     const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
     if (connections === null || !connections.includes("E2E PayPal")) {
+      // false-green 修复（评审 2026-11-21 第 4 节）：存储可用腿里 PayPal 记录
+      // 必须存在（connect 行已强制 connected）—— 记录缺席 = 上游缺陷，测试失败。
+      if (KEYRING_EXPECTATION === "gnome-libsecret") {
+        throw new Error(
+          "ZCODE_E2E_KEYRING=gnome-libsecret 腿期望 E2E PayPal 连接记录在场（connect 已强制 connected），但 store 无记录 —— 双槽持久化断言被静默跳过即为 false-green",
+        );
+      }
       this.skip();
       return;
     }
@@ -665,7 +630,11 @@ describe("P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC
       this.skip();
       return;
     }
-    await clickVisibleTestId(TID_ROW_REVOKE, "没有找到撤销按钮");
+    // 行内作用域点击撤销（列表含 Stripe 臂的既有 revoked 行 —— 全局首匹配会
+    // 点错行：PayPal 行永不撤销而 Stripe 行幂等重撤，revoke 断言超时）。
+    const revokeBtn = await row.$(sel(TID_ROW_REVOKE));
+    await revokeBtn.waitForDisplayed({ timeout: 10_000 });
+    await revokeBtn.click();
     const notice = await waitForNotice(
       (candidate) => candidate.key === "payswap.connections.result.revoked",
       "revoke 应呈现终态（muted）",
@@ -690,5 +659,90 @@ describe("P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC
     const connectionsAfter = await readTextIfExists(CONNECTIONS_STORE_FILE);
     expect(connectionsAfter).toContain(connectionId);
     expect(connectionsAfter).toContain('"revoked"');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gate E2 损坏键臂 —— 置后原因（评审 2026-11-21 第 4 节 false-green 修复）：该臂
+// 损坏 PSP 键仓并以重启收尾；此前位于 Stripe 臂内、先于 PayPal 臂执行，导致
+// 存储可用腿的 PayPal connect 撞上损坏键而落入 refusal 分支（false-green）。
+// 移至 PayPal 臂之后：健康键仓下 PayPal connect/revoke 全链先跑，损坏键语义
+// 最后执行。
+// ---------------------------------------------------------------------------
+describe("Gate E2 损坏键臂（存储可用环境）—— 有意置于 PayPal 臂之后：健康键仓下先证真实连接，损坏键语义最后执行", () => {
+  before(async function () {
+    this.timeout(60_000);
+    await openPayswapSettingsSection();
+  });
+
+  it("Gate E2 行（存储可用环境）：损坏键 + 真实重启 → typed 存储 refusal 呈现；既有记录仍可列表", async function () {
+    if (storageUnavailableInEnv) {
+      // 该环境的 Gate E2 行已在「首次合法 connect」行本体证明（环境只有 fallback）。
+      this.skip();
+      return;
+    }
+    const idsBeforeRestart = await rowIds();
+    expect(idsBeforeRestart.length).toBeGreaterThan(0);
+
+    // 损坏键文件（safeStorage 包裹产物之外的任意字节）→ 重启后 app-ready 预热
+    // 解包失败（typed unwrap 错误）→ fail-safe 空集 env（accountWarmup 法则 2）。
+    await restartIntoWorkspacePreservingProfile(DEFAULT_WORKSPACE, {
+      afterElectronProcessExit: async () => {
+        await writeFile(KEY_STORE_FILE, "corrupted-key-material-not-a-safestorage-blob", {
+          mode: 0o600,
+        });
+      },
+    });
+
+    await openPayswapSettingsSection();
+    // 键故障不吞数据面：既有记录仍可列表（readers 诚实）。
+    await browser.waitUntil(
+      async () => (await rowIds()).length === idsBeforeRestart.length,
+      { timeout: 15_000, timeoutMsg: "键故障后既有连接记录仍应可列表" },
+    );
+
+    await submitConnect(VALID_FORMAT_TEST_SECRET, "E2 Stripe Fallback");
+    // 架构分支：ADR-P2-3 custodian-required 路径不触 legacy 键仓（F5 —— 预热跳过
+    //，解包永远不会为保管路径运行）—— 损坏的 legacy 包裹键与 connect 无关，
+    // 托管在场的 lawful 结局是 connected（走托管）；托管缺席时 lawful 结局是
+    // typed custodian_unavailable。legacy 路径保留原 Gate E2 存储 refusal 断言。
+    if (custodianBackedAtRest()) {
+      const custodianNotice = await waitForNotice(
+        (candidate) =>
+          candidate.key === "payswap.connections.result.connected" ||
+          (candidate.key === "payswap.connections.refusal.custodian_unavailable" &&
+            candidate.code === CUSTODIAN_REFUSAL_CODE),
+        "托管在场时损坏 legacy 键不影响 connect —— lawful 结局为 connected（托管）/ custodian_unavailable（托管缺席）",
+      );
+      // at-rest：connected 分支 = 托管保管（本地 store 无本连接槽位；blob 在场）。
+      if (custodianNotice.key === "payswap.connections.result.connected") {
+        const connectionsCustodian = await readTextIfExists(CONNECTIONS_STORE_FILE);
+        expect(connectionsCustodian).toContain("E2 Stripe Fallback");
+        const credentialsCustodian = await readTextIfExists(CREDENTIALS_STORE_FILE);
+        if (credentialsCustodian !== null) {
+          expect(credentialsCustodian).not.toContain(VALID_FORMAT_TEST_SECRET);
+        }
+        expect(existsSync(CUSTODIAN_KEY_BLOB_FILE)).toBe(true);
+      }
+      return;
+    }
+    const notice = await waitForNotice(
+      (candidate) =>
+        candidate.key === "payswap.connections.refusal.secure_storage_unavailable" &&
+        candidate.code === STORAGE_REFUSAL_CODE,
+      "损坏键下 connect 应呈现 Gate E2 typed 存储 refusal（E2E 条款）",
+    );
+    expect(notice.code).toBe(STORAGE_REFUSAL_CODE);
+    expect(notice.tone).toBe("danger");
+
+    // at-rest：拒绝先于记录写 —— 无新连接记录、无新 Stripe 密文。作用域精确化：
+    // 此臂运行时 PayPal 连接（先于本臂完成）可能仍持其槽位 —— 断言不得要求
+    // 全 store 无 PSP 键，只要求无 stripe 槽（被拒连接零写入）。
+    const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
+    expect(connections).not.toContain("E2E Stripe Fallback");
+    const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
+    if (credentials !== null) {
+      expect(credentials).not.toContain("payswap:psp:stripe:");
+    }
   });
 });
