@@ -306,6 +306,7 @@ async function stageWindowsSecureStorage(context) {
       "packages/services/test/payswap-paypal-provider.test.ts",
       "packages/services/test/payswap-paypal-data.test.ts",
       "packages/services/test/payswap-paystack-data.test.ts",
+      "packages/services/test/payswap-paystack-live-conformance.test.ts",
       "packages/services/test/payswap-stripe-read-back.test.ts",
       "packages/ui/test/payswap-connection-ui-presentation.test.ts",
     ],

@@ -1,0 +1,28 @@
+{
+  "date": "2026-11-21",
+  "suite": "packages/services/test/payswap-paystack-live-conformance.test.ts",
+  "provider": "paystack",
+  "mode": "test",
+  "transport": "real network (api.paystack.co; default fetch + AbortController timeout)",
+  "result": "PASSED (1 test, ~2.4s)",
+  "rows": {
+    "connect": "connected (mode test; zero network at connect)",
+    "identityGap": "refused/read_back_unavailable with valid credentials; state stayed connected (no fabricated identity)",
+    "overviewGate": "refused/read_back_unavailable (four-category detail never answered on identity-gap provider)",
+    "dataReads": {
+      "balance": "ok (available/pending arrays)",
+      "payment_objects": "ok (GET /transaction)",
+      "customers": "ok (rows carry only id/created/description keys — PII redaction-by-construction)",
+      "disputes": "unavailable (pinned: official records carry no top-level amount/currency/reason)"
+    },
+    "securityRow": "bogus sk_test key -> real 401 -> expired",
+    "atRest": "connection record store contains zero secret material"
+  },
+  "credentialDiscipline": "key exists only as run-env var; no key material in evidence, logs, or any store",
+  "skipBehavior": "suite skips when ZCODE_PAYSWAP_PAYSTACK_TEST_KEY is absent (CI/network-free batteries unaffected)",
+  "boundaries": [
+    "test-mode only; live leg blocked on business activation (owner-only compliance data)",
+    "identity-gap row is the honest PayStack behavior (no official self-identity endpoint)",
+    "disputes typed-unavailable is the pinned provider-absence projection"
+  ]
+}
