@@ -574,9 +574,12 @@ describe("P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC
 
     // at-rest（架构感知）：记录无明文；凭据面按架构分支 —— custodian 路径 =
     // 本地 store 无本连接槽位（托管保管）；legacy 路径 = 密文（含 id 与两个槽
-    // 名，不含明文）。
+    // 名，不含明文）。store 为 pretty-printed JSON —— 解析断言（不依赖格式）。
     const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
-    expect(connections).toContain('"providerId":"paypal"');
+    const storeRecords = connections === null ? [] : (JSON.parse(connections) as Array<{ providerId?: string; displayName?: string }>);
+    expect(
+      storeRecords.some((record) => record.providerId === "paypal" && record.displayName === "E2E PayPal"),
+    ).toBe(true);
     expect(connections).not.toContain(PAYPAL_CLIENT_SECRET);
     expect(connections).not.toContain(PAYPAL_CLIENT_ID);
     const credentials = await readTextIfExists(CREDENTIALS_STORE_FILE);
