@@ -284,6 +284,11 @@ export const PAYSWAP_PAYSTACK_AUTH_SPEC: PayswapOperatorSecretAuthSpec = {
  * - https://developer.paypal.com/api/rest/ — 凭据经 Developer Dashboard
  *   「Apps & Credentials」取得（「Copy the client ID and client secret」）；
  *   client id 标识 app、client secret 认证 client id；官方不记载凭据字符模式。
+ * - https://developer.paypal.com/api/rest/requests/ — 服务 URL 官方直接记载
+ *   （检索 2026-11-21）："The URL to the API service is either: Sandbox.
+ *   https://api-m.sandbox.paypal.com — Live. https://api-m.paypal.com"。
+ * - https://developer.paypal.com/api/rest/test-go-live/ — 官方 go-live 清单：
+ *   换基址（sandbox → live host）+ 换 live 凭据。
  * - https://developer.paypal.com/api/identity/v1/ — 官方 identity 面是
  *   OpenID Connect userinfo（/v1/identity/openidconnect/userinfo），其 scopes
  *   绑定 client ID —— client_credentials token 可达性官方未证实，不采用。
@@ -297,6 +302,8 @@ export const PAYSWAP_PAYPAL_EVIDENCE_PIN: PayswapProviderEvidencePin = {
     "https://developer.paypal.com/api/rest/authentication/",
     "https://developer.paypal.com/api/rest/",
     "https://developer.paypal.com/api/identity/v1/",
+    "https://developer.paypal.com/api/rest/requests/",
+    "https://developer.paypal.com/api/rest/test-go-live/",
   ],
   factsRetrievedAt: "2026-11-20",
   verifiedBoundaryFacts: [
@@ -304,11 +311,10 @@ export const PAYSWAP_PAYPAL_EVIDENCE_PIN: PayswapProviderEvidencePin = {
     "Token response fields: {scope, access_token, token_type: \"Bearer\", app_id, expires_in (seconds), nonce}",
     "Subsequent API calls carry Authorization: Bearer ACCESS-TOKEN; on expiry request a new token",
     "Credentials are created in the Developer Dashboard (Apps & Credentials: client ID identifies the app, client secret authenticates it); no official character-pattern documentation for either value",
-    "Sandbox token base https://api-m.sandbox.paypal.com (official example); the live host appears in official scope-string examples as https://api-m.paypal.com",
+    "Service URLs are directly documented on the official API requests page (retrieved 2026-11-21): \"The URL to the API service is either: Sandbox. https://api-m.sandbox.paypal.com — Live. https://api-m.paypal.com\"; the official go-live checklist (developer.paypal.com/api/rest/test-go-live) instructs switching the base URL from the sandbox host to https://api-m.paypal.com",
     "The official identity surface is the OpenID Connect userinfo endpoint (/v1/identity/openidconnect/userinfo) with scopes bound to the client ID — client_credentials reachability is NOT officially evidenced",
   ],
   reverifyBeforeAdapterUse: [
-    "Live server URL: confirm https://api-m.paypal.com against the official go-live documentation before any live-mode acceptance (the sandbox base is directly documented; the live host is evidenced only by official scope-string examples as of 2026-11-20)",
     "client_credentials access to identity/userinfo surfaces: not officially evidenced as of 2026-11-20 — do not adopt without official documentation",
     "Client id/secret character patterns: not officially documented — keep formatCheck permissive (non-whitespace) unless PayPal publishes a pattern",
   ],
