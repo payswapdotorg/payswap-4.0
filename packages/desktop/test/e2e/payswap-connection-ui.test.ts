@@ -526,6 +526,17 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
 const PAYPAL_CLIENT_ID = "AXe2payswapRealWindowClientId";
 const PAYPAL_CLIENT_SECRET = `EXe2payswapRealWindowSecret${"4".repeat(52)}`;
 
+/** 当前 notice 状态（不存在 = null）—— no-op 提交的「不变」判据面。 */
+async function readNoticeStateOrNull(): Promise<NoticeState | null> {
+  const notice = $(sel(TID_NOTICE));
+  if (!(await notice.isExisting().catch(() => false))) return null;
+  return {
+    key: (await notice.getAttribute("data-notice-key")) ?? "",
+    code: (await notice.getAttribute("data-notice-code")) ?? "",
+    tone: (await notice.getAttribute("data-notice-tone")) ?? "",
+  };
+}
+
 describe("P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC 链）", () => {
   before(async function () {
     this.timeout(60_000);
@@ -539,17 +550,20 @@ describe("P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC
     await $(sel("payswap-connect-mode")).waitForDisplayed({ timeout: 10_000 });
   });
 
-  it("本地守卫行：缺 clientId 提交是 no-op（UI 法则 —— 不发起、秘密不清空、无结局呈现）", async () => {
+  it("本地守卫行：缺 clientId 提交是 no-op（UI 法则 —— 不发起、秘密不清空、结局呈现不变）", async () => {
+    // 注意：前臂（Stripe 面）可能留有 stale notice —— 本守卫的判据是「提交
+    // 前后 notice 状态不变」（no-op 不产生新结局），而非「notice 不存在」。
+    const noticeBefore = await readNoticeStateOrNull();
     const rowsBefore = await rowIds();
     await $(sel(TID_SECRET_INPUT)).setValue(PAYPAL_CLIENT_SECRET);
     await clickVisibleTestId(TID_SUBMIT, "没有找到连接提交按钮");
     await browser.pause(400);
     // 本地守卫：clientId 空 → handleConnect 直接 return —— 秘密不清空（单发
-    // 清空只发生在真正提交时）、无 notice、列表不变。
+    // 清空只发生在真正提交时）、notice 状态不变、列表不变。
     const secretValue = await $(sel(TID_SECRET_INPUT)).getValue();
     expect(String(secretValue)).toBe(PAYPAL_CLIENT_SECRET);
-    const noticeExisting = await $(sel(TID_NOTICE)).isExisting().catch(() => false);
-    expect(noticeExisting).toBe(false);
+    const noticeAfter = await readNoticeStateOrNull();
+    expect(noticeAfter).toEqual(noticeBefore);
     const rowsAfter = await rowIds();
     expect(rowsAfter.length).toBe(rowsBefore.length);
     // 复位：清掉未消耗的秘密（后续行重新填）。
