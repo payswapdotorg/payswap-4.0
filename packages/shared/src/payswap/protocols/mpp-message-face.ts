@@ -28,6 +28,13 @@ import { z } from "zod";
 import { canonicalJsonStringify } from "../canonical-json.js";
 import { PAYSWAP_MPP_METHOD_INTENT_MATRIX } from "./protocol-facts.js";
 import {
+  stripeChargeReceiptSchema,
+  stripeSubscriptionReceiptSchema,
+  evmChargeReceiptSchema,
+  evmSessionReceiptSchema,
+  tempoSubscriptionReceiptSchema,
+} from "./mpp-receipt-schemas.js";
+import {
   type PayswapProtocolAdapter,
   type PayswapProtocolAdapterDescriptor,
   type PayswapProtocolInboundOutcome,
@@ -387,91 +394,6 @@ function credentialSchemaFor(method: string, intent: string): z.ZodTypeAny | nul
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// 五个 method/intent 的 receipt schema
-// ---------------------------------------------------------------------------
-
-const stripeChargeReceiptSchema = z
-  .object({
-    method: z.literal("stripe"),
-    reference: z.string().min(1),
-    status: z.literal("success"),
-    timestamp: z.string().refine((v) => isValidRfc3339Date(v), "RFC 3339 日历日期校验失败"),
-    externalId: z.string().optional(),
-  })
-  .strict();
-
-const stripeSubscriptionReceiptSchema = z
-  .object({
-    method: z.literal("stripe"),
-    reference: z.string().min(1),
-    status: z.literal("success"),
-    subscriptionId: z.string().min(1),
-    timestamp: z.string().refine((v) => isValidRfc3339Date(v), "RFC 3339 日历日期校验失败"),
-    externalId: z.string().optional(),
-  })
-  .strict();
-
-const evmChargeReceiptSchema = z
-  .object({
-    method: z.literal("evm"),
-    challengeId: z.string().min(1).optional(),
-    reference: z.string().regex(evmTxHashRegex),
-    status: z.literal("success"),
-    timestamp: z.string().refine((v) => isValidRfc3339Date(v), "RFC 3339 日历日期校验失败"),
-    chainId: z.number().int().positive(),
-    externalId: z.string().optional(),
-  })
-  .strict();
-
-const evmSessionReceiptSchema = z
-  .object({
-    method: z.literal("evm"),
-    intent: z.literal("session"),
-    reference: z.string().min(1),
-    status: z.literal("success"),
-    timestamp: z.string().refine((v) => isValidRfc3339Date(v), "RFC 3339 日历日期校验失败"),
-    challengeId: z.string().min(1),
-    channelId: z.string().min(1),
-    acceptedCumulative: z.string().min(1),
-    spent: z.string().min(1),
-    chainId: z.number().int().positive(),
-    units: z.string().optional(),
-    txHash: z.string().optional(),
-    confirmations: z.number().int().optional(),
-  })
-  .strict()
-  .superRefine((value, ctx) => {
-    // 官方：reference MUST equal channelId（评审修正项 C）。
-    if (value.reference !== value.channelId) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["reference"],
-        message: "reference MUST equal channelId（官方 EVM session receipt 语义）",
-      });
-    }
-  });
-
-const tempoSubscriptionReceiptSchema = z
-  .object({
-    method: z.literal("tempo"),
-    reference: z.string().min(1),
-    status: z.literal("success"),
-    subscriptionId: z.string().min(1),
-    timestamp: z.string().refine((v) => isValidRfc3339Date(v), "RFC 3339 日历日期校验失败"),
-    externalId: z.string().optional(),
-  })
-  .strict();
-
-function receiptSchemaFor(method: string, intent: string | null): z.ZodTypeAny | null {
-  if (method === "stripe" && intent === "charge") return stripeChargeReceiptSchema;
-  if (method === "stripe" && intent === "subscription") return stripeSubscriptionReceiptSchema;
-  if (method === "stripe") return null;
-  if (method === "evm" && intent === "session") return evmSessionReceiptSchema;
-  if (method === "evm") return evmChargeReceiptSchema;
-  if (method === "tempo") return tempoSubscriptionReceiptSchema;
-  return null;
-}
 
 // ---------------------------------------------------------------------------
 // challenge schema（含可选参数官方语义 + request 解码/JCS + matrix）
