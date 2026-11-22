@@ -182,6 +182,7 @@
   "packages/services/test/payswap-paypal-live-conformance.test.ts",
   "packages/services/test/payswap-protocol-contract.test.ts",
   "packages/services/test/payswap-ap2-message-face.test.ts",
+  "packages/services/test/payswap-mpp-message-face.test.ts",
   "packages/services/test/payswap-stripe-read-back.test.ts",
   "packages/ui/test/payswap-connection-ui-presentation.test.ts",
   "packages/ui/test/payswap-surface-revocation-wiring.test.ts",
