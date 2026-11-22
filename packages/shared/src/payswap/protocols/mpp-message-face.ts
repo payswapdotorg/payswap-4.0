@@ -1,39 +1,39 @@
 /**
  * PaySwap P3 —— MPP 消息面实现（五个 pinned method/intent 组合的完整消息
- * schema / 验证门；handoff v3 优先级 1-4）。
+ * schema / 验证门；handoff v3 优先级 1-4 + 2026-11-22 评审修正）。
  *
- * 实现许可（protocol-contract.ts 法则 5）：五个受支持组合（stripe-charge /
- * stripe-subscription / evm-charge / evm-session / tempo-subscription）的
- * 字段级细节已入 pin（检索 2026-11-21/22，protocol-facts.ts PAYSWAP_MPP_
- * METHOD_INTENT_MATRIX 为单一事实源）—— 本面只编码这些事实；矩阵外的
- * method/intent 组合与未检索的 per-network 变体 typed 拒绝（不可用，不是
- * 模拟）。
- *
- * 2026-11-22 handoff v3 修正（对抗评审 + 官方源逐字）：
- * - method/intent 独立枚举 → 兼容矩阵（五个组合；矩阵外拒绝）；
- * - request 非空字符串 → base64url-nopad 校验 + 解码 + UTF-8 JSON + JCS
- *   canonical 校验（线串必须已是 canonical 形态）+ method-specific schema；
- * - challenge 可选参数（digest/expires/description/header/opaque）按官方语义
- *   支持并验证；未知参数按官方客户端规则忽略（strip，不当事实）；
- * - 五个 method/intent 特定的 credential payload schema（stripe spt 前缀、
- *   evm 四类 credential 分派、tempo keyAuthorization）；
- * - 五个 method/intent 特定的 receipt schema（含 subscription/session 专属
- *   扩展字段）；
- * - credential-to-challenge 绑定：本面验证回显 challenge 的结构 + 暴露回显
- *   摘要供宿主关联；**原始 challenge 与回显的关联由宿主边界强制**（本面接口
- *   无法接收已签发 challenge 的可信关联上下文 —— 该验收准则显式留白，不模拟
- *   等价判定）。
+ * 2026-11-22 评审修正（TL1 review——MPP Conformance Completion）：
+ * - Tempo subscription：currency = TIP-20 token address（非 ISO 4217 —— 评审
+ *   修正项 A）；recipient = 0x 地址；subscriptionExpires = RFC 3339 且 MUST
+ *   严格晚于 challenge expires 且 MUST NOT 复制 challenge expiry（TIP-20
+ *   profile 规则）；accessKeyAddress = 0x 地址；
+ * - EVM charge：permit2Address REQUIRED（官方表）；Permit2 credential 增加
+ *   transferDetails + witness（REQUIRED）；splits 逐项 {recipient, amount}
+ *   校验 + sum(splits) < amount + splits 仅 permit2 承兑可用；
+ * - EVM session：action 特定的 credential schema（open 的 type/hash/salt、
+ *   非 open 的 type 禁用）；receipt 的 reference = channelId 等式强制；
+ * - digest：RFC 9530 Structured Field 形态校验（algo=:base64:）；
+ * - opaque：JCS canonical 编码验证（解码 → 解析 → 重序列化 === 原始值）；
+ * - TextDecoder fatal UTF-8（无效字节序列 = 可靠拒绝，非替换）；
+ * - RFC 3339 真实日历日期校验（regex + Date.parse 双重）。
  *
  * 诚实边界（不变）：不验签（MPP credential 签名验证需要密钥材料，未在案）；
- * 不签名、不调用钱包、不提交链上交易、不调用 provider、不授权支付、不宣称
- * 结算。产物永远是 `validated-untrusted-proposal`（结构验证 ≠ 密码学验证）。
+ * credential-to-challenge 关联与重放/过期/单次使用的生命周期强制 = 宿主边界
+ * （本面接口无法接收已签发 challenge 的可信关联上下文 —— 显式留白，不模拟）；
+ * emitReceipt 的宿主证据服务 = 设计中的边界（尚无 production 调用者 —— 验收
+ * 准则显式留白）。
  */
 
 import { z } from "zod";
 import { canonicalJsonStringify } from "../canonical-json.js";
+import { PAYSWAP_MPP_METHOD_INTENT_MATRIX } from "./protocol-facts.js";
 import {
-  PAYSWAP_MPP_METHOD_INTENT_MATRIX,
-} from "./protocol-facts.js";
+  stripeChargeReceiptSchema,
+  stripeSubscriptionReceiptSchema,
+  evmChargeReceiptSchema,
+  evmSessionReceiptSchema,
+  tempoSubscriptionReceiptSchema,
+} from "./mpp-receipt-schemas.js";
 import {
   type PayswapProtocolAdapter,
   type PayswapProtocolAdapterDescriptor,
@@ -47,14 +47,11 @@ import {
 // pinned 词汇
 // ---------------------------------------------------------------------------
 
-/** MPP intent 闭集（mpp.dev pin）。 */
 export const PAYSWAP_MPP_INTENT_VALUES = ["charge", "session", "subscription"] as const;
-
-/** MPP method 闭集（pinned rails —— 未 pin 的 per-network method 拒绝）。 */
 export const PAYSWAP_MPP_METHOD_VALUES = ["stripe", "evm", "tempo"] as const;
 
 // ---------------------------------------------------------------------------
-// 共享形态
+// 共享校验原语
 // ---------------------------------------------------------------------------
 
 const base64UrlNopadRegex = /^[A-Za-z0-9_-]+$/;
@@ -63,8 +60,39 @@ const evmAddressRegex = /^0x[0-9a-fA-F]{40}$/;
 const evmTxHashRegex = /^0x[0-9a-fA-F]{64}$/;
 const rfc3339Regex = /^\d{4}-\d{2}-\d{2}[Tt]\d{2}:\d{2}:\d{2}(\.\d+)?([Zz]|[+-]\d{2}:\d{2})$/;
 const isoCurrencyRegex = /^[a-z]{3}$/;
+/** RFC 9530 content-digest 形态：algo=:base64:（Structured Field Dictionary）。 */
+const rfc9530DigestRegex = /^[a-z0-9-]+=:([A-Za-z0-9+/=]+):$/;
 
-/** SD-JWT/EVM 无关的 MPP 机制声明（MPP 不用 SD-JWT —— 无 _sd_alg/sd_hash）。 */
+/** RFC 3339 真实日历日期校验（regex 检查形态 + Date 校验日历有效性）。 */
+function isValidRfc3339Date(value: string): boolean {
+  if (!rfc3339Regex.test(value)) return false;
+  const parsed = Date.parse(value);
+  return !Number.isNaN(parsed);
+}
+
+/** fatal UTF-8 解码 —— 无效字节序列可靠拒绝（非替换）。 */
+const fatalUtf8 = new TextDecoder("utf-8", { fatal: true });
+
+function base64UrlDecode(request: string): { ok: true; decoded: string } | { ok: false; reason: string } {
+  try {
+    const base64 = request.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(base64);
+    // fatal: true —— 无效 UTF-8 字节序列抛出（非替换）
+    return { ok: true, decoded: fatalUtf8.decode(Uint8Array.from(binary, (c) => c.charCodeAt(0))) };
+  } catch {
+    return { ok: false, reason: "request base64url 解码失败（含无效 UTF-8 字节序列）" };
+  }
+}
+
+async function payloadDigest(payload: unknown): Promise<string> {
+  const canonical = canonicalJsonStringify(payload);
+  const digestBytes = await globalThis.crypto.subtle.digest(
+    "SHA-256",
+    new TextEncoder().encode(canonical),
+  );
+  const base64 = btoa(String.fromCharCode(...new Uint8Array(digestBytes)));
+  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
 
 // ---------------------------------------------------------------------------
 // 五个 method/intent 的 request schema（解码后的 JSON 对象 —— 逐字段 pin）
@@ -105,21 +133,11 @@ const stripeSubscriptionRequestSchema = z
   })
   .strict()
   .superRefine((value, ctx) => {
-    // 官方 MUST 句：「Servers MUST reject request objects that include
-    // recipient or subscriptionExpires」—— 本面在结构层即拒。
     if ((value as { recipient?: unknown }).recipient !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["recipient"],
-        message: "recipient MUST NOT 在案（stripe subscription profile）",
-      });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["recipient"], message: "recipient MUST NOT 在案（stripe subscription profile）" });
     }
     if ((value as { subscriptionExpires?: unknown }).subscriptionExpires !== undefined) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["subscriptionExpires"],
-        message: "subscriptionExpires MUST NOT 在案（stripe subscription profile）",
-      });
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["subscriptionExpires"], message: "subscriptionExpires MUST NOT 在案（stripe subscription profile）" });
     }
   });
 
@@ -133,14 +151,47 @@ const evmChargeRequestSchema = z
     methodDetails: z
       .object({
         chainId: z.number().int().positive(),
-        permit2Address: z.string().regex(evmAddressRegex).optional(),
+        permit2Address: z.string().regex(evmAddressRegex),
         credentialTypes: z.array(z.enum(["permit2", "authorization", "transaction", "hash"])).optional(),
         decimals: z.number().int().optional(),
-        splits: z.array(z.unknown()).max(10).optional(),
+        splits: z
+          .array(
+            z
+              .object({
+                recipient: z.string().regex(evmAddressRegex),
+                amount: z.string().regex(positiveIntStringRegex),
+              })
+              .strict(),
+          )
+          .max(10)
+          .optional(),
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    // splits 约束（官方：sum(splits[].amount) MUST 严格小于 amount；
+    // splits 仅 permit2 承兑可用）。
+    const splits = value.methodDetails.splits;
+    if (splits !== undefined) {
+      const sum = splits.reduce((acc, s) => acc + BigInt((s as { amount: string }).amount), BigInt(0));
+      if (sum >= BigInt(value.amount)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["methodDetails", "splits"],
+          message: "sum(splits[].amount) MUST 严格小于 amount",
+        });
+      }
+      const hasPermit2 = (value.methodDetails as { credentialTypes?: string[] }).credentialTypes?.includes("permit2") ?? false;
+      if (!hasPermit2) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["methodDetails", "splits"],
+          message: "splits 仅 permit2 承兑可用（官方：transaction/authorization/hash 类型 MUST NOT 用于 splits）",
+        });
+      }
+    }
+  });
 
 const evmSessionRequestSchema = z
   .object({
@@ -168,18 +219,19 @@ const evmSessionRequestSchema = z
 const tempoSubscriptionRequestSchema = z
   .object({
     amount: z.string().regex(positiveIntStringRegex),
-    currency: z.string().regex(isoCurrencyRegex),
+    /** TIP-20 token address（评审修正项 A —— 非 ISO 4217）。 */
+    currency: z.string().regex(evmAddressRegex),
     periodUnit: z.enum(["day", "week"]),
     periodCount: z.string().regex(positiveIntStringRegex),
-    subscriptionExpires: z.string().min(1),
-    recipient: z.string().min(1),
+    subscriptionExpires: z.string().regex(rfc3339Regex),
+    recipient: z.string().regex(evmAddressRegex),
     description: z.string().optional(),
     externalId: z.string().optional(),
     methodDetails: z
       .object({
         accessKey: z
           .object({
-            accessKeyAddress: z.string().min(1),
+            accessKeyAddress: z.string().regex(evmAddressRegex),
             keyType: z.enum(["p256", "secp256k1", "webAuthn"]),
           })
           .strict(),
@@ -189,7 +241,6 @@ const tempoSubscriptionRequestSchema = z
   })
   .strict();
 
-/** method+intent → request schema（矩阵分派）。 */
 function requestSchemaFor(method: string, intent: string): z.ZodTypeAny | null {
   if (method === "stripe" && intent === "charge") return stripeChargeRequestSchema;
   if (method === "stripe" && intent === "subscription") return stripeSubscriptionRequestSchema;
@@ -225,6 +276,23 @@ const evmPermit2PayloadSchema = z
         permitted: z.array(z.object({ token: z.string().min(1), amount: z.string().min(1) }).strict()).min(1),
         nonce: z.string().min(1),
         deadline: z.string().min(1),
+      })
+      .strict(),
+    /** 官方 REQUIRED：transferDetails 数组（{to, requestedAmount}）。 */
+    transferDetails: z
+      .array(
+        z
+          .object({
+            to: z.string().regex(evmAddressRegex),
+            requestedAmount: z.string().min(1),
+          })
+          .strict(),
+      )
+      .min(1),
+    /** 官方 REQUIRED：witness（challenge 绑定）。 */
+    witness: z
+      .object({
+        challengeHash: z.string().min(1),
       })
       .strict(),
     signature: z.string().regex(/^0x[0-9a-fA-F]+$/),
@@ -265,21 +333,47 @@ const evmChargeCredentialSchema = z.union([
   evmHashPayloadSchema,
 ]);
 
+/** EVM session credential —— action 特定 schema（评审修正项 C：open 的
+ *  type/hash/salt REQUIRED；非 open 禁用 type）。 */
 const evmSessionCredentialSchema = z
   .object({
     action: z.enum(["open", "topUp", "voucher", "close"]),
-    channelId: z.string().min(1).optional(),
-    cumulativeAmount: z.string().optional(),
-    signature: z.string().min(1).optional(),
+    channelId: z.string().min(1),
+    cumulativeAmount: z.string().min(1),
+    signature: z.string().min(1),
+    type: z.enum(["hash", "authorization", "permit2"]).optional(),
+    hash: z.string().min(1).optional(),
+    salt: z.string().min(1).optional(),
   })
   .strict()
   .superRefine((value, ctx) => {
-    // session credential 的 action 闭集 + 签名在案（结构层；生命周期强制在宿主）。
-    if (value.signature === undefined && value.action !== "close") {
+    if (value.action === "open") {
+      if (value.type === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["type"],
+          message: "open credential requires type discriminator (hash/authorization/permit2)",
+        });
+      }
+      if (value.type === "hash" && value.hash === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["hash"],
+          message: "open-hash credential requires hash",
+        });
+      }
+      if (value.type === "hash" && value.salt === undefined) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["salt"],
+          message: "open-hash credential requires salt",
+        });
+      }
+    } else if (value.type !== undefined) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["signature"],
-        message: "session credential 必须携带 voucher 签名（close 允许空签名仅当 cumulativeAmount <= channel.settled —— 宿主裁决）",
+        path: ["type"],
+        message: "type is only valid for the open action",
       });
     }
   });
@@ -291,7 +385,6 @@ const tempoSubscriptionCredentialSchema = z
   })
   .strict();
 
-/** method+intent → credential payload schema（矩阵分派）。 */
 function credentialSchemaFor(method: string, intent: string): z.ZodTypeAny | null {
   if (method === "stripe" && intent === "charge") return stripeChargeCredentialSchema;
   if (method === "stripe" && intent === "subscription") return stripeSubscriptionCredentialSchema;
@@ -301,92 +394,11 @@ function credentialSchemaFor(method: string, intent: string): z.ZodTypeAny | nul
   return null;
 }
 
-// ---------------------------------------------------------------------------
-// 五个 method/intent 的 receipt schema
-// ---------------------------------------------------------------------------
-
-const stripeChargeReceiptSchema = z
-  .object({
-    method: z.literal("stripe"),
-    reference: z.string().min(1),
-    status: z.literal("success"),
-    timestamp: z.string().regex(rfc3339Regex),
-    externalId: z.string().optional(),
-  })
-  .strict();
-
-const stripeSubscriptionReceiptSchema = z
-  .object({
-    method: z.literal("stripe"),
-    reference: z.string().min(1),
-    status: z.literal("success"),
-    subscriptionId: z.string().min(1),
-    timestamp: z.string().regex(rfc3339Regex),
-    externalId: z.string().optional(),
-  })
-  .strict();
-
-const evmChargeReceiptSchema = z
-  .object({
-    method: z.literal("evm"),
-    challengeId: z.string().min(1).optional(),
-    reference: z.string().regex(evmTxHashRegex),
-    status: z.literal("success"),
-    timestamp: z.string().regex(rfc3339Regex),
-    chainId: z.number().int().positive(),
-    externalId: z.string().optional(),
-  })
-  .strict();
-
-const evmSessionReceiptSchema = z
-  .object({
-    method: z.literal("evm"),
-    intent: z.literal("session"),
-    reference: z.string().min(1),
-    status: z.literal("success"),
-    timestamp: z.string().regex(rfc3339Regex),
-    challengeId: z.string().min(1),
-    channelId: z.string().min(1),
-    acceptedCumulative: z.string().min(1),
-    spent: z.string().min(1),
-    chainId: z.number().int().positive(),
-    units: z.string().optional(),
-    txHash: z.string().optional(),
-    confirmations: z.number().int().optional(),
-  })
-  .strict();
-
-const tempoSubscriptionReceiptSchema = z
-  .object({
-    method: z.literal("tempo"),
-    reference: z.string().min(1),
-    status: z.literal("success"),
-    subscriptionId: z.string().min(1),
-    timestamp: z.string().regex(rfc3339Regex),
-    externalId: z.string().optional(),
-  })
-  .strict();
-
-/** method+intent(+receipt 内的 intent 自标识) → receipt schema。 */
-function receiptSchemaFor(method: string, intent: string | null): z.ZodTypeAny | null {
-  if (method === "stripe" && intent === "charge") return stripeChargeReceiptSchema;
-  if (method === "stripe" && intent === "subscription") return stripeSubscriptionReceiptSchema;
-  if (method === "stripe") return null;
-  if (method === "evm" && intent === "session") return evmSessionReceiptSchema;
-  if (method === "evm") return evmChargeReceiptSchema;
-  if (method === "tempo") return tempoSubscriptionReceiptSchema;
-  return null;
-}
 
 // ---------------------------------------------------------------------------
-// challenge schema（含可选参数 + request 解码/JCS + matrix + method schema）
+// challenge schema（含可选参数官方语义 + request 解码/JCS + matrix）
 // ---------------------------------------------------------------------------
 
-/** Challenge（pin 逐字 + 可选参数官方语义）：id/realm/method/intent/request
- *  REQUIRED；expires（RFC 3339）/digest（RFC 9530 形态）/description（仅展示，
- *  不入绑定）/header（在案时 MUST = "Payment-Authorization"）/opaque（JCS
- *  base64url 扁平 string map）可选；**未知参数按官方客户端规则忽略**（strip
- *  —— 不当事实，也不拒绝）。 */
 const challengeBaseSchema = z
   .object({
     id: z.string().min(1),
@@ -394,8 +406,8 @@ const challengeBaseSchema = z
     method: z.enum(["stripe", "evm", "tempo"]),
     intent: z.enum(["charge", "session", "subscription"]),
     request: z.string().regex(base64UrlNopadRegex),
-    expires: z.string().regex(rfc3339Regex).optional(),
-    digest: z.string().min(1).optional(),
+    expires: z.string().refine((v) => isValidRfc3339Date(v), "RFC 3339 日历日期校验失败").optional(),
+    digest: z.string().regex(rfc9530DigestRegex, "digest MUST use the RFC 9530 Structured Field format (algo=:base64:)").optional(),
     description: z.string().optional(),
     header: z.literal("Payment-Authorization").optional(),
     opaque: z.string().min(1).optional(),
@@ -403,16 +415,19 @@ const challengeBaseSchema = z
   // 未知参数按官方客户端规则忽略（strip —— 不拒绝，不当事实）。
   .strip();
 
-/** opaque 的官方结构：base64url(JCS JSON) 且为扁平 string-to-string map。 */
-function decodeOpaque(value: string): { ok: boolean; reason?: string } {
+/** opaque 的官方结构：base64url(JCS JSON) 且为扁平 string-to-string map 且
+ *  JCS canonical 编码验证（解码 → 解析 → 重序列化 === 解码值）。 */
+function decodeAndValidateOpaque(value: string): { ok: boolean; reason?: string } {
   if (!base64UrlNopadRegex.test(value)) {
     return { ok: false, reason: "opaque 非标准 base64url（无填充）形态" };
   }
   let decoded: string;
   try {
-    decoded = atob(value.replace(/-/g, "+").replace(/_/g, "/"));
+    const base64 = value.replace(/-/g, "+").replace(/_/g, "/");
+    const binary = atob(base64);
+    decoded = fatalUtf8.decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)));
   } catch {
-    return { ok: false, reason: "opaque base64 解码失败" };
+    return { ok: false, reason: "opaque base64 解码失败（含无效 UTF-8 字节序列）" };
   }
   let parsed: unknown;
   try {
@@ -428,36 +443,52 @@ function decodeOpaque(value: string): { ok: boolean; reason?: string } {
       return { ok: false, reason: "opaque 必须为扁平 string-to-string map" };
     }
   }
+  // JCS canonical 编码验证。
+  let canonical: string;
+  try {
+    canonical = canonicalJsonStringify(parsed);
+  } catch {
+    return { ok: false, reason: "opaque JCS 序列化失败" };
+  }
+  if (canonical !== decoded) {
+    return { ok: false, reason: "opaque 非 JCS canonical 编码（解码值 ≠ 重序列化值）" };
+  }
   return { ok: true };
 }
 
-/** request 的官方序列化纪律：base64url-nopad(JSON JCS)。校验 = 解码 + UTF-8
- *  JSON 解析 + 重序列化与线串一致（canonical 形态必须已在案）。 */
-function decodeAndValidateRequest(
-  request: string,
-  method: string,
-  intent: string,
-  ctx: z.RefinementCtx,
-): void {
-  let decoded: string;
-  try {
-    const base64 = request.replace(/-/g, "+").replace(/_/g, "/");
-    const binary = atob(base64);
-    decoded = new TextDecoder().decode(Uint8Array.from(binary, (c) => c.charCodeAt(0)));
-  } catch {
-    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["request"], message: "request base64url 解码失败" });
+const challengeSchema = challengeBaseSchema.superRefine((value, ctx) => {
+  // 法则 4 机器面：method/intent 兼容矩阵。
+  if (!PAYSWAP_MPP_METHOD_INTENT_MATRIX.some((e) => e.method === value.method && e.intent === value.intent)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["intent"],
+      message: `method/intent 组合 '${value.method}+${value.intent}' 不在兼容矩阵 —— 未 pin 的 rail 面（fail-closed）`,
+    });
+    return;
+  }
+  // opaque 官方结构 + JCS canonical 校验。
+  if (value.opaque !== undefined) {
+    const opaque = decodeAndValidateOpaque(value.opaque);
+    if (!opaque.ok) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["opaque"], message: opaque.reason ?? "opaque 形态非法" });
+    }
+  }
+  // request 解码（fatal UTF-8）+ JCS canonical + method-specific schema。
+  const decodedRequest = base64UrlDecode(value.request);
+  if (!decodedRequest.ok) {
+    ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["request"], message: decodedRequest.reason });
     return;
   }
   let parsedJson: unknown;
   try {
-    parsedJson = JSON.parse(decoded);
+    parsedJson = JSON.parse(decodedRequest.decoded);
   } catch {
     ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["request"], message: "request 解码后非合法 JSON" });
     return;
   }
-  let canonical: string;
+  let canonicalRequest: string;
   try {
-    canonical = canonicalJsonStringify(parsedJson);
+    canonicalRequest = canonicalJsonStringify(parsedJson);
   } catch (error) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
@@ -466,7 +497,7 @@ function decodeAndValidateRequest(
     });
     return;
   }
-  if (canonical !== decoded) {
+  if (canonicalRequest !== decodedRequest.decoded) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["request"],
@@ -474,12 +505,12 @@ function decodeAndValidateRequest(
     });
     return;
   }
-  const schema = requestSchemaFor(method, intent);
+  const schema = requestSchemaFor(value.method, value.intent);
   if (schema === null) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["request"],
-      message: `method/intent 组合 '${method}+${intent}' 不在兼容矩阵 —— 未 pin 的 rail 面`,
+      message: `method/intent 组合 '${value.method}+${value.intent}' 不在兼容矩阵`,
     });
     return;
   }
@@ -488,32 +519,30 @@ function decodeAndValidateRequest(
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["request"],
-      message: `request 未通过 ${method}/${intent} pinned schema：${
+      message: `request 未通过 ${value.method}/${value.intent} pinned schema：${
         methodParsed.error.issues[0]?.message ?? "schema error"
       }`,
     });
-  }
-}
-
-const challengeSchema = challengeBaseSchema.superRefine((value, ctx) => {
-  // 法则 4 机器面：method/intent 兼容矩阵（protocol-facts.ts 单一事实源）。
-  if (!PAYSWAP_MPP_METHOD_INTENT_MATRIX.some((e: { method: string; intent: string }) => e.method === value.method && e.intent === value.intent)) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["intent"],
-      message: `method/intent 组合 '${value.method}+${value.intent}' 不在兼容矩阵 —— 未 pin 的 rail 面（fail-closed）`,
-    });
     return;
   }
-  // opaque 官方结构校验。
-  if (value.opaque !== undefined) {
-    const opaque = decodeOpaque(value.opaque);
-    if (!opaque.ok) {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, path: ["opaque"], message: opaque.reason ?? "opaque 形态非法" });
+  // Tempo subscription 专属：subscriptionExpires 与 challenge.expires 的
+  // 跨字段校验（官方：MUST 严格晚于 + MUST NOT 复制 challenge expiry）。
+  if (value.method === "tempo" && value.intent === "subscription") {
+    const request = parsedJson as { subscriptionExpires?: string };
+    const challengeExpires = value.expires;
+    const subscriptionExpires = request.subscriptionExpires;
+    if (subscriptionExpires !== undefined && challengeExpires !== undefined) {
+      const sub = Date.parse(subscriptionExpires);
+      const exp = Date.parse(challengeExpires);
+      if (sub <= exp) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["request"],
+          message: "subscriptionExpires MUST 严格晚于 challenge expires（且 MUST NOT 复制该值）",
+        });
+      }
     }
   }
-  // request 解码 + JCS canonical + method-specific schema。
-  decodeAndValidateRequest(value.request, value.method, value.intent, ctx);
 });
 
 /** Credential（pin 逐字：challenge 回显 REQUIRED + payload REQUIRED 非空）。
@@ -528,7 +557,6 @@ const credentialSchema = z
   })
   .strict()
   .superRefine((value, ctx) => {
-    // challenge 回显完整校验（矩阵 + 解码 + method schema）。
     const echo = challengeSchema.safeParse(value.challenge);
     if (!echo.success) {
       ctx.addIssue({
@@ -538,9 +566,8 @@ const credentialSchema = z
       });
       return;
     }
-    // method/intent → credential payload schema 分派。
     const schema = credentialSchemaFor(echo.data.method, echo.data.intent);
-    if (schema === null) return; // 矩阵预检已报
+    if (schema === null) return;
     const payloadParsed = schema.safeParse(value.payload);
     if (!payloadParsed.success) {
       ctx.addIssue({
@@ -554,13 +581,11 @@ const credentialSchema = z
   });
 
 // ---------------------------------------------------------------------------
-// receipt schemas（method(+intent) 分派 —— 五种）
+// receipt 分派（method(+intent) → 五种 schema）
 // ---------------------------------------------------------------------------
 
 const receiptBaseSchema = z.object({ method: z.enum(["stripe", "evm", "tempo"]) }).passthrough();
 
-/** receipt 分派（method REQUIRED；stripe 的双 intent 由 envelope.context.intent
- *  分派；evm-session 的 receipt 自带 intent 字段自标识）。 */
 function receiptSchemaForEnvelope(
   payload: unknown,
   envelopeIntent: string | null,
@@ -570,10 +595,9 @@ function receiptSchemaForEnvelope(
     return { error: `receipt 缺失/畸形 method 字段：${base.error.issues[0]?.message ?? "schema error"}` };
   }
   const method = base.data.method;
-  // envelope intent 是分派权威 —— 与 receipt 自标识不一致 = 置位错误，拒绝。
   const dispatchIntent = envelopeIntent;
   if (dispatchIntent === null) {
-    return { error: "receipt 分派需要 envelope intent 上下文（host 桥的 method/intent 路由）—— 缺席即 fail-closed" };
+    return { error: "receipt 分派需要 envelope intent 上下文 —— 缺席即 fail-closed" };
   }
   if (method === "tempo") {
     if (dispatchIntent !== "subscription") {
@@ -593,15 +617,15 @@ function receiptSchemaForEnvelope(
       ? { schema: evmSessionReceiptSchema, intent: "session" }
       : { schema: evmChargeReceiptSchema, intent: "charge" };
   }
-  // stripe：双 intent —— envelope intent 分派。
-  const intent = envelopeIntent ?? (payload as { intent?: unknown })?.intent;
-  if (intent === "charge") return { schema: stripeChargeReceiptSchema, intent: "charge" };
-  if (intent === "subscription") return { schema: stripeSubscriptionReceiptSchema, intent: "subscription" };
-  return { error: "stripe receipt 需要 intent 分派（charge|subscription）—— 缺席即 fail-closed" };
+  if (method === "stripe") {
+    if (dispatchIntent === "charge") return { schema: stripeChargeReceiptSchema, intent: "charge" };
+    if (dispatchIntent === "subscription") return { schema: stripeSubscriptionReceiptSchema, intent: "subscription" };
+    return { error: "stripe receipt 需要 intent 分派（charge|subscription）—— 缺席即 fail-closed" };
+  }
+  return { error: `receipt method '${method}' 不在 pinned rails` };
 }
 
-/** 进站消息路由标签（host 桥的分派面 —— 未知标签 fail-closed）。receipt 携带
- *  可选 intent 上下文（stripe 双意图分派所需）。 */
+/** 进站消息路由标签（host 桥的分派面 —— 未知标签 fail-closed）。 */
 const inboundEnvelopeSchema = z
   .object({
     mppKind: z.enum(["challenge", "credential", "receipt"]),
@@ -611,37 +635,13 @@ const inboundEnvelopeSchema = z
   .strict();
 
 // ---------------------------------------------------------------------------
-// 摘要（canonical JSON → SHA-256 → base64url —— 证据链绑定面）
-// ---------------------------------------------------------------------------
-
-function base64UrlEncode(bytes: Uint8Array): string {
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  const base64 = btoa(binary);
-  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
-
-async function payloadDigest(payload: unknown): Promise<string> {
-  const canonical = canonicalJsonStringify(payload);
-  const digestBytes = await globalThis.crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(canonical),
-  );
-  return base64UrlEncode(new Uint8Array(digestBytes));
-}
-
-// ---------------------------------------------------------------------------
-// 适配器工厂（注册门 + translateInbound + emitReceipt）
+// 适配器工厂
 // ---------------------------------------------------------------------------
 
 function refusal(code: PayswapProtocolRefusal["code"], message: string): PayswapProtocolRefusal {
   return { code, message };
 }
 
-/**
- * 创建 MPP 消息面适配器（PayswapProtocolAdapter 的 MPP 实现）。描述符与注册表
- * 不一致 = 装配期 throw（法则 4 fail-loud）。
- */
 export function createPayswapMppMessageFace(
   descriptor: PayswapProtocolAdapterDescriptor,
 ): PayswapProtocolAdapter {
@@ -667,15 +667,8 @@ export function createPayswapMppMessageFace(
         };
       }
       const { mppKind, payload } = envelope.data;
-      const parsed =
-        mppKind === "challenge"
-          ? challengeSchema.safeParse(payload)
-          : mppKind === "credential"
-            ? credentialSchema.safeParse(payload)
-            : null;
+
       if (mppKind === "receipt") {
-        // receipt：method(+intent) 分派 → 严格 schema 校验。进站 receipt 仍是
-        // 不可信协议数据 —— 绝不因此推进账户状态或创建账本条目。
         const dispatch = receiptSchemaForEnvelope(payload, envelope.data.intent ?? null);
         if ("error" in dispatch) {
           return {
@@ -702,20 +695,20 @@ export function createPayswapMppMessageFace(
           untrustedPayloadDigest: await payloadDigest(receiptParsed.data),
         };
       }
-      if (!parsed || !parsed.success) {
+
+      const schema = mppKind === "challenge" ? challengeSchema : credentialSchema;
+      const parsed = schema.safeParse(payload);
+      if (!parsed.success) {
         return {
           kind: "refused",
           refusal: refusal(
             "protocol_message_unverifiable",
             `MPP ${mppKind} 消息未通过 pinned schema（字段越集 / 缺失必填 / 矩阵外组合 / request 编码违规 —— fail-closed）：${
-              parsed && !parsed.success ? parsed.error.issues[0]?.message ?? "schema error" : "schema error"
+              parsed.error.issues[0]?.message ?? "schema error"
             }`,
           ),
         };
       }
-      // 法则 2：产物 = 结构验证通过的不可信提案（载荷摘要进证据链；typed intent
-      // 随 P4）。术语纪律：validated ≠ cryptographically verified —— MPP
-      // credential 的签名验证前置条件未在案，本面绝不模拟。
       return {
         kind: "validated-untrusted-proposal",
         protocolId: descriptor.protocolId,
@@ -725,8 +718,6 @@ export function createPayswapMppMessageFace(
     },
 
     async emitReceipt(evidence): Promise<PayswapProtocolReceiptOutcome> {
-      // 法则 3：收据只从宿主签发的已验证结算证据发出 —— 协议 accepted ≠ 结算，
-      // 适配器永不安言铸造结算事实。运行时强制：证据对象结构验证 + 状态门。
       if (evidence === null) {
         return {
           kind: "refused",
@@ -750,7 +741,7 @@ export function createPayswapMppMessageFace(
           kind: "refused",
           refusal: refusal(
             "protocol_receipt_unavailable",
-            `宿主结算证据形态非法（畸形引用/摘要/时间戳）—— 不伪造结算事实：${
+            `宿主结算证据形态非法 —— 不伪造结算事实：${
               evidenceShape.error.issues[0]?.message ?? "schema error"
             }`,
           ),

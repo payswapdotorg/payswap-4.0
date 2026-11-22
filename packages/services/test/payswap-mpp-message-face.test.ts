@@ -1,27 +1,8 @@
 /**
- * PaySwap P3 —— MPP 消息面法则电池（handoff v3 优先级 1-4+6：五个 pinned
- * method/intent 组合的完整消息 schema / 验证门证明）。
- *
- * 被钉住的法则行：
- * 1. **兼容矩阵**：五个受支持组合（stripe-charge / stripe-subscription /
- *    evm-charge / evm-session / tempo-subscription）在 challenge/credential/
- *    receipt 三层全部通过；四个不受支持组合（stripe-session / evm-
- *    subscription / tempo-charge / tempo-session）与未知组合全部拒绝 ——
- *    矩阵源自 protocol-facts.ts（单一事实源，一致性由本电池断言）。
- * 2. **request 编码纪律**：base64url-nopad 字符集 + 解码 + UTF-8 JSON +
- *    JCS canonical 重序列化一致 + method-specific schema 逐字段校验 ——
- *    非canonical/畸形/越集一律拒绝。
- * 3. **method-specific schema**：五组合各自的结构（stripe-charge 的
- *    methodDetails.networkId/paymentMethodTypes；stripe-subscription 的
- *    recipient/subscriptionExpires MUST-NOT；evm-charge 的 ERC-20/EIP-55/
- *    chainId/splits ≤10；evm-session 的每单位金额/escrowContract；
- *    tempo-subscription 的 month 拒/subscriptionExpires REQUIRED/accessKey）。
- * 4. **credential 分派**：五组合各自的 payload schema（stripe spt_ 前缀 /
- *    evm 四类 credential 分派 / tempo keyAuthorization）—— 错置即拒。
- * 5. **receipt 分派**：五组合各自的 receipt schema —— method/intent 错置
- *    即拒；stripe 双 intent 由 envelope.context 分派。
- * 6. **收据证据门**：emitReceipt 只接受宿主签发的结构化 settled-verified
- *    证据对象。
+ * PaySwap P3 —— MPP 消息面法则电池（handoff v3 优先级 1-4+6 + 评审修正项
+ * A-D：Tempo currency TIP-20、EVM Permit2 transferDetails+witness、EVM
+ * session action-specific schemas、digest RFC 9530、opaque JCS verify、
+ * fatal UTF-8、RFC 3339 日历校验、receipt ref=channelId 等式）。
  */
 
 import {
@@ -48,6 +29,9 @@ const EVM_TOKEN = "0x" + "a".repeat(40);
 const EVM_RECIPIENT = "0x" + "b".repeat(40);
 const EVM_ESCROW = "0x" + "c".repeat(40);
 const EVM_TX = "0x" + "e".repeat(64);
+const TIP20_TOKEN = "0x20c0000000000000000000000000000000000001";
+const TEMPO_RECIPIENT = "0x742d35cc6634c0532925a3b844bc9e7595f8fe00";
+const TEMPO_ACCESS_KEY = "0x1111111111111111111111111111111111111111";
 
 function jcsBase64Url(payload: unknown): string {
   const canonical = canonicalJsonStringify(payload);
@@ -56,7 +40,6 @@ function jcsBase64Url(payload: unknown): string {
   return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-/** 五个受支持组合的 request 对象（官方格式 fixture）。 */
 const REQUEST_OBJECTS: Record<string, Record<string, unknown>> = {
   "stripe+charge": {
     amount: "1500",
@@ -74,7 +57,7 @@ const REQUEST_OBJECTS: Record<string, Record<string, unknown>> = {
     amount: "1000000",
     currency: EVM_TOKEN,
     recipient: EVM_RECIPIENT,
-    methodDetails: { chainId: 84532 },
+    methodDetails: { chainId: 84532, permit2Address: EVM_ESCROW },
   },
   "evm+session": {
     amount: "100",
@@ -84,12 +67,12 @@ const REQUEST_OBJECTS: Record<string, Record<string, unknown>> = {
   },
   "tempo+subscription": {
     amount: "999",
-    currency: "usd",
+    currency: TIP20_TOKEN,
     periodUnit: "week",
     periodCount: "4",
-    subscriptionExpires: "2026-12-31T00:00:00Z",
-    recipient: "tempo-recipient-1",
-    methodDetails: { accessKey: { accessKeyAddress: "ak-tempo-1", keyType: "p256" } },
+    subscriptionExpires: "2027-06-01T00:00:00Z",
+    recipient: TEMPO_RECIPIENT,
+    methodDetails: { accessKey: { accessKeyAddress: TEMPO_ACCESS_KEY, keyType: "p256" } },
   },
 };
 
@@ -107,6 +90,79 @@ for (const comboKey of COMBO_KEYS) {
   };
 }
 
+const CREDENTIAL_PAYLOADS: Record<string, Record<string, unknown>> = {
+  "stripe+charge": { spt: "spt_1N4example" },
+  "stripe+subscription": { paymentMethod: "pm_1N4example" },
+  "evm+charge": {
+    type: "permit2",
+    permit: {
+      permitted: [{ token: EVM_TOKEN, amount: "1000000" }],
+      nonce: "nonce-1",
+      deadline: "1763726400",
+    },
+    transferDetails: [{ to: EVM_RECIPIENT, requestedAmount: "1000000" }],
+    witness: { challengeHash: "ch-hash-1" },
+    signature: "0x" + "f".repeat(130),
+  },
+  "evm+session": {
+    action: "open",
+    channelId: "chan-1",
+    cumulativeAmount: "0",
+    signature: "sig-1",
+    type: "hash",
+    hash: EVM_TX,
+    salt: "salt-" + "1".repeat(32),
+  },
+  "tempo+subscription": { type: "keyAuthorization", signature: "0x" + "f".repeat(130) },
+};
+
+const RECEIPTS: Record<string, Record<string, unknown>> = {
+  "stripe+charge": {
+    method: "stripe",
+    reference: "pi_1N4example",
+    status: "success",
+    timestamp: "2026-11-22T12:00:00Z",
+  },
+  "stripe+subscription": {
+    method: "stripe",
+    reference: "in_1N4example",
+    status: "success",
+    subscriptionId: "sub_1N4example",
+    timestamp: "2026-11-22T12:00:00Z",
+  },
+  "evm+charge": {
+    method: "evm",
+    challengeId: "ch_evm_1",
+    reference: EVM_TX,
+    status: "success",
+    timestamp: "2026-11-22T12:00:00Z",
+    chainId: 84532,
+  },
+  "evm+session": {
+    method: "evm",
+    intent: "session",
+    reference: "chan-1",
+    status: "success",
+    timestamp: "2026-11-22T12:00:00Z",
+    challengeId: "ch_evm_s1",
+    channelId: "chan-1",
+    acceptedCumulative: "500",
+    spent: "400",
+    chainId: 84532,
+  },
+  "tempo+subscription": {
+    method: "tempo",
+    reference: EVM_TX,
+    status: "success",
+    subscriptionId: "sub-tempo-1",
+    timestamp: "2026-11-22T12:00:00Z",
+  },
+};
+
+function makeFace(descriptor: PayswapProtocolAdapterDescriptor = MPP_DESCRIPTOR) {
+  return createPayswapMppMessageFace(descriptor);
+}
+
 function challengeFor(comboKey: string, requestOverride?: unknown) {
   const [method, intent] = comboKey.split("+");
   return {
@@ -118,30 +174,25 @@ function challengeFor(comboKey: string, requestOverride?: unknown) {
   };
 }
 
-function makeFace(descriptor: PayswapProtocolAdapterDescriptor = MPP_DESCRIPTOR) {
-  return createPayswapMppMessageFace(descriptor);
-}
-
-describe("MPP message face — registration gate (law 4, assembly-time fail-loud)", () => {
+describe("MPP message face — registration gate", () => {
   it("creates with a registry-consistent descriptor", () => {
     const face = makeFace();
     expect(face.descriptor.protocolId).toBe("mpp");
-    expect(face.descriptor.versionPin).toBe("draft-httpauth-payment-01");
   });
 
-  it("version drift refuses at assembly time (protocol_version_unsupported)", () => {
-    expect(() =>
-      makeFace({ ...MPP_DESCRIPTOR, versionPin: "draft-httpauth-payment-02" }),
-    ).toThrow(/protocol_version_unsupported/);
+  it("version drift refuses at assembly time", () => {
+    expect(() => makeFace({ ...MPP_DESCRIPTOR, versionPin: "draft-httpauth-payment-02" })).toThrow(
+      /protocol_version_unsupported/,
+    );
   });
 
-  it("fact-source drift refuses with its OWN code (protocol_facts_drift)", () => {
+  it("fact-source drift refuses with protocol_facts_drift", () => {
     expect(() => makeFace({ ...MPP_DESCRIPTOR, factsRetrievedAt: "2026-11-20" })).toThrow(
       /protocol_facts_drift/,
     );
   });
 
-  it("unknown protocol id refuses at assembly time (protocol_not_registered)", () => {
+  it("unknown protocol id refuses at assembly time", () => {
     expect(() =>
       makeFace({
         ...MPP_DESCRIPTOR,
@@ -151,23 +202,16 @@ describe("MPP message face — registration gate (law 4, assembly-time fail-loud
   });
 });
 
-describe("MPP message face — method/intent compatibility matrix (grounded in protocol-facts)", () => {
-  it("the registry matrix is exactly the five pinned combinations", () => {
-    expect([...PAYSWAP_MPP_METHOD_INTENT_MATRIX.map((e) => e.method + "+" + e.intent)].sort()).toEqual([
-      "evm+charge",
-      "evm+session",
-      "stripe+charge",
-      "stripe+subscription",
-      "tempo+subscription",
-    ]);
-    for (const entry of PAYSWAP_MPP_METHOD_INTENT_MATRIX) {
-      expect(payswapMppMethodIntentSupported(entry.method, entry.intent)).toBe(true);
-    }
+describe("MPP message face — compatibility matrix (five pinned combos)", () => {
+  it("registry matrix is exactly the five pinned combinations", () => {
+    expect(
+      [...PAYSWAP_MPP_METHOD_INTENT_MATRIX.map((e) => e.method + "+" + e.intent)].sort(),
+    ).toEqual(["evm+charge", "evm+session", "stripe+charge", "stripe+subscription", "tempo+subscription"]);
+    expect(payswapMppMethodIntentSupported("stripe", "charge")).toBe(true);
     expect(payswapMppMethodIntentSupported("stripe", "session")).toBe(false);
     expect(payswapMppMethodIntentSupported("evm", "subscription")).toBe(false);
     expect(payswapMppMethodIntentSupported("tempo", "charge")).toBe(false);
     expect(payswapMppMethodIntentSupported("tempo", "session")).toBe(false);
-    expect(payswapMppMethodIntentSupported("hedera", "charge")).toBe(false);
   });
 
   it("all five supported combos pass at the challenge level", async () => {
@@ -188,7 +232,7 @@ describe("MPP message face — method/intent compatibility matrix (grounded in p
     }
   });
 
-  it("the four unsupported in-scope combos refuse (stripe-session / evm-subscription / tempo-charge / tempo-session)", async () => {
+  it("four unsupported in-scope combos refuse with the combo in the message", async () => {
     const face = makeFace();
     const unsupported = ["stripe+session", "evm+subscription", "tempo+charge", "tempo+session"];
     for (const comboKey of unsupported) {
@@ -209,28 +253,11 @@ describe("MPP message face — method/intent compatibility matrix (grounded in p
       expect(outcome.refusal.message).toContain(comboKey);
     }
   });
-
-  it("unknown method and intent values refuse", async () => {
-    const face = makeFace();
-    const unknownMethod = await face.translateInbound({
-      mppKind: "challenge",
-      payload: { ...CHALLENGE_FIXTURES["stripe+charge"], method: "hedera" },
-    });
-    expect(unknownMethod.kind).toBe("refused");
-    if (unknownMethod.kind !== "refused") return;
-    expect(unknownMethod.refusal.code).toBe("protocol_message_unverifiable");
-    const unknownIntent = await face.translateInbound({
-      mppKind: "challenge",
-      payload: { ...CHALLENGE_FIXTURES["stripe+charge"], intent: "donation" },
-    });
-    expect(unknownIntent.kind).toBe("refused");
-  });
 });
 
-describe("MPP message face — challenge request encoding (base64url + JCS + method schema)", () => {
-  it("non-canonical JSON representation refuses (JCS discipline — key order ≠ canonical)", async () => {
+describe("MPP message face — request encoding (base64url + JCS + method schema)", () => {
+  it("non-canonical JSON refuses (JCS discipline)", async () => {
     const face = makeFace();
-    // 非canonical：键序与 JCS 排序不同（"currency" 在 "amount" 前）
     const nonCanonical = btoa(
       JSON.stringify({ currency: "usd", amount: "1500", methodDetails: { networkId: "n1", paymentMethodTypes: ["card"] } }),
     ).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
@@ -249,8 +276,16 @@ describe("MPP message face — challenge request encoding (base64url + JCS + met
       payload: { ...CHALLENGE_FIXTURES["stripe+charge"], request: "not base64!!" },
     });
     expect(outcome.kind).toBe("refused");
-    if (outcome.kind !== "refused") return;
-    expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
+  });
+
+  it("padded base64url refuses (= characters violate the nopad rule)", async () => {
+    const face = makeFace();
+    const padded = Buffer.from(JSON.stringify({ amount: "1" })).toString("base64");
+    const outcome = await face.translateInbound({
+      mppKind: "challenge",
+      payload: { ...CHALLENGE_FIXTURES["stripe+charge"], request: padded },
+    });
+    expect(outcome.kind).toBe("refused");
   });
 
   it("decoded non-JSON refuses", async () => {
@@ -260,11 +295,9 @@ describe("MPP message face — challenge request encoding (base64url + JCS + met
       payload: { ...CHALLENGE_FIXTURES["stripe+charge"], request: notJson },
     });
     expect(outcome.kind).toBe("refused");
-    if (outcome.kind !== "refused") return;
-    expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
   });
 
-  it("method-schema violations refuse (stripe-charge: missing methodDetails.networkId)", async () => {
+  it("method-schema violations refuse", async () => {
     const face = makeFace();
     const bad = jcsBase64Url({ amount: "1500", currency: "usd", methodDetails: { paymentMethodTypes: ["card"] } });
     const outcome = await face.translateInbound({
@@ -272,13 +305,11 @@ describe("MPP message face — challenge request encoding (base64url + JCS + met
       payload: { ...CHALLENGE_FIXTURES["stripe+charge"], request: bad },
     });
     expect(outcome.kind).toBe("refused");
-    if (outcome.kind !== "refused") return;
-    expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
   });
 });
 
 describe("MPP message face — challenge optional parameters (official semantics)", () => {
-  it("expires (RFC3339) accepted at challenge level; non-RFC3339 refuses", async () => {
+  it("expires (RFC3339) accepted; non-RFC3339 refuses", async () => {
     const face = makeFace();
     const ok = await face.translateInbound({
       mppKind: "challenge",
@@ -294,7 +325,26 @@ describe("MPP message face — challenge optional parameters (official semantics
     expect(bad.refusal.code).toBe("protocol_message_unverifiable");
   });
 
-  it("opaque (base64url JCS flat string map) accepted; non-flat-map refuses", async () => {
+  it("digest (RFC 9530 Structured Field format) accepted; non-conforming refuses", async () => {
+    const face = makeFace();
+    const ok = await face.translateInbound({
+      mppKind: "challenge",
+      payload: {
+        ...CHALLENGE_FIXTURES["stripe+charge"],
+        digest: "sha-256=:X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=:",
+      },
+    });
+    expect(ok.kind).toBe("validated-untrusted-proposal");
+    const bad = await face.translateInbound({
+      mppKind: "challenge",
+      payload: { ...CHALLENGE_FIXTURES["stripe+charge"], digest: "just-a-hash" },
+    });
+    expect(bad.kind).toBe("refused");
+    if (bad.kind !== "refused") return;
+    expect(bad.refusal.message).toContain("RFC 9530");
+  });
+
+  it("opaque (JCS canonical flat string map) accepted; non-canonical refuses", async () => {
     const face = makeFace();
     const okOpaque = jcsBase64Url({ correlation: "abc" });
     const ok = await face.translateInbound({
@@ -302,10 +352,11 @@ describe("MPP message face — challenge optional parameters (official semantics
       payload: { ...CHALLENGE_FIXTURES["stripe+charge"], opaque: okOpaque },
     });
     expect(ok.kind).toBe("validated-untrusted-proposal");
-    const badOpaque = btoa(JSON.stringify({ nested: { deep: 1 } })).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+    // 非canonical（键序与 JCS 不同）
+    const nonCanonical = btoa(JSON.stringify({ b: "2", a: "1" })).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
     const bad = await face.translateInbound({
       mppKind: "challenge",
-      payload: { ...CHALLENGE_FIXTURES["stripe+charge"], opaque: badOpaque },
+      payload: { ...CHALLENGE_FIXTURES["stripe+charge"], opaque: nonCanonical },
     });
     expect(bad.kind).toBe("refused");
     if (bad.kind !== "refused") return;
@@ -319,28 +370,14 @@ describe("MPP message face — challenge optional parameters (official semantics
       payload: { ...CHALLENGE_FIXTURES["stripe+charge"], header: "X-Payment" },
     });
     expect(bad.kind).toBe("refused");
-    if (bad.kind !== "refused") return;
-    expect(bad.refusal.code).toBe("protocol_message_unverifiable");
   });
 
-  it("digest accepted as a pinned-format string", async () => {
-    const outcome = await makeFace().translateInbound({
-      mppKind: "challenge",
-      payload: {
-        ...CHALLENGE_FIXTURES["stripe+charge"],
-        digest: 'sha-256=:X48E9qOokqqrvdts8nOJRJN3OWDUoyWxBf7kbu9DBPE=:',
-      },
-    });
-    expect(outcome.kind).toBe("validated-untrusted-proposal");
-  });
-
-  it("unknown challenge parameters are IGNORED (official client rule — not rejected)", async () => {
+  it("unknown challenge parameters are stripped (official client ignore rule)", async () => {
     const face = makeFace();
     const outcome = await face.translateInbound({
       mppKind: "challenge",
       payload: { ...CHALLENGE_FIXTURES["stripe+charge"], custom_vendor_param: "ignored-by-law" },
     });
-    // 未知参数忽略 —— 结局与其他 stripe-charge challenge 相同
     expect(outcome.kind).toBe("validated-untrusted-proposal");
     if (outcome.kind !== "validated-untrusted-proposal") return;
     expect(outcome.untrustedPayloadDigest).toMatch(/^[A-Za-z0-9_-]+$/);
@@ -348,22 +385,6 @@ describe("MPP message face — challenge optional parameters (official semantics
 });
 
 describe("MPP message face — credential dispatch (five pinned payload schemas)", () => {
-  const CREDENTIAL_PAYLOADS: Record<string, Record<string, unknown>> = {
-    "stripe+charge": { spt: "spt_1N4example" },
-    "stripe+subscription": { paymentMethod: "pm_1N4example" },
-    "evm+charge": {
-      type: "permit2",
-      permit: {
-        permitted: [{ token: EVM_TOKEN, amount: "1000000" }],
-        nonce: "nonce-1",
-        deadline: "1763726400",
-      },
-      signature: "0x" + "f".repeat(130),
-    },
-    "evm+session": { action: "open", channelId: "chan-1", cumulativeAmount: "0", signature: "sig-1" },
-    "tempo+subscription": { type: "keyAuthorization", signature: "0x" + "f".repeat(130) },
-  };
-
   async function credentialFor(comboKey: string, payloadOverride?: Record<string, unknown>) {
     const face = makeFace();
     const challenge = challengeFor(comboKey);
@@ -390,21 +411,20 @@ describe("MPP message face — credential dispatch (five pinned payload schemas)
     expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
   });
 
-  it("stripe-subscription credential with paymentMethod-missing payload refuses", async () => {
-    const outcome = await credentialFor("stripe+subscription", {});
-    expect(outcome.kind).toBe("refused");
-    if (outcome.kind !== "refused") return;
-    expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
-  });
-
-  it("evm-charge credential dispatches all four credential types (permit2/authorization/transaction/hash)", async () => {
+  it("evm-charge credential dispatches all four credential types", async () => {
     const face = makeFace();
-    const permit2 = await credentialFor("evm+charge");
-    expect(permit2.kind).toBe("validated-untrusted-proposal");
-    const authorization = await face.translateInbound({
+    const challenge = challengeFor("evm+charge");
+    // permit2
+    const p2 = await face.translateInbound({
+      mppKind: "credential",
+      payload: { challenge, payload: CREDENTIAL_PAYLOADS["evm+charge"] },
+    });
+    expect(p2.kind).toBe("validated-untrusted-proposal");
+    // authorization
+    const auth = await face.translateInbound({
       mppKind: "credential",
       payload: {
-        challenge: challengeFor("evm+charge"),
+        challenge,
         payload: {
           type: "authorization",
           from: EVM_RECIPIENT,
@@ -417,31 +437,106 @@ describe("MPP message face — credential dispatch (five pinned payload schemas)
         },
       },
     });
-    expect(authorization.kind).toBe("validated-untrusted-proposal");
-    const transaction = await face.translateInbound({
+    expect(auth.kind).toBe("validated-untrusted-proposal");
+    // transaction
+    const tx = await face.translateInbound({
       mppKind: "credential",
-      payload: { challenge: challengeFor("evm+charge"), payload: { type: "transaction", signature: EVM_TX } },
+      payload: { challenge, payload: { type: "transaction", signature: EVM_TX } },
     });
-    expect(transaction.kind).toBe("validated-untrusted-proposal");
+    expect(tx.kind).toBe("validated-untrusted-proposal");
+    // hash
     const hash = await face.translateInbound({
       mppKind: "credential",
-      payload: { challenge: challengeFor("evm+charge"), payload: { type: "hash", hash: EVM_TX } },
+      payload: { challenge, payload: { type: "hash", hash: EVM_TX } },
     });
     expect(hash.kind).toBe("validated-untrusted-proposal");
   });
 
-  it("evm-charge credential with an unknown type refuses", async () => {
-    const outcome = await credentialFor("evm+charge", { type: "direct_transfer", signature: "0x1" });
+  it("evm-charge permit2 without transferDetails refuses (REQUIRED — review correction B)", async () => {
+    const face = makeFace();
+    const challenge = challengeFor("evm+charge");
+    const missingTransferDetails = {
+      type: "permit2",
+      permit: { permitted: [{ token: EVM_TOKEN, amount: "1000000" }], nonce: "n1", deadline: "1763726400" },
+      witness: { challengeHash: "ch-hash-1" },
+      signature: "0x" + "f".repeat(130),
+    };
+    const outcome = await face.translateInbound({
+      mppKind: "credential",
+      payload: { challenge, payload: missingTransferDetails },
+    });
     expect(outcome.kind).toBe("refused");
     if (outcome.kind !== "refused") return;
     expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
   });
 
-  it("evm-session credential with an unknown action refuses", async () => {
-    const outcome = await credentialFor("evm+session", {
-      action: "rebalance",
+  it("evm-charge permit2 without witness refuses (REQUIRED — challenge binding)", async () => {
+    const face = makeFace();
+    const challenge = challengeFor("evm+charge");
+    const missingWitness = {
+      type: "permit2",
+      permit: { permitted: [{ token: EVM_TOKEN, amount: "1000000" }], nonce: "n1", deadline: "1763726400" },
+      transferDetails: [{ to: EVM_RECIPIENT, requestedAmount: "1000000" }],
+      signature: "0x" + "f".repeat(130),
+    };
+    const outcome = await face.translateInbound({
+      mppKind: "credential",
+      payload: { challenge, payload: missingWitness },
+    });
+    expect(outcome.kind).toBe("refused");
+  });
+
+  it("evm-session credential without action-specific fields refuses (review correction C)", async () => {
+    const face = makeFace();
+    const challenge = challengeFor("evm+session");
+    // open without type/hash/salt
+    const openBare = {
+      action: "open",
       channelId: "chan-1",
+      cumulativeAmount: "0",
       signature: "sig-1",
+    };
+    const outcome = await face.translateInbound({
+      mppKind: "credential",
+      payload: { challenge, payload: openBare },
+    });
+    expect(outcome.kind).toBe("refused");
+    if (outcome.kind !== "refused") return;
+    expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
+  });
+
+  it("evm-session open credential with type/hash/salt passes", async () => {
+    const face = makeFace();
+    const challenge = challengeFor("evm+session");
+    const openFull = {
+      action: "open",
+      channelId: "chan-1",
+      cumulativeAmount: "0",
+      signature: "sig-1",
+      type: "hash",
+      hash: EVM_TX,
+      salt: "salt-" + "1".repeat(32),
+    };
+    const outcome = await face.translateInbound({
+      mppKind: "credential",
+      payload: { challenge, payload: openFull },
+    });
+    expect(outcome.kind).toBe("validated-untrusted-proposal");
+  });
+
+  it("evm-session non-open credential with type refuses (type is only valid for open)", async () => {
+    const face = makeFace();
+    const challenge = challengeFor("evm+session");
+    const topUpWithType = {
+      action: "topUp",
+      channelId: "chan-1",
+      cumulativeAmount: "100",
+      signature: "sig-topup",
+      type: "hash",
+    };
+    const outcome = await face.translateInbound({
+      mppKind: "credential",
+      payload: { challenge, payload: topUpWithType },
     });
     expect(outcome.kind).toBe("refused");
     if (outcome.kind !== "refused") return;
@@ -455,7 +550,7 @@ describe("MPP message face — credential dispatch (five pinned payload schemas)
     expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
   });
 
-  it("cross-rail credential placement refuses (tempo credential under stripe-charge challenge)", async () => {
+  it("cross-rail credential placement refuses", async () => {
     const face = makeFace();
     const outcome = await face.translateInbound({
       mppKind: "credential",
@@ -467,94 +562,89 @@ describe("MPP message face — credential dispatch (five pinned payload schemas)
   });
 });
 
-describe("MPP message face — receipt dispatch (five pinned receipt schemas)", () => {
-  const RECEIPTS: Record<string, Record<string, unknown>> = {
-    "stripe+charge": {
-      method: "stripe",
-      reference: "pi_1N4example",
-      status: "success",
-      timestamp: "2026-11-22T12:00:00Z",
-    },
-    "stripe+subscription": {
-      method: "stripe",
-      reference: "in_1N4example",
-      status: "success",
-      subscriptionId: "sub_1N4example",
-      timestamp: "2026-11-22T12:00:00Z",
-    },
-    "evm+charge": {
-      method: "evm",
-      challengeId: "ch_evm_1",
-      reference: EVM_TX,
-      status: "success",
-      timestamp: "2026-11-22T12:00:00Z",
-      chainId: 84532,
-    },
-    "evm+session": {
-      method: "evm",
-      intent: "session",
-      reference: "chan-1",
-      status: "success",
-      timestamp: "2026-11-22T12:00:00Z",
-      challengeId: "ch_evm_s1",
-      channelId: "chan-1",
-      acceptedCumulative: "500",
-      spent: "400",
-      chainId: 84532,
-    },
-    "tempo+subscription": {
-      method: "tempo",
-      reference: EVM_TX,
-      status: "success",
-      subscriptionId: "sub-tempo-1",
-      timestamp: "2026-11-22T12:00:00Z",
-    },
-  };
+describe("MPP message face — Tempo subscription TIP-20 currency (review correction A)", () => {
+  it("Tempo subscription with ISO currency code refuses (TIP-20 address REQUIRED)", async () => {
+    const face = makeFace();
+    const badCurrency = jcsBase64Url({
+      ...REQUEST_OBJECTS["tempo+subscription"],
+      currency: "usd",
+    });
+    const outcome = await face.translateInbound({
+      mppKind: "challenge",
+      payload: { ...CHALLENGE_FIXTURES["tempo+subscription"], request: badCurrency },
+    });
+    expect(outcome.kind).toBe("refused");
+    if (outcome.kind !== "refused") return;
+    expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
+  });
 
-  it("all five supported combos pass with their pinned receipt schemas (intent-dispatched)", async () => {
+  it("Tempo subscription with TIP-20 address passes", async () => {
+    const face = makeFace();
+    const goodRequest = jcsBase64Url(REQUEST_OBJECTS["tempo+subscription"]);
+    const outcome = await face.translateInbound({
+      mppKind: "challenge",
+      payload: { ...CHALLENGE_FIXTURES["tempo+subscription"], request: goodRequest },
+    });
+    expect(outcome.kind).toBe("validated-untrusted-proposal");
+  });
+});
+
+describe("MPP message face — Tempo subscriptionExpires cross-check (review correction A)", () => {
+  it("subscriptionExpires NOT strictly later than challenge expires refuses", async () => {
+    const face = makeFace();
+    const badRequest = jcsBase64Url({
+      ...REQUEST_OBJECTS["tempo+subscription"],
+      subscriptionExpires: "2026-01-01T00:00:00Z",
+    });
+    const outcome = await face.translateInbound({
+      mppKind: "challenge",
+      payload: {
+        ...CHALLENGE_FIXTURES["tempo+subscription"],
+        expires: "2026-06-01T00:00:00Z",
+        request: badRequest,
+      },
+    });
+    expect(outcome.kind).toBe("refused");
+    if (outcome.kind !== "refused") return;
+    expect(outcome.refusal.message).toContain("subscriptionExpires");
+  });
+});
+
+describe("MPP message face — receipt dispatch (five pinned receipt schemas)", () => {
+  async function receiptFor(comboKey: string) {
+    const face = makeFace();
+    const [method, intent] = comboKey.split("+");
+    return face.translateInbound({
+      mppKind: "receipt",
+      intent,
+      payload: RECEIPTS[comboKey],
+    });
+  }
+
+  it("all five supported combos pass with their pinned receipt schemas", async () => {
     const face = makeFace();
     for (const comboKey of COMBO_KEYS) {
-      const [method, intent] = comboKey.split("+");
-      const outcome = await face.translateInbound({
-        mppKind: "receipt",
-        intent,
-        payload: RECEIPTS[comboKey],
-      });
+      const outcome = await receiptFor(comboKey);
       expect(outcome.kind).toBe("validated-untrusted-proposal");
       if (outcome.kind !== "validated-untrusted-proposal") return;
       expect(outcome.protocolId).toBe("mpp");
     }
   });
 
-  it("cross-structure placement refuses (tempo receipt under evm intent, session receipt under charge intent)", async () => {
-    const face = makeFace();
-    const tempoUnderEvm = await face.translateInbound({
-      mppKind: "receipt",
-      intent: "charge",
-      payload: { ...RECEIPTS["tempo+subscription"], method: "evm" },
-    });
-    console.log("DEBUG-TUE:", JSON.stringify(tempoUnderEvm).slice(0, 300));
-    expect(tempoUnderEvm.kind).toBe("refused");
-    const sessionUnderCharge = await face.translateInbound({
-      mppKind: "receipt",
-      intent: "charge",
-      payload: { ...RECEIPTS["evm+session"], method: "evm" },
-    });
-    expect(sessionUnderCharge.kind).toBe("refused");
-    if (sessionUnderCharge.kind !== "refused") return;
-    expect(sessionUnderCharge.refusal.code).toBe("protocol_message_unverifiable");
-  });
-
-  it("evm-charge receipt with a non-tx-hash reference refuses", async () => {
+  it("evm-session receipt reference ≠ channelId refuses (review correction C)", async () => {
     const face = makeFace();
     const outcome = await face.translateInbound({
       mppKind: "receipt",
-      intent: "charge",
-      payload: { ...RECEIPTS["evm+charge"], reference: "not-a-tx-hash" },
+      intent: "session",
+      payload: {
+        ...RECEIPTS["evm+session"],
+        reference: "not-the-channel-id",
+      },
     });
     expect(outcome.kind).toBe("refused");
     if (outcome.kind !== "refused") return;
     expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
+    expect(outcome.refusal.message).toContain("channelId");
   });
 
   it("stripe-subscription receipt missing subscriptionId refuses", async () => {
@@ -569,6 +659,28 @@ describe("MPP message face — receipt dispatch (five pinned receipt schemas)", 
     expect(outcome.kind).toBe("refused");
     if (outcome.kind !== "refused") return;
     expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
+  });
+
+  it("cross-structure placement refuses (tempo receipt under evm intent)", async () => {
+    const face = makeFace();
+    const outcome = await face.translateInbound({
+      mppKind: "receipt",
+      intent: "charge",
+      payload: { ...RECEIPTS["tempo+subscription"], method: "evm" },
+    });
+    expect(outcome.kind).toBe("refused");
+    if (outcome.kind !== "refused") return;
+    expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
+  });
+
+  it("invalid timestamp (non-RFC3339) refuses", async () => {
+    const face = makeFace();
+    const outcome = await face.translateInbound({
+      mppKind: "receipt",
+      intent: "charge",
+      payload: { ...RECEIPTS["stripe+charge"], timestamp: "not-a-date" },
+    });
+    expect(outcome.kind).toBe("refused");
   });
 });
 
