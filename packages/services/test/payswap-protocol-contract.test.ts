@@ -162,7 +162,7 @@ describe("evaluatePayswapProtocolAdapterRegistration (addendum §10 pinning gate
     }
   });
 
-  it("refuses fact-source drift between descriptor and registry", () => {
+  it("refuses fact-source drift between descriptor and registry (its OWN code — F14: drift ≠ version unsupported)", () => {
     const outcome = evaluatePayswapProtocolAdapterRegistration({
       protocolId: "ap2",
       versionPin: "v0.2",
@@ -171,7 +171,7 @@ describe("evaluatePayswapProtocolAdapterRegistration (addendum §10 pinning gate
     });
     expect(outcome.kind).toBe("refused");
     if (outcome.kind === "refused") {
-      expect(outcome.refusal.code).toBe("protocol_version_unsupported");
+      expect(outcome.refusal.code).toBe("protocol_facts_drift");
     }
   });
 });
@@ -182,6 +182,7 @@ describe("PAYSWAP_PROTOCOL_REFUSAL_CODES vocabulary (closed set)", () => {
       "protocol_not_registered",
       "protocol_version_unpinned",
       "protocol_version_unsupported",
+      "protocol_facts_drift",
       "protocol_message_unverifiable",
       "protocol_feature_unsupported",
       "protocol_receipt_unavailable",
