@@ -308,7 +308,7 @@ describe("AP2 message face — translateInbound mandate (vct exact-match + keyle
     expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
   });
 
-  it("empty items array refuses (official minimum cardinality — F6)", async () => {
+  it("empty items array accepts at schema level (official states NO minimum — evaluation is host-side, F6 honest narrowing)", async () => {
     const outcome = await makeFace().translateInbound({
       ap2Kind: "mandate",
       payload: {
@@ -317,9 +317,7 @@ describe("AP2 message face — translateInbound mandate (vct exact-match + keyle
         constraints: [{ type: "checkout.line_items", items: [] }],
       },
     });
-    expect(outcome.kind).toBe("refused");
-    if (outcome.kind !== "refused") return;
-    expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
+    expect(outcome.kind).toBe("validated-untrusted-proposal");
   });
 
   it("empty allowed array refuses (official: empty revealed allowed = invalid constraint — F6)", async () => {
@@ -336,7 +334,7 @@ describe("AP2 message face — translateInbound mandate (vct exact-match + keyle
     expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
   });
 
-  it("zero and negative quantities refuse (positive-integer constraint — F6)", async () => {
+  it("zero and negative quantities accept at schema level (official: quantity = integer Required, positivity NOT stated — evaluation is host-side, F6 honest narrowing)", async () => {
     const face = makeFace();
     for (const quantity of [0, -1]) {
       const outcome = await face.translateInbound({
@@ -349,9 +347,7 @@ describe("AP2 message face — translateInbound mandate (vct exact-match + keyle
           ],
         },
       });
-      expect(outcome.kind).toBe("refused");
-      if (outcome.kind !== "refused") return;
-      expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
+      expect(outcome.kind).toBe("validated-untrusted-proposal");
     }
   });
 

@@ -127,9 +127,10 @@ const checkoutMandateClosedSchema = z
   })
   .strict();
 
-/** open mandate 的约束 schema（官方判别符逐字 + payload 字段闭集 + 基数下限：
- *  allowed/items 非空数组、acceptable_items 非空、quantity 正整数 —— 官方
- *  评审语义：空 allowed = 无效约束，空 items/acceptable_items 空洞化约束）。 */
+/** open mandate 的约束 schema（官方判别符逐字 + payload 字段闭集 + 官方基数
+ *  纪律）：allowed 的空数组 = 官方逐字「the constraint is invalid」（min 1
+ *  有据）；items/quantity 的基数与正负官方未述 —— schema 不发明（评估语义
+ *  在宿主侧执行）。 */
 const allowedMerchantsConstraintSchema = z
   .object({
     type: z.literal("checkout.allowed_merchants"),
@@ -144,11 +145,11 @@ const lineItemsConstraintSchema = z
       z
         .object({
           id: z.string().min(1),
-          acceptable_items: z.array(z.unknown()).min(1),
-          quantity: z.number().int().positive(),
+          acceptable_items: z.array(z.unknown()),
+          quantity: z.number().int(),
         })
         .strict(),
-    ).min(1),
+    ),
   })
   .strict();
 
