@@ -108,11 +108,12 @@ export const PAYSWAP_PROTOCOL_PIN_X402: PayswapProtocolPin = {
     "EVM 转账方法（specs/schemes/exact/scheme_exact_evm.md）：EIP-3009 / Permit2 / ERC-7710；缺省 assetTransferMethod 为 eip3009",
     "facilitator：「The server verifies and settles the payment independently, or by leveraging an x402 facilitator's /verify and /settle endpoints」（docs introduction）",
     "npm 包溯源：x402 / x402-fetch @ 1.2.0（author 「x402 Foundation」，repository git+https://github.com/x402-foundation/x402.git，Apache-2.0）",
+    "三批字段级 schema（specs/x402-specification-v2.md，检索 2026-11-22）：PaymentRequired = x402Version（number，必须 2）/ error（可选）/ resource（必填 ResourceInfo：url 必填，description/mimeType/serviceName（可打印 ASCII ≤32）/tags（≤5 项）/iconUrl 可选）/ accepts（必填 PaymentRequirements 数组：scheme、network（CAIP-2）、amount（原子单位字符串）、asset、payTo、maxTimeoutSeconds 必填，extra 可选且保留键 assetTransferMethod/paymentFlow）/ extensions（可选：info + schema 必填）；PaymentPayload = x402Version / resource（可选）/ accepted（必填，选中的 PaymentRequirements）/ payload（必填，scheme 特定）/ extensions（可选）；exact-EVM payload = signature（EIP-712）+ authorization（from/to/value/validAfter/validBefore/nonce，nonce =「32-byte random nonce to prevent replay attacks」）；SettlementResponse = success（必填）/ errorReason（失败时在案，成功省略）/ errorMessage（可选）/ payer（可选）/ transaction（必填，未广播时空串；errorReason = settlement_pending 时 MUST 非空）/ network（必填 CAIP-2）/ amount（可选）/ extensions（可选）；「no settlement id field exists —— transaction 即标识」；客户端「MUST use the corresponding invalidReason or errorReason code and MUST NOT rely on message text」",
+    "HTTP transport 编码与状态码（specs/transports-v2/http.md，检索 2026-11-22）：PAYMENT-REQUIRED = base64 编码 PaymentRequired 响应头；PAYMENT-SIGNATURE = base64 编码 JSON 请求头；PAYMENT-RESPONSE = base64 编码 JSON 头（失败 402 携 errorReason = insufficient_funds 示例；成功 200 携该头）；状态码映射表：Payment Required → 402 / Payment Failed → 402 / Invalid Payment → 400（畸形载荷或 requirements）/ Server Error → 500 / Success → 200（验证并结算成功）",
+    "facilitator 语义（docs.x402.org/core-concepts/facilitator，检索 2026-11-22）：调用者是**资源服务器**（客户端永不联系 facilitator —— 客户端只发 PAYMENT-SIGNATURE 头）；流程 = POST Payment Payload + Payment Details 到 /verify，验证有效才执行工作，再 POST /settle；facilitator 校验「payment payload meets the server's declared payment requirements」并检查 scheme 与 networkId；「does not hold funds or act as a custodian - it performs verification and execution of onchain transactions」；settlement_pending = 非终态（广播成功但确认未建立）—— 响应携 transaction 哈希 + network，资源服务器自动重试结算**恰一次**（PendingSettlementStore 按交易哈希键控防双花；适用于 exact/upto/batch-settlement 的 EVM 与 SVM，仅 v2）；facilitator HTTP 请求缺省 90 秒超时，settle 期间超时 = 不可判定结局",
   ],
   reverifyBeforeAdapter: [
-    "per-scheme 的 PaymentRequired / PaymentPayload / SettlementResponse 字段级 schema（v2 规范与各 scheme 分册已公布 —— 适配器消息面测试需逐字段钉住并引证）",
-    "facilitator /verify 与 /settle 的语义与验证规则（进站结算声明仍按 doc 12 §6 为不可信输入）",
-    "maxTimeoutSeconds 之外的重放/超时语义（未验证到的不发明）",
+    "重放/超时执行语义的剩余面（未验证到的不发明）：validAfter/validBefore 窗口的执行侧强制规则、跨 scheme 的重放保证、maxTimeoutSeconds 到期时服务端/客户端的行为细节 —— 官方源三批检索未记载这些执行细节（nonce 防重放、settlement_pending 重试恰一次、90 秒缺省超时已入 verified facts）",
   ],
 };
 
