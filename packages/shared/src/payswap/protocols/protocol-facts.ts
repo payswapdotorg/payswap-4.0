@@ -156,11 +156,29 @@ export const PAYSWAP_PROTOCOL_PIN_MPP: PayswapProtocolPin = {
     "EVM session rail 字段级（draft-evm-session-00，paymentauth.org，检索 2026-11-22）：request = amount（**每单位**价格 base units，非总价）/unitType/suggestedDeposit 可选/currency（ERC-20 合约）/recipient（REQUIRED）/description/externalId；methodDetails = chainId + escrowContract（REQUIRED）/channelId（恢复）/minVoucherDelta/feePayer/credentialTypes（permit2|authorization|hash，缺省 [\"hash\"]）；生命周期 = open（客户端广播）或 openWithAuthorization/openWithPermit2（feePayer 时服务端/中继提交）→ topUp（MUST 重置 closeRequestedAt）→ close 或 requestClose + 宽限期 withdraw（参考 15 分钟，最小 10 分钟）；voucher MUST 单调递增、uint128 上界、(cumulativeAmount − highestVoucherAmount) ≥ minVoucherDelta、cumulativeAmount ≤ channel.deposit；签名验证 MUST 先于幂等 200-OK 短路；仅 low-s ECDSA；EIP-712 domain \"EVM Payment Channel\" v1；服务端 MUST 先持久化 spent 再交付服务；耗尽时 MUST 发 payment-need-voucher SSE；每个成功付费请求 MUST 携 Payment-Receipt（reference MUST = channelId，含 acceptedCumulative/spent/chainId）；escrow MUST 排除 fee-on-transfer/rebasing tokens；Problem-Details 类型集（invalid-signature 等，400/402/409/410）",
     "EVM charge rail 字段级（draft-evm-charge-00，paymentauth.org，检索 2026-11-22）：amount = base units 字符串串（按代币 decimals，非 wei 特定）；currency = ERC-20 合约；recipient EIP-55；methodDetails = chainId（REQUIRED）/permit2Address（缺省规范地址）/credentialTypes/decimals/splits（可选，≤10）；credential 类型 = permit2（RECOMMENDED —— witness 绑定 challengeHash = keccak256(abi.encodePacked(challenge.id, challenge.realm))）/ EIP-3009 authorization（nonce MUST = challengeHash）/ transaction（RLP 签名交易，客户端付 gas）/ hash（弱绑定，无 splits）；splits 约束：sum(splits[].amount) MUST 严格小于 amount 且 transaction/authorization/hash 类型 MUST NOT 用于 splits；服务端 MUST 维护已消费凭据集合并原子标记；MUST 等交易回执成功后才发 Payment-Receipt（错误响应 MUST NOT 携带）；与 Stripe charge 的结构差异 = 无 SPT 式间接（每个 credential 单次使用且 challenge 绑定 —— Permit2 签名对「不同 challenge 即使参数相同」不可复用）",
     "Tempo subscription rail 字段级（draft-tempo-subscription-00，paymentauth.org，检索 2026-11-22）：与 Stripe 变体的结构差异 = 无 networkId（用 chainId，缺省 42431 Tempo mainnet）；methodDetails.accessKey REQUIRED（accessKeyAddress + keyType MUST p256|secp256k1|webAuthn）；**仅支持 key-authorization 承兑**（payload type = keyAuthorization，签名 = RLP 编码的密钥授权）；subscriptionExpires REQUIRED（Tempo 密钥授权有时间界）；periodUnit = month MUST 拒（限额按固定时长周期）；计费锚 = 链上结算块时间戳（MUST 源自链上数据而非本地时钟）；MUST 不多于一周期一次成功续费；漏周期不累积容量（限额重置而非累加）；MUST 维护持久本地状态（订阅 id/锚/最后计费索引/在途/过期/撤销）",
+    "challenge 可选参数（draft-httpauth-payment-01 core，检索 2026-11-22）：digest = 请求体的 content digest（RFC 9530 形态，例 sha-256=:base64=:）—— 服务端重算并比对，不匹配即拒；expires = RFC 3339 时间串 —— 「Clients MUST NOT submit credentials for expired challenges」（过期 challenge ID → 402 payment-expired）；header = 在案时值 MUST 为 \"Payment-Authorization\"（凭据字段选择器）—— 客户端 MUST 原样回显；opaque = base64url(JCS JSON) 的扁平 string-to-string map —— 客户端 MUST 原样回显且 MUST NOT 修改，并纳入 challenge 绑定；description = 仅展示用途，「MUST NOT be relied upon for payment verification」且不入 challenge 绑定；未知参数「MUST be ignored by clients」（客户端忽略，不当事实）",
   ],
   reverifyBeforeAdapter: [
-    "未检索的 per-network 分册（不发明）：charge 的 hedera/lightning/solana/xrpl/nearintents/usdc/cardano 变体、session 的 hedera/lightning/solana/tempo/xrpl 变体、subscription 的 solana 变体；discovery-01 的语义；batch-settlement 分册的字段级细节",
+    "未检索的 per-network 分册（不发明）：charge 的 hedera/lightning/solana/xrpl/nearintents/usdc/cardano 变体、session 的 hedera/lightning/solana/tempo/xrpl 变体、subscription 的 solana 变体、discovery-01 的语义、batch-settlement 分册的字段级细节 —— 这些变体在消息面实现中被 typed 拒绝（method 闭集 = stripe/evm/tempo 五组合），其完整性只 gate 未来覆盖这些网络的完整 rail 适配器",
   ],
 };
+
+/** MPP method/intent 兼容矩阵（五个受支持组合 —— 分册 pin 的直接投影；
+ *  矩阵外的组合 = 未 pin 的 rail 面，typed 拒绝。单一事实源：消息面从此
+ *  导入，不复制。 */
+export const PAYSWAP_MPP_METHOD_INTENT_MATRIX = [
+  { method: "stripe", intent: "charge" },
+  { method: "stripe", intent: "subscription" },
+  { method: "evm", intent: "charge" },
+  { method: "evm", intent: "session" },
+  { method: "tempo", intent: "subscription" },
+] as const;
+
+export function payswapMppMethodIntentSupported(method: string, intent: string): boolean {
+  return PAYSWAP_MPP_METHOD_INTENT_MATRIX.some(
+    (entry) => entry.method === method && entry.intent === intent,
+  );
+}
 
 /** pinned 注册表（单一来源；law 级测试断言其不变量）。 */
 export const PAYSWAP_PROTOCOL_PIN_REGISTRY: ReadonlyMap<PayswapProtocolId, PayswapProtocolPin> =
