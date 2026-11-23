@@ -20,45 +20,29 @@
  *    typed 拒绝（doc 12 §6「pins an exact version … fails closed on unknown
  *    versions」的机器面）。
  * 5. **消息面实现门**：注册表的 `reverifyBeforeAdapter` 清单未空时，协议的
- *    消息 schema/验证实现不得落地（本契约是边界，不是消息实现）。未知形态
+ *    消息 schema/验证实现不得落地（本契约是边界，不是消息实现），注册门对
+ *    一切适配器 typed 拒绝 `protocol_reverify_pending`。已知的「不支持」（未
+ *    检索的变体、spec 沉默行、未实现的验证）不是「未验证」—— 记入注册表的
+ *    `unsupportedCapabilities`（每项带 typed refusal），不留在清单里。未知形态
  *    fail-closed，不模拟支持（doc 12 §6「Unsupported features are unavailable,
  *    not simulated as production support」）。
  */
 
 import type { PayswapProtocolId, PayswapProtocolPin } from "./protocol-facts.js";
 import { PAYSWAP_PROTOCOL_PIN_REGISTRY } from "./protocol-facts.js";
+import type { PayswapProtocolRefusal } from "./protocol-refusal.js";
 
 // ---------------------------------------------------------------------------
 // typed refusal（边界词汇闭集 —— 连接 UI/法则测试按 code 分流；新 code = 契约变更）
+// 词汇本体住叶子模块 protocol-refusal.ts：注册表（protocol-facts.ts）的不支持
+// 能力清单也引用 refusal 码 —— 词汇若住本文件，facts ↔ contract 即成环。
 // ---------------------------------------------------------------------------
 
-export const PAYSWAP_PROTOCOL_REFUSAL_CODES = [
-  /** 协议 id 不在 pinned 注册表（未评估/未批准的协议面）。 */
-  "protocol_not_registered",
-  /** 注册表尚未验证到该协议的版本串 —— 适配器实现被挡（fail-closed：不猜版本）。 */
-  "protocol_version_unpinned",
-  /** 适配器 pin 的版本与注册表不一致（含未知/未来版本 —— 不模拟支持）。 */
-  "protocol_version_unsupported",
-  /** 适配器的事实源（URL/检索日期）与注册表不一致 —— 事实漂移 ≠ 版本不支持
-   *  （2026-11-22 修正：两种失败模式分开，宿主按 code 精确分派）。 */
-  "protocol_facts_drift",
-  /** 消息结构验证失败或形态未知（unknown → fail-closed）。注意：本面不做
-   *  SD-JWT 密码学验证 —— 该 code 仅指结构验证失败，不指验签失败。 */
-  "protocol_message_unverifiable",
-  /** 协议特性经官方源验证为不适用/未启用（不可用，不是模拟）。 */
-  "protocol_feature_unsupported",
-  /** 收据面被要求但宿主结算证据缺席/畸形/非 settled-verified（协议 accepted
-   *  ≠ 结算）。 */
-  "protocol_receipt_unavailable",
-] as const;
-
-export type PayswapProtocolRefusalCode = (typeof PAYSWAP_PROTOCOL_REFUSAL_CODES)[number];
-
-/** 协议边界 typed 拒绝（与账户服务 refusal 同形：code + 人类可读消息）。 */
-export interface PayswapProtocolRefusal {
-  readonly code: PayswapProtocolRefusalCode;
-  readonly message: string;
-}
+export {
+  PAYSWAP_PROTOCOL_REFUSAL_CODES,
+  type PayswapProtocolRefusal,
+  type PayswapProtocolRefusalCode,
+} from "./protocol-refusal.js";
 
 // ---------------------------------------------------------------------------
 // 适配器描述符与注册门（法则 4 的机器面）
@@ -79,8 +63,9 @@ export type PayswapProtocolRegistrationOutcome =
   | { readonly kind: "refused"; readonly refusal: PayswapProtocolRefusal };
 
 /**
- * 注册门（法则 4）：按 pin 一致性裁决适配器可否注册。
- * 判定次序：未注册 → 版本未验证 → 版本不匹配 → registered。
+ * 注册门（法则 4 + 法则 5）：按 pin 一致性裁决适配器可否注册。
+ * 判定次序：未注册 → 版本未验证 → 版本不匹配 → 事实源漂移 → 再验证清单未空
+ * → registered。
  * 生产与 law 级测试共用同一实现（单一事实源）。
  */
 export function evaluatePayswapProtocolAdapterRegistration(
@@ -124,7 +109,40 @@ export function evaluatePayswapProtocolAdapterRegistration(
       },
     };
   }
+  // 法则 5：清单未空 = 注册表自述「消息面实现仍被挡」—— 未验证到的不编码、不模拟。
+  if (pin.reverifyBeforeAdapter.length > 0) {
+    return {
+      kind: "refused",
+      refusal: {
+        code: "protocol_reverify_pending",
+        message: `协议 '${descriptor.protocolId}' 的消息面再验证清单未空（${pin.reverifyBeforeAdapter.length} 项：${pin.reverifyBeforeAdapter.join("；")}）—— 适配器实现被挡：未验证到的不编码`,
+      },
+    };
+  }
   return { kind: "registered", protocolId: descriptor.protocolId, versionPin: descriptor.versionPin };
+}
+
+/**
+ * 由注册表 pin 派生适配器描述符（URL / 检索日期 / 版本不在调用方手抄）。
+ * 未注册或版本未验证 = 注册表状态不允许装配 → 抛错（装配期编程/事实错误，
+ * 不是消息拒绝）。
+ */
+export function payswapProtocolAdapterDescriptor(
+  protocolId: PayswapProtocolId,
+  registry: ReadonlyMap<PayswapProtocolId, PayswapProtocolPin> = PAYSWAP_PROTOCOL_PIN_REGISTRY,
+): PayswapProtocolAdapterDescriptor {
+  const pin = registry.get(protocolId);
+  if (pin === undefined || pin.versionPin === null) {
+    throw new Error(
+      `Payswap protocol '${protocolId}' has no verified version pin in the registry; no adapter descriptor can be derived.`,
+    );
+  }
+  return {
+    protocolId,
+    versionPin: pin.versionPin,
+    officialSourceUrl: pin.officialSourceUrl,
+    factsRetrievedAt: pin.factsRetrievedAt,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -148,7 +166,67 @@ export interface PayswapProtocolInboundValidated {
   readonly versionPin: string;
   /** 载荷摘要（canonical digest —— 证据链与后续评估的绑定面）。 */
   readonly untrustedPayloadDigest: string;
+  /**
+   * 凭据/付款载荷消息携带的 challenge 绑定（challenge 自身、收据与 AP2 消息为
+   * undefined）。这是**适配器的不受信声明**：宿主必须用自己签发的 challenge 记录
+   * 比对后才可采信（protocol_challenge_* 拒绝）。按协议分型（`kind` 判别）：
+   * MPP = challenge 回显；x402 = requirements + 付款授权双身份。
+   * 适配器不得在绑定字段之外解释金融语义。
+   */
+  readonly challengeBinding?: PayswapProtocolChallengeBinding;
 }
+
+/** MPP：challenge 回显绑定（wire 上有 id；宿主对回显做绑定投影后逐字比对）。 */
+export interface PayswapMppChallengeBinding {
+  readonly kind: "mpp-challenge-echo";
+  readonly challengeId: string;
+  readonly method: string;
+  readonly intent: string;
+  /** 协议原始 request 串（base64url-nopad）。 */
+  readonly request: string;
+  /** 逐字回显的 challenge 对象（已过 pinned schema；宿主投影后比对）。 */
+  readonly echoedChallenge: unknown;
+}
+
+/** exact/EVM eip3009 付款授权（已过 pinned schema 的六个必填 string 字段）。 */
+export interface PayswapX402ExactEvmAuthorization {
+  readonly from: string;
+  readonly to: string;
+  readonly value: string;
+  readonly validAfter: string;
+  readonly validBefore: string;
+  readonly nonce: string;
+}
+
+/** 已过 pinned schema 且落在 supported subset 内的 PaymentRequirements。 */
+export interface PayswapX402SupportedRequirements {
+  readonly scheme: "exact";
+  readonly network: string;
+  readonly amount: string;
+  readonly asset: string;
+  readonly payTo: string;
+  readonly maxTimeoutSeconds: number;
+  readonly extra: Readonly<Record<string, unknown>> & { readonly name: string; readonly version: string };
+}
+
+/**
+ * x402：无 challenge id —— 两个身份分开绑定（官方：重放防线是付款人 nonce/签名，
+ * 不是 requirements）。二者都是适配器的不受信声明，宿主按自己的签发记录裁决。
+ */
+export interface PayswapX402RequirementsBinding {
+  readonly kind: "x402-requirements-binding";
+  /** 选中 requirements 的 canonical 摘要 —— 绑定宿主签发的 402。 */
+  readonly requirementsDigest: string;
+  /** 付款授权身份（network + from + nonce + signature）的 canonical 摘要 —— 单次使用的键。 */
+  readonly credentialDigest: string;
+  readonly accepted: PayswapX402SupportedRequirements;
+  readonly authorization: PayswapX402ExactEvmAuthorization;
+}
+
+/** 适配器对 challenge 绑定的不受信声明（宿主比对后才成为事实）。 */
+export type PayswapProtocolChallengeBinding =
+  | PayswapMppChallengeBinding
+  | PayswapX402RequirementsBinding;
 
 /** 进站翻译结局闭集：结构验证通过（成为不可信提案）或 typed 拒绝。 */
 export type PayswapProtocolInboundOutcome =
@@ -176,6 +254,23 @@ export interface PayswapProtocolSettlementEvidence {
   readonly state: "settled-verified" | "indeterminate" | "pending" | "failed";
   /** 证据捕获时间（ISO 8601 —— 过期/未来形态拒绝）。 */
   readonly capturedAt: string;
+  /** 宿主证据权威的签发标识（一次性、不可由适配器铸造）。 */
+  readonly hostAttestationId: string;
+  /** 该证据所属协议 —— 跨协议复用即 `protocol_evidence_untrusted`。 */
+  readonly protocolId: PayswapProtocolId;
+  /** 证据主体（执行/对账记录引用）—— 宿主选择证据时绑定具体交易。 */
+  readonly subjectRef: string;
+}
+
+/**
+ * 宿主证据权威的验证端口（适配器侧唯一可用的证据可信度判据）。
+ *
+ * 实现由宿主提供（权威证据源持有的不可伪造状态/签名密钥），适配器只拿到
+ * `verify` 函数 —— 拿不到签发能力，因此**结构上无法铸造**自己的结算证据。
+ * 缺席 verifier = 所有收据请求 fail-closed（`protocol_evidence_untrusted`）。
+ */
+export interface PayswapProtocolEvidenceVerifier {
+  readonly verify: (evidence: PayswapProtocolSettlementEvidence) => Promise<boolean>;
 }
 
 /**
@@ -194,7 +289,8 @@ export type PayswapProtocolReceiptOutcome =
   | { readonly kind: "refused"; readonly refusal: PayswapProtocolRefusal };
 
 /**
- * 协议适配器端口（services 侧实现；host 侧唯一调用面）。
+ * 协议适配器端口。消息面实现住 shared 的 `protocols/*-message-face.ts`（纯
+ * schema + 摘要，无 IO）；services 侧的协议宿主是其**唯一生产调用面**。
  *
  * 注意（法则 1）：端口上**没有**任何凭据、账户、路由或授权参数 —— 适配器拿
  * 不到金融权威，类型面上就没有。实现侧违反（例如在 adapter 内部拉起 provider

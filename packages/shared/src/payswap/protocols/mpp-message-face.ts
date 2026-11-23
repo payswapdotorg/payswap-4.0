@@ -17,16 +17,26 @@
  * - TextDecoder fatal UTF-8（无效字节序列 = 可靠拒绝，非替换）；
  * - RFC 3339 真实日历日期校验（regex + Date.parse 双重）。
  *
- * 诚实边界（不变）：不验签（MPP credential 签名验证需要密钥材料，未在案）；
- * credential-to-challenge 关联与重放/过期/单次使用的生命周期强制 = 宿主边界
- * （本面接口无法接收已签发 challenge 的可信关联上下文 —— 显式留白，不模拟）；
- * emitReceipt 的宿主证据服务 = 设计中的边界（尚无 production 调用者 —— 验收
- * 准则显式留白）。
+ * 实现许可（protocol-contract.ts 法则 5，2026-11-23 修正）：本面于 PR #89 落地时
+ * 注册表的再验证清单仍非空（法则电池当时断言「仍被挡」）—— 注册表与源码树
+ * 矛盾。修正：未检索的 per-network 分册改记注册表 `unsupportedCapabilities`，
+ * 矩阵外 method/intent 组合 typed 拒绝 `protocol_feature_unsupported`
+ * （`mppUnsupportedRailRefusal` —— 注册表该项 refusal 的机器半）。
+ *
+ * 诚实边界（不变）：**不做密码学验签**（Stripe SPT 经 Stripe API 验证 =
+ * provider write；EVM/Tempo 凭据验签需要 secp256k1 + keccak256 的审计依赖 ——
+ * 均不在案；addendum §10 的验证要求未撤回，集成在验签落地前保持禁用）；
+ * credential-to-challenge 关联与重放/过期/单次使用的生命周期强制 = services
+ * 侧协议宿主（本面只给出不受信的 `mpp-challenge-echo` 绑定声明，不模拟）；
+ * emitReceipt 的宿主证据门 = `evidence-gate.ts`（唯一生产调用面 = 协议宿主）。
  */
 
 import { z } from "zod";
 import { canonicalJsonStringify } from "../canonical-json.js";
-import { PAYSWAP_MPP_METHOD_INTENT_MATRIX } from "./protocol-facts.js";
+import {
+  PAYSWAP_MPP_METHOD_INTENT_MATRIX,
+  payswapMppMethodIntentSupported,
+} from "./protocol-facts.js";
 import {
   stripeChargeReceiptSchema,
   stripeSubscriptionReceiptSchema,
@@ -37,11 +47,14 @@ import {
 import {
   type PayswapProtocolAdapter,
   type PayswapProtocolAdapterDescriptor,
+  type PayswapProtocolEvidenceVerifier,
   type PayswapProtocolInboundOutcome,
   type PayswapProtocolReceiptOutcome,
   type PayswapProtocolRefusal,
   evaluatePayswapProtocolAdapterRegistration,
 } from "./protocol-contract.js";
+import { evaluatePayswapProtocolReceiptEvidence } from "./evidence-gate.js";
+import { payswapCanonicalDigest as payloadDigest } from "./canonical-digest.js";
 
 // ---------------------------------------------------------------------------
 // pinned 词汇
@@ -82,16 +95,6 @@ function base64UrlDecode(request: string): { ok: true; decoded: string } | { ok:
   } catch {
     return { ok: false, reason: "request base64url 解码失败（含无效 UTF-8 字节序列）" };
   }
-}
-
-async function payloadDigest(payload: unknown): Promise<string> {
-  const canonical = canonicalJsonStringify(payload);
-  const digestBytes = await globalThis.crypto.subtle.digest(
-    "SHA-256",
-    new TextEncoder().encode(canonical),
-  );
-  const base64 = btoa(String.fromCharCode(...new Uint8Array(digestBytes)));
-  return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
 // ---------------------------------------------------------------------------
@@ -642,8 +645,30 @@ function refusal(code: PayswapProtocolRefusal["code"], message: string): Payswap
   return { code, message };
 }
 
+/**
+ * 兼容矩阵裁决（注册表 `unsupportedCapabilities` 的机器半）：矩阵外的
+ * method/intent 组合 = 未逐字段入 pin 的 rail 面 —— 不可用，不是模拟。非字符串
+ * 的 method/intent 不归本裁决（核心 schema 以结构违规拒绝）。
+ */
+function mppUnsupportedRailRefusal(
+  mppKind: "challenge" | "credential",
+  payload: unknown,
+): PayswapProtocolRefusal | null {
+  const source =
+    mppKind === "credential" ? (payload as { challenge?: unknown } | null)?.challenge : payload;
+  if (typeof source !== "object" || source === null) return null;
+  const { method, intent } = source as { method?: unknown; intent?: unknown };
+  if (typeof method !== "string" || typeof intent !== "string") return null;
+  if (payswapMppMethodIntentSupported(method, intent)) return null;
+  return refusal(
+    "protocol_feature_unsupported",
+    `MPP method/intent 组合 '${method}+${intent}' 不在 pinned 兼容矩阵 —— 未 pin 的 rail 面（不可用，不是模拟）`,
+  );
+}
+
 export function createPayswapMppMessageFace(
   descriptor: PayswapProtocolAdapterDescriptor,
+  options: { readonly evidenceVerifier?: PayswapProtocolEvidenceVerifier } = {},
 ): PayswapProtocolAdapter {
   const registration = evaluatePayswapProtocolAdapterRegistration(descriptor);
   if (registration.kind === "refused") {
@@ -696,6 +721,11 @@ export function createPayswapMppMessageFace(
         };
       }
 
+      const unsupportedRail = mppUnsupportedRailRefusal(mppKind, payload);
+      if (unsupportedRail !== null) {
+        return { kind: "refused", refusal: unsupportedRail };
+      }
+
       const schema = mppKind === "challenge" ? challengeSchema : credentialSchema;
       const parsed = schema.safeParse(payload);
       if (!parsed.success) {
@@ -703,64 +733,51 @@ export function createPayswapMppMessageFace(
           kind: "refused",
           refusal: refusal(
             "protocol_message_unverifiable",
-            `MPP ${mppKind} 消息未通过 pinned schema（字段越集 / 缺失必填 / 矩阵外组合 / request 编码违规 —— fail-closed）：${
+            `MPP ${mppKind} 消息未通过 pinned schema（字段越集 / 缺失必填 / request 编码违规 —— fail-closed）：${
               parsed.error.issues[0]?.message ?? "schema error"
             }`,
           ),
         };
       }
+      const challengeBinding =
+        mppKind === "credential"
+          ? (() => {
+              const credential = parsed.data as {
+                challenge: { id: string; method: string; intent: string; request: string };
+              };
+              return {
+                kind: "mpp-challenge-echo" as const,
+                challengeId: credential.challenge.id,
+                method: credential.challenge.method,
+                intent: credential.challenge.intent,
+                request: credential.challenge.request,
+                echoedChallenge: credential.challenge,
+              };
+            })()
+          : undefined;
       return {
         kind: "validated-untrusted-proposal",
         protocolId: descriptor.protocolId,
         versionPin: descriptor.versionPin,
         untrustedPayloadDigest: await payloadDigest(parsed.data),
+        ...(challengeBinding === undefined ? {} : { challengeBinding }),
       };
     },
 
     async emitReceipt(evidence): Promise<PayswapProtocolReceiptOutcome> {
-      if (evidence === null) {
-        return {
-          kind: "refused",
-          refusal: refusal(
-            "protocol_receipt_unavailable",
-            "收据面被要求但宿主结算证据缺席 —— 协议 accepted ≠ 结算（typed 拒绝）",
-          ),
-        };
-      }
-      const evidenceShape = z
-        .object({
-          evidenceRef: z.string().min(1),
-          evidenceDigest: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
-          state: z.enum(["settled-verified", "indeterminate", "pending", "failed"]),
-          capturedAt: z.string().datetime({ offset: true }),
-        })
-        .strict()
-        .safeParse(evidence);
-      if (!evidenceShape.success) {
-        return {
-          kind: "refused",
-          refusal: refusal(
-            "protocol_receipt_unavailable",
-            `宿主结算证据形态非法 —— 不伪造结算事实：${
-              evidenceShape.error.issues[0]?.message ?? "schema error"
-            }`,
-          ),
-        };
-      }
-      if (evidenceShape.data.state !== "settled-verified") {
-        return {
-          kind: "refused",
-          refusal: refusal(
-            "protocol_receipt_unavailable",
-            `结算证据状态为 '${evidenceShape.data.state}' —— 不可判定结局不得产生成功收据（协议 accepted ≠ 结算）`,
-          ),
-        };
+      const gate = await evaluatePayswapProtocolReceiptEvidence({
+        evidence,
+        protocolId: descriptor.protocolId,
+        verifier: options.evidenceVerifier,
+      });
+      if (gate.kind === "refused") {
+        return { kind: "refused", refusal: gate.refusal };
       }
       return {
         kind: "receipt-emitted",
         protocolId: descriptor.protocolId,
         versionPin: descriptor.versionPin,
-        settlementEvidenceRef: evidenceShape.data.evidenceRef,
+        settlementEvidenceRef: gate.evidence.evidenceRef,
       };
     },
   };

@@ -41,11 +41,13 @@ import { canonicalJsonStringify } from "../canonical-json.js";
 import {
   type PayswapProtocolAdapter,
   type PayswapProtocolAdapterDescriptor,
+  type PayswapProtocolEvidenceVerifier,
   type PayswapProtocolInboundOutcome,
   type PayswapProtocolReceiptOutcome,
   type PayswapProtocolRefusal,
   evaluatePayswapProtocolAdapterRegistration,
 } from "./protocol-contract.js";
+import { evaluatePayswapProtocolReceiptEvidence } from "./evidence-gate.js";
 
 // ---------------------------------------------------------------------------
 // pinned 词汇（逐字照录 —— 新值 = 契约变更，需官方源再检索）
@@ -423,6 +425,7 @@ function refusal(code: PayswapProtocolRefusal["code"], message: string): Payswap
  */
 export function createPayswapAp2MessageFace(
   descriptor: PayswapProtocolAdapterDescriptor,
+  options: { readonly evidenceVerifier?: PayswapProtocolEvidenceVerifier } = {},
 ): PayswapProtocolAdapter {
   const registration = evaluatePayswapProtocolAdapterRegistration(descriptor);
   if (registration.kind === "refused") {
@@ -508,50 +511,21 @@ export function createPayswapAp2MessageFace(
 
     async emitReceipt(evidence): Promise<PayswapProtocolReceiptOutcome> {
       // 法则 3：收据只从宿主签发的已验证结算证据发出 —— 协议 accepted ≠ 结算，
-      // 适配器永不安言铸造结算事实。运行时强制：证据对象结构验证 + 状态门。
-      if (evidence === null) {
-        return {
-          kind: "refused",
-          refusal: refusal(
-            "protocol_receipt_unavailable",
-            "收据面被要求但宿主结算证据缺席 —— 协议 accepted ≠ 结算（typed 拒绝）",
-          ),
-        };
-      }
-      const evidenceShape = z
-        .object({
-          evidenceRef: z.string().min(1),
-          evidenceDigest: z.string().regex(/^[A-Za-z0-9_-]{32,128}$/),
-          state: z.enum(["settled-verified", "indeterminate", "pending", "failed"]),
-          capturedAt: z.string().datetime({ offset: true }),
-        })
-        .strict()
-        .safeParse(evidence);
-      if (!evidenceShape.success) {
-        return {
-          kind: "refused",
-          refusal: refusal(
-            "protocol_receipt_unavailable",
-            `宿主结算证据形态非法（畸形引用/摘要/时间戳）—— 不伪造结算事实：${
-              evidenceShape.error.issues[0]?.message ?? "schema error"
-            }`,
-          ),
-        };
-      }
-      if (evidenceShape.data.state !== "settled-verified") {
-        return {
-          kind: "refused",
-          refusal: refusal(
-            "protocol_receipt_unavailable",
-            `结算证据状态为 '${evidenceShape.data.state}' —— 不可判定结局不得产生成功收据（协议 accepted ≠ 结算）`,
-          ),
-        };
+      // 适配器永不安言铸造结算事实。P3-A：证据可信度由宿主证据权威验证端口裁决
+      // （结构合法但未签发的对象 → protocol_evidence_untrusted）。
+      const gate = await evaluatePayswapProtocolReceiptEvidence({
+        evidence,
+        protocolId: descriptor.protocolId,
+        verifier: options.evidenceVerifier,
+      });
+      if (gate.kind === "refused") {
+        return { kind: "refused", refusal: gate.refusal };
       }
       return {
         kind: "receipt-emitted",
         protocolId: descriptor.protocolId,
         versionPin: descriptor.versionPin,
-        settlementEvidenceRef: evidenceShape.data.evidenceRef,
+        settlementEvidenceRef: gate.evidence.evidenceRef,
       };
     },
   };

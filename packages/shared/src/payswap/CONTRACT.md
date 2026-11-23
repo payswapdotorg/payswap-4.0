@@ -214,3 +214,72 @@ description}`；客户 `{id, created, description}` —— **PII（email/name/ph
 `PayswapAccountOverviewDetail`（`detail | expired | revoked | refused` —— 与
 refreshEvidence 结果词汇同构）。读回 `verified` 结局 additive 可选携带 `evidence`
 （缺席时概览 detail 面 fail-closed 拒绝）。
+
+**P3 协议适配器边界**（addendum §10「Payment-protocol adapters are not providers or
+executors」+ doc 12 §6「Protocol interoperability at the boundary」+ doc 05 §13；
+`protocols/`—— 纯类型 + zod schema + 摘要，无 IO、无凭据、无 runtime）：
+
+- **事实注册表单一来源**（`protocol-facts.ts`）：每个协议 pin 携带 https 官方源
+  URL、检索日期、精确版本串（`null` = 尚未从官方源验证到）、引文级已验证事实、
+  `reverifyBeforeAdapter`（消息面实现前的再验证清单）与 `unsupportedCapabilities`
+  （显式不支持能力清单）。适配器不得超出已验证事实编码 —— 未检索的不发明。
+- **消息面实现门（法则 5，2026-11-23 修正）**：`reverifyBeforeAdapter` 非空 ⇒
+  该协议的消息面不得落地，且注册门对一切适配器 typed 拒绝
+  `protocol_reverify_pending`。修正依据：MPP（PR #89）与 x402（PR #93）的消息面
+  落地时清单仍非空，而法则电池当时断言「仍被挡」—— 注册表、电池与源码树互相
+  矛盾。修正后：未检索的 per-network 分册与 x402 五个 spec-silent 行改记
+  `unsupportedCapabilities`，三个已落地协议的清单清空；电池按「已落地消息面 ⇒
+  清单必空」钉住（`payswap-protocol-contract.test.ts`）。
+- **显式不支持 ≠ 模拟**（doc 12 §6「Unsupported features are unavailable, not
+  simulated as production support」）：`unsupportedCapabilities` 每项 = 能力 +
+  官方状态 + typed refusal —— `protocol_feature_unsupported`（消息面对该面
+  typed 拒绝），或 `null`（无 wire 行为被编码或拒绝：本面对该行不作任何声明，
+  属宿主策略/未实现验证，不是「已支持」）。
+- **消息面登记表**（`protocol-faces.ts`）：已落地消息面按 protocolId 登记为
+  单一装配源；描述符由注册表 pin 派生（`payswapProtocolAdapterDescriptor` ——
+  URL/检索日期/版本不在调用方手抄）。新增协议 = 注册表 + 登记表 + 法则电池
+  同变更。
+- **x402 supported subset** = `exact` on `eip155:*` via `eip3009`（缺省转账方法）+
+  `authorization` 流（缺省）。官方示例逐字（x402-foundation/x402 @ `b711fa9f`，
+  检索 2026-11-23：core §5.1–§5.3、§6.1、scheme `exact`/EVM §1–§3）：
+  `payload` = `signature`（「The 65-byte signature」）+ `authorization`
+  {`from`/`to`/`value`/`validAfter`/`validBefore`/`nonce`，全部 REQUIRED string；
+  nonce =「32-byte random nonce to prevent replay attacks」}；
+  `accepted.extra.name`/`version` REQUIRED（EIP-712 域）；`extra.assetTransferMethod`
+  在案时 MUST 为 `eip3009`。其余 scheme、网络族、转账方法（`permit2`、
+  `erc7710`）与付款流（`upfront`、`escrow`）= typed `protocol_feature_unsupported`
+  —— `evaluatePayswapX402RequirementSupport` 是该判定的单一实现（消息面与 P6
+  资格评估共用；PaymentRequired 广告未 pin 条目不使消息结构非法 —— 资格不是
+  消息面的裁决）。结构违规（含授权的收款人/金额与 `accepted` 不一致、
+  `validAfter ≥ validBefore`）= `protocol_message_unverifiable`；wire
+  `x402Version` ≠ 2 = 未知形态，同码（消息级无版本码 —— `protocol_version_
+  unsupported` 专指适配器 pin 与注册表不一致）。
+- **进站结局永远是不可信提案**：`validated-untrusted-proposal` 只指「通过了
+  pinned 结构 schema」—— 结构验证不是密码学验证，该结局不得被任何调用方解读
+  为已认证、已授权或已结算。结局闭集里没有任何 verified/authenticated/settled
+  位（API acceptance ≠ settlement；进站 SettlementResponse / MPP receipt 同为
+  不可信提案）。
+- **签名姿态（P3 诚实边界）**：三个消息面均**不做密码学验签**。addendum §10 /
+  doc 12 §6 / doc 05 §13 要求适配器按协议验证 identity/signature/replay/expiry
+  —— 该要求未撤回：验签所需前提在 P3 不在案（x402/MPP EVM 需 secp256k1 +
+  keccak256 的审计依赖〔仓库未批准〕；MPP Stripe SPT 经 Stripe API 验证 =
+  provider write〔P7 前 forbidden〕；AP2 SD-JWT 的受信发行者信任锚未供给）。
+  故 P3 只做签名**形态**校验（缺席/畸形 = typed 拒绝），并按 addendum §10 末句
+  「Integration remains disabled until its evidence and acceptance suite passes」
+  保持集成禁用：在真实验签落地（P6 `verifyInbound`）之前，任何协议消息不得被
+  映射为 PaySwap intent。
+- **challenge 绑定是不受信声明**（`PayswapProtocolChallengeBinding`，宿主比对后
+  才成为事实）：MPP = `{kind:"mpp-challenge-echo", challengeId, method, intent,
+  request, echoedChallenge}`（wire 上有 id，回显逐字比对）；x402 =
+  `{kind:"x402-requirements-binding", requirementsDigest, credentialDigest,
+  accepted, authorization}` —— 无 challenge id，两个身份分开：`requirementsDigest`
+  = 选中 requirements 的 canonical 摘要（绑定宿主签发的 402）；
+  `credentialDigest` = 付款授权身份（network + from + nonce + signature）的
+  canonical 摘要（单次使用的键 —— 同一 requirements 的第二笔合法付款是新授权，
+  不是重放）。AP2 mandate/receipt 不携带绑定（不是宿主签发的 challenge）。
+- **收据证据门**（`evidence-gate.ts`，三个消息面共用的唯一实现）：`emitReceipt`
+  只接受**宿主证据权威签发**的结算证据 —— 证据缺席/畸形 = `protocol_receipt_
+  unavailable`；结构合法但未经宿主签发、跨协议复用、或适配器未装配验证端口 =
+  `protocol_evidence_untrusted`；状态非 `settled-verified` =
+  `protocol_receipt_unavailable`。适配器只持有 `verify` 端口，结构上无法铸造
+  自己的结算证据。
