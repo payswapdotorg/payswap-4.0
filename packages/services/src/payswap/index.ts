@@ -75,3 +75,34 @@ export {
   type PayswapAccountRuntimeDependencies,
   type PayswapCustodianBridge,
 } from "./runtime.js";
+export {
+  PAYSWAP_X402_CONSUMED_CREDENTIAL_RETENTION_MAX,
+  createPayswapProtocolChallengeRegistry,
+  type PayswapChallengeConsumeOutcome,
+  type PayswapMppChallengeConsumeInput,
+  type PayswapMppChallengeIssueInput,
+  type PayswapMppChallengeRegistryFace,
+  type PayswapProtocolChallengeRecord,
+  type PayswapProtocolChallengeRegistry,
+  type PayswapX402AdvertiseInput,
+  type PayswapX402CredentialConsume,
+  type PayswapX402PaymentRegistryFace,
+  type PayswapX402RequirementsMatch,
+  type PayswapX402RequirementsRecord,
+} from "./protocols/challengeRegistry.js";
+export {
+  createPayswapHostEvidenceAuthority,
+  type PayswapHostEvidenceAuthority,
+  type PayswapHostEvidenceClaim,
+} from "./protocols/evidenceAuthority.js";
+export {
+  createPayswapProtocolHost,
+  type PayswapProtocolHost,
+  type PayswapProtocolHostInboundOutcome,
+  type PayswapProtocolHostOptions,
+} from "./protocols/host.js";
+export {
+  createPayswapProtocolRuntime,
+  type PayswapProtocolRuntime,
+  type PayswapProtocolRuntimeDependencies,
+} from "./protocols/protocolRuntime.js";
