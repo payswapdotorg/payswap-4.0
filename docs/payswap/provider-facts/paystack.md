@@ -66,6 +66,31 @@ recorded, not worked around by citing second-hand sources.
 5. **Test magic numbers and the current error-code catalog** beyond the two
    live 401 envelopes (K-2/K-3): docs facts — still ⚠.
 
+## Consequence in source (updated 2026-11-24 — supersedes the pre-registration wording below)
+
+Paystack **is** registered in the account-service authSpec set and has a read-only
+read-back + data adapter since PRs #53–#57 (the items above narrow the encoded
+facts; they do not block the registered contract any more):
+
+- `PAYSWAP_PAYSTACK_AUTH_SPEC` encodes exactly the verified fact set: secret-key
+  only (`sk_test_`/`sk_live_` prefix grammar, `sk_` shape per the official SDK
+  usage evidence), pk_* refused as frontend-only, revoke = delete-local-only.
+- The read-back maps a successful `/balance` read (the official envelope) to
+  `verified` carrying **typed gaps, never fabricated facts**
+  (ADR-P2-1 amendment 2026-11-24): `providerAccountId: null` +
+  `identityGap` (`provider_identity_not_exposed` — no official self-identity
+  endpoint; the settlement-derived identity is structurally absent in test mode)
+  and `capabilityGap` (`capability_evidence_not_exposed` — the official API
+  reference (https://paystack.com/docs/api/, checked 2026-11-24) exposes **no**
+  capability/features/permissions/requirements read-back resource; all 32
+  resource groups enumerated).
+- The overview detail answers the four read-only categories with per-category
+  typed results; capabilities stay unknown and are never inferred from balances,
+  transactions or customers.
+
+The original consequence text (kept for the record; every claim in it was about
+the pre-registration state and is no longer true):
+
 ## Consequence in source (fail-closed, by design — unchanged)
 
 Paystack remains **not** registered in the account-service authSpec set: item

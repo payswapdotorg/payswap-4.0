@@ -55,6 +55,31 @@
    from a reference page. The verified-recipient hard rule (doc 04 §3.3)
    keeps its ⚠ until that surface is pinned.
 
+## Consequence in source (updated 2026-11-24 — supersedes the pre-registration wording below)
+
+PayPal **is** registered in the account-service authSpec set (client-credentials
+shape, operator-declared sandbox/live mode) and has a read-only read-back + data
+adapter since PRs #53–#57 and the custody slices (#58–#70, #66–#67):
+
+- `PAYSWAP_PAYPAL_AUTH_SPEC` encodes exactly the verified fact set: the
+  client-id/client-secret pair (two secret kinds), the officially documented
+  token endpoint and sandbox/live service URLs, revoke = delete-local-only.
+- The read-back maps a successful token exchange to `verified{providerAccountId:
+  app_id}` (the official non-secret app identity — PayPal HAS the identity face,
+  the recovery row works) plus a typed `capabilityGap`
+  (`capability_evidence_not_exposed`, ADR-P2-1 amendment 2026-11-24): the
+  official REST API documentation (https://developer.paypal.com/api/rest/,
+  checked 2026-11-24) exposes **no** capability read-back endpoint, and the
+  token's `scope` list has no officially documented mapping to merchant
+  capabilities — capabilities stay unknown and are never inferred from token
+  scopes or from balances/transactions/disputes.
+- The overview detail answers the four read-only categories with per-category
+  typed results (customers honestly `refused{unsupported_operation}` — no
+  official list endpoint).
+
+The original consequence text (kept for the record; every claim in it was about
+the pre-registration state and is no longer true):
+
 ## Consequence in source (fail-closed, by design — unchanged until the P3 conformance slice)
 
 PayPal remains **not registered** in the account-service authSpec set this

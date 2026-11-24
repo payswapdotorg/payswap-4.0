@@ -213,7 +213,43 @@ description}`；客户 `{id, created, description}` —— **PII（email/name/ph
 校验器；数据读端口 `PayswapAccountDataReadPort`；概览 detail 联合
 `PayswapAccountOverviewDetail`（`detail | expired | revoked | refused` —— 与
 refreshEvidence 结果词汇同构）。读回 `verified` 结局 additive 可选携带 `evidence`
-（缺席时概览 detail 面 fail-closed 拒绝）。
+（缺席时概览 detail 面 fail-closed 拒绝 —— 除非 adapter 显式声明能力缺口，见下）。
+
+**P3 provider 缺席面 —— typed 缺口，不是 detail 拒绝（2026-11-24）**：依据 doc 05
+§4「An adapter that cannot produce evidence for an operation **must** declare it
+`unavailable` with a reason」「Unknown = `unavailable`, not optimistic defaults」与
+register P2 验收「capabilities are answered from provider read-back evidence **with
+typed refusals where unconfigured**」。Stripe 之外没有哪个 P3 provider 暴露 Stripe
+式的自身份 / 能力读回面（Paystack 官方 API 无 merchant/business self-identity
+端点；PayPal 的 client-credentials 读回没有已钉住的能力面 —— 两项事实 pin 与
+检索日期在案）。原法则「`verified` 不带 `evidence` → 概览 detail 整体拒绝」把三件
+事并成了一件：凭据是否有效（状态机）、provider 是否签发账户标识、provider 是否
+暴露能力证据。三者分开作答，每一步仍是 evidence, never claims：
+
+- **身份缺口**（`account-connection.ts` `payswapAccountIdentityGapSchema`，码
+  `provider_identity_not_exposed`）：读回 `verified` 的 `providerAccountId` 可为
+  `null` —— **当且仅当** `identityGap` 在场（schema 不变量：`null ⇔ identityGap`；
+  非空 id 与 `identityGap` 并存 = 畸形结局）。「provider 认证了凭据」（例：
+  Paystack `/balance` 200 + 官方封套）就是 `verified` 的事实来源；身份缺席只是
+  「provider 未签发标识」，**不再**映射 `unavailable`（读回并没有失败）。refresh
+  结果的 `verified` 携带同一对（`providerAccountId: string | null` + 可选
+  `identityGap`）；恢复行（`expired` → `connected`）对身份缺口 provider 同样成立
+  —— provider 接受凭据就是恢复证据（doc 05 §5）。
+- **能力证据缺口**（`payswapAccountCapabilityRefusalSchema`，码
+  `capability_evidence_not_exposed`）：读回 `verified` 可选携带 `capabilityGap`，
+  与 `evidence` 互斥（并存 = 畸形结局）。它是 adapter 对**已钉住的官方事实**的
+  显式声明，不是对 `evidence` 缺席的推断 —— 服务永不因「`evidence` 恰好是
+  undefined」而放行。
+- **概览 detail 的能力面答案恰一**：`evidence`（读回证据）或 `capabilityRefusal`
+  （typed 能力缺口 —— 与类别读的 `refused` 同一词汇纪律：code + 零凭据 message，
+  明示「能力未知，不得从余额 / 交易 / 客户数据推断」）。两者皆缺席 = 没有能力面
+  答案（畸形 / 未携带）→ detail 面 **fail-closed 拒绝不变**（Stripe 行为逐字不变：
+  `verified` 不带 `evidence` 且无 `capabilityGap` 仍拒）。`capabilityRefusal` 在场
+  时四类别照读，类别各自 typed 作答（官方无面的类别仍是
+  `refused{unsupported_operation}` / `unavailable`）。
+- **下游（P4 起）**：`capabilityRefusal` 对 eligibility 的语义是 unknown =
+  unavailable —— 没有证据的操作不得被判为可用；目录成员、余额、历史数据都不是
+  能力证据。
 
 **P3 协议适配器边界**（addendum §10「Payment-protocol adapters are not providers or
 executors」+ doc 12 §6「Protocol interoperability at the boundary」+ doc 05 §13；

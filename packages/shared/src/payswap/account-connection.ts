@@ -219,10 +219,12 @@ export interface PayswapProviderEvidencePin {
  *   available balance on your integration」→ data: [{currency, balance}]。
  * - https://paystack.com/docs/api/settlement/ — GET /settlement 条目含 integration
  *   数值 id（商户身份的唯一官方踪迹；测试模式不产生结算 —— 见再验证清单）。
- * 结构性缺口（typed refusal 面，见 reverifyBeforeAdapterUse）：官方 API 无
- * merchant/business self-identity 端点 —— `verified` 结局的 providerAccountId
- * 对 Paystack 没有官方事实来源；读回端口把成功的 balance 读回映射为显式 typed
- * `unavailable`（状态不变，401 的 expiry 证据不受影响）。
+ * 结构性缺口（typed 面，见 reverifyBeforeAdapterUse；ADR-P2-1 修订 2026-11-24）：
+ * 官方 API 无 merchant/business self-identity 端点 —— `verified` 结局的
+ * providerAccountId 对 Paystack 没有官方事实来源；官方 API reference 也无能力读回
+ * 面。读回端口把成功的 balance 读回映射为 `verified` + `providerAccountId: null`
+ * + `identityGap` + `capabilityGap`（凭据被认证是事实；身份与能力缺席是 typed 缺口
+ * —— 401 的 expiry 证据不受影响）。
  */
 export const PAYSWAP_PAYSTACK_EVIDENCE_PIN: PayswapProviderEvidencePin = {
   providerId: "paystack",
@@ -242,9 +244,11 @@ export const PAYSWAP_PAYSTACK_EVIDENCE_PIN: PayswapProviderEvidencePin = {
     "GET /balance fetches the available balance on the integration (data: [{currency, balance}])",
     "GET /settlement items carry an integration numeric id; settlements are not processed in test mode",
     "No merchant/business self-identity endpoint exists in the official API reference (checked 2026-11-20)",
+    "No capability/features/permissions/requirements read-back resource exists in the official API reference (https://paystack.com/docs/api/ — all 32 resource groups enumerated; checked 2026-11-24)",
   ],
   reverifyBeforeAdapterUse: [
-    "Merchant/integration self-identity endpoint: none in the official API reference as of 2026-11-20 — when officially published, map the balance read-back's verified outcome to the official identifier instead of the typed identity-gap refusal",
+    "Merchant/integration self-identity endpoint: none in the official API reference as of 2026-11-20 — when officially published, map the balance read-back's verified outcome to the official identifier instead of the typed identity gap",
+    "Capability read-back surface: none in the official API reference as of 2026-11-24 — when officially published, capture it as capability evidence instead of declaring capabilityGap",
     "Paystack-Version header / API versioning: not documented on the official authentication page as of 2026-11-20",
     "/balance currency coverage beyond the documented NGN samples",
   ],
@@ -313,9 +317,11 @@ export const PAYSWAP_PAYPAL_EVIDENCE_PIN: PayswapProviderEvidencePin = {
     "Credentials are created in the Developer Dashboard (Apps & Credentials: client ID identifies the app, client secret authenticates it); no official character-pattern documentation for either value",
     "Service URLs are directly documented on the official API requests page (retrieved 2026-11-21): \"The URL to the API service is either: Sandbox. https://api-m.sandbox.paypal.com — Live. https://api-m.paypal.com\"; the official go-live checklist (developer.paypal.com/api/rest/test-go-live) instructs switching the base URL from the sandbox host to https://api-m.paypal.com",
     "The official identity surface is the OpenID Connect userinfo endpoint (/v1/identity/openidconnect/userinfo) with scopes bound to the client ID — client_credentials reachability is NOT officially evidenced",
+    "No capability/features/permissions/requirements read-back endpoint exists in the official REST API documentation (https://developer.paypal.com/api/rest/; checked 2026-11-24) — the token response's scope list is informational and has no officially documented mapping to merchant capabilities",
   ],
   reverifyBeforeAdapterUse: [
     "client_credentials access to identity/userinfo surfaces: not officially evidenced as of 2026-11-20 — do not adopt without official documentation",
+    "Capability read-back surface / an official scope-to-capability mapping: none as of 2026-11-24 — do not derive capability evidence from token scopes without official documentation; until then the read-back declares capabilityGap",
     "Client id/secret character patterns: not officially documented — keep formatCheck permissive (non-whitespace) unless PayPal publishes a pattern",
   ],
 };
@@ -476,12 +482,49 @@ export type PayswapAccountCapabilityEvidence = z.infer<
   typeof payswapAccountCapabilityEvidenceSchema
 >;
 
+// ---------------------------------------------------------------------------
+// provider 缺席面（typed；ADR-P2-1 修订 2026-11-24）—— evidence, never claims 的
+// 对偶：provider 官方不暴露的面以 typed 缺口作答，绝不以缺席推断、绝不捏造
+// ---------------------------------------------------------------------------
+
+/** 身份缺口码：provider 认证了凭据，但官方 API 不暴露 provider 账户标识。 */
+export const PAYSWAP_ACCOUNT_IDENTITY_GAP_CODE = "provider_identity_not_exposed" as const;
+
+/** 身份缺口（读回 `verified` 的 `providerAccountId: null` 时必在场）。 */
+export const payswapAccountIdentityGapSchema = z
+  .object({
+    code: z.literal(PAYSWAP_ACCOUNT_IDENTITY_GAP_CODE),
+    /** 操作员/模型可读、零凭据材料；携带官方检索日期（事实引用）。 */
+    message: z.string().min(1),
+  })
+  .strict();
+export type PayswapAccountIdentityGap = z.infer<typeof payswapAccountIdentityGapSchema>;
+
+/**
+ * 能力证据缺口码：provider 官方 API 不暴露能力读回面 —— 能力未知（doc 05 §4
+ * 「Unknown = `unavailable`, not optimistic defaults」）。adapter 只允许为证据 pin
+ * 已钉住的官方事实声明它。
+ */
+export const PAYSWAP_CAPABILITY_EVIDENCE_REFUSAL_CODE = "capability_evidence_not_exposed" as const;
+
+/** 能力证据缺口（与类别读的 `refused` 同一词汇纪律：code + 零凭据 message）。 */
+export const payswapAccountCapabilityRefusalSchema = z
+  .object({
+    code: z.literal(PAYSWAP_CAPABILITY_EVIDENCE_REFUSAL_CODE),
+    message: z.string().min(1),
+  })
+  .strict();
+export type PayswapAccountCapabilityRefusal = z.infer<
+  typeof payswapAccountCapabilityRefusalSchema
+>;
+
 /**
  * 读回结局（strict 闭集）：
- * - `verified` —— provider 认证了凭据并返回账户读回（`providerAccountId` 是
- *   非秘密证据摘要，如 Stripe 的 `acct_*`；`evidence` 是能力证据摘要 ——
- *   doc 04 §1.2 capabilities/requirements 读回，ADR-P2-1 起可选携带，概览
- *   detail 面要求其在场）；
+ * - `verified` —— provider 认证了凭据并返回账户读回。`providerAccountId` 是非秘密
+ *   证据摘要（如 Stripe 的 `acct_*`）；**`null` = 官方 API 不暴露账户标识**，当且
+ *   仅当 `identityGap` 在场（P3 身份缺口 provider，如 Paystack）。`evidence` 是能力
+ *   证据摘要（doc 04 §1.2 capabilities/requirements 读回）；`capabilityGap` 是 typed
+ *   能力缺口 —— 与 `evidence` 互斥，adapter 对已钉住官方事实的显式声明；
  * - `auth-failed` —— provider 拒绝了凭据（**唯一的 expiry 证据**）；
  * - `unavailable` —— 网络/未知结局（**不是** expiry 证据 —— doc 05 §6.4 的
  *   unknown 纪律：读回失败永不假装成功，也永不假装 auth 失败）。
@@ -489,25 +532,60 @@ export type PayswapAccountCapabilityEvidence = z.infer<
 export type PayswapAccountReadBackOutcome =
   | {
       readonly kind: "verified";
-      readonly providerAccountId: string;
-      /** 能力证据（doc 04 §1.2；可选 —— 未携带时概览 detail 面 fail-closed 拒绝）。 */
+      readonly providerAccountId: string | null;
+      /** 能力证据（doc 04 §1.2；可选 —— 与 capabilityGap 互斥）。 */
       readonly evidence?: PayswapAccountCapabilityEvidence;
+      /** 身份缺口（typed）—— providerAccountId 为 null 时必在场。 */
+      readonly identityGap?: PayswapAccountIdentityGap;
+      /** 能力证据缺口（typed）—— 在场时 evidence 必缺席。 */
+      readonly capabilityGap?: PayswapAccountCapabilityRefusal;
     }
   | { readonly kind: "auth-failed"; readonly detail: string }
   | { readonly kind: "unavailable"; readonly detail: string };
 
-/** 结局面 strict 闭集（畸形结局无证据 —— 服务侧 fail-closed 拒绝，永不翻状态）。 */
-export const payswapAccountReadBackOutcomeSchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      kind: z.literal("verified"),
-      providerAccountId: z.string().min(1),
-      evidence: payswapAccountCapabilityEvidenceSchema.optional(),
-    })
-    .strict(),
-  z.object({ kind: z.literal("auth-failed"), detail: z.string().min(1) }).strict(),
-  z.object({ kind: z.literal("unavailable"), detail: z.string().min(1) }).strict(),
-]);
+/**
+ * 结局面 strict 闭集（畸形结局无证据 —— 服务侧 fail-closed 拒绝，永不翻状态）。
+ * `verified` 的三个缺席面不变量在 union 层裁决：`null ⇔ identityGap`、
+ * `evidence ⊕ capabilityGap`。
+ */
+export const payswapAccountReadBackOutcomeSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("verified"),
+        providerAccountId: z.string().min(1).nullable(),
+        evidence: payswapAccountCapabilityEvidenceSchema.optional(),
+        identityGap: payswapAccountIdentityGapSchema.optional(),
+        capabilityGap: payswapAccountCapabilityRefusalSchema.optional(),
+      })
+      .strict(),
+    z.object({ kind: z.literal("auth-failed"), detail: z.string().min(1) }).strict(),
+    z.object({ kind: z.literal("unavailable"), detail: z.string().min(1) }).strict(),
+  ])
+  .superRefine((outcome, ctx) => {
+    if (outcome.kind !== "verified") return;
+    if (outcome.providerAccountId === null && outcome.identityGap === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["identityGap"],
+        message: "verified with a null providerAccountId requires an identityGap",
+      });
+    }
+    if (outcome.providerAccountId !== null && outcome.identityGap !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["identityGap"],
+        message: "identityGap is only valid when providerAccountId is null",
+      });
+    }
+    if (outcome.evidence !== undefined && outcome.capabilityGap !== undefined) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["capabilityGap"],
+        message: "capabilityGap and evidence are mutually exclusive",
+      });
+    }
+  });
 
 /** provider 读回端口（host 进程内的 adapter 函数面；真实 Stripe 实现随 provider 运行时切片）。 */
 export type PayswapAccountReadBackPort = (
@@ -609,8 +687,9 @@ export type PayswapRevokeResult =
 
 /**
  * refreshEvidence 的结果（doc 06 §2.2；四值）：
- * - `verified` —— provider 读回认证了凭据（携带 `providerAccountId` 证据摘要）；
- *    `expired` 记录翻回 `connected`（恢复行），`connected` 保持；
+ * - `verified` —— provider 读回认证了凭据（携带 `providerAccountId` 证据摘要；
+ *    `null` + `identityGap` = 官方 API 不暴露账户标识 —— 凭据仍被认证，恢复行
+ *    同样成立）；`expired` 记录翻回 `connected`（恢复行），`connected` 保持；
  * - `expired` —— provider 拒绝了凭据（auth-failed 证据）；`connected` 翻 `expired`；
  * - `revoked` —— 终态（delete-local-only 已删秘密）：不触端口，直回投影；
  * - `refused` —— typed 拒绝（unknown_connection / 存储 fail-closed /
@@ -620,7 +699,9 @@ export type PayswapRefreshResult =
   | {
       readonly kind: "verified";
       readonly connection: PayswapConnectionStatusProjection;
-      readonly providerAccountId: string;
+      /** provider 签发的账户标识；null = 官方 API 不暴露（identityGap 必在场）。 */
+      readonly providerAccountId: string | null;
+      readonly identityGap?: PayswapAccountIdentityGap;
     }
   | { readonly kind: "expired"; readonly connection: PayswapConnectionStatusProjection }
   | { readonly kind: "revoked"; readonly connection: PayswapConnectionStatusProjection }
@@ -669,7 +750,8 @@ export const payswapRefreshResultSchema = z
       .object({
         kind: z.literal("verified"),
         connection: payswapConnectionStatusProjectionSchema,
-        providerAccountId: z.string().min(1),
+        providerAccountId: z.string().min(1).nullable(),
+        identityGap: payswapAccountIdentityGapSchema.optional(),
       })
       .strict(),
     z
@@ -690,4 +772,16 @@ export const payswapRefreshResultSchema = z
         refusal: payswapAccountRefusalSchema,
       })
       .strict(),
-  ] as const);
+  ] as const)
+  .superRefine((result, ctx) => {
+    if (result.kind !== "verified") return;
+    // 与读回结局同一不变量：null ⇔ identityGap（RPC 是跨进程值 —— 两端同一法则）。
+    const hasGap = result.identityGap !== undefined;
+    if ((result.providerAccountId === null) !== hasGap) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["providerAccountId"],
+        message: "a null providerAccountId and an identityGap must appear together",
+      });
+    }
+  });

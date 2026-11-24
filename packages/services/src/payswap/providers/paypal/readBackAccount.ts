@@ -12,7 +12,9 @@
  *    - 200 + 官方 token 形状（非空字符串 `access_token` 且非空字符串 `app_id`）
  *      → `verified{providerAccountId: app_id}` —— app_id 是官方记载的非秘密
  *      app 标识（token 响应字段之一），PayPal 的官方身份面（与 Paystack 的
- *      结构性身份缺口相反）；
+ *      结构性身份缺口相反）；同时携带 typed `capabilityGap`（ADR-P2-1 修订
+ *      2026-11-24：官方 REST API 无能力读回面，token `scope` → 操作能力没有官方
+ *      映射 —— 能力未知，绝不伪造能力证据）；
  *    - **401 是唯一的 auth-failed 证据**（client credentials 被 provider 拒绝
  *      —— 唯一能把连接状态翻到 `expired` 的证据）；
  *    - 其余一切（非 200/401 状态、非 JSON、access_token/app_id 缺失或非字符串、
@@ -37,12 +39,33 @@
 
 import type { ApiClient, ApiRequestInit } from "@zcode/shared";
 import {
+  PAYSWAP_CAPABILITY_EVIDENCE_REFUSAL_CODE,
   PAYSWAP_PAYPAL_AUTH_SPEC,
   type PayswapAccountReadBackInput,
   type PayswapAccountReadBackOutcome,
   type PayswapAccountReadBackPort,
 } from "@zcode/shared/payswap";
 import { CUSTODIAN_SECRET_MARKER } from "../../accounts/accountService.js";
+
+/**
+ * 能力缺口的 typed 声明（ADR-P2-1 修订 2026-11-24）—— adapter 对
+ * PAYSWAP_PAYPAL_EVIDENCE_PIN 已钉住官方事实的显式声明；message 零凭据材料。
+ */
+const PAYPAL_CAPABILITY_GAP = {
+  code: PAYSWAP_CAPABILITY_EVIDENCE_REFUSAL_CODE,
+  message:
+    "PayPal's documented REST API exposes no capability read-back endpoint (official docs checked 2026-11-24), and " +
+    "the token's scope list has no officially documented mapping to merchant capabilities. Account capabilities are " +
+    "unknown — do not infer them from balances, transactions or disputes.",
+} as const;
+
+/**
+ * verified 结局：官方 app_id 身份 + typed 能力缺口。直连与托管（custodian token
+ * 代理）两路共用 —— 缺口声明不在两路之间漂移。
+ */
+function verifiedWithCapabilityGap(appId: string): PayswapAccountReadBackOutcome {
+  return { kind: "verified", providerAccountId: appId, capabilityGap: PAYPAL_CAPABILITY_GAP };
+}
 
 /**
  * v1.2 托管 token 交换端口（runtime 从 custodian 桥注入）：URL 由 mode 决定
@@ -94,7 +117,7 @@ function mapTokenExchangeReply(reply: { status: number; body: string }): Payswap
       detail: "The PayPal credential read-back returned no access token or app identity; no account evidence.",
     };
   }
-  return { kind: "verified", providerAccountId: appId };
+  return verifiedWithCapabilityGap(appId);
 }
 
 /** 缺省读回超时（用户面验证读回 —— 悬挂端点必须被切断，永不无限等待）。 */
@@ -254,6 +277,6 @@ export function createPaypalAccountReadBackPort(
     // 官方身份面：app_id 是 PayPal 官方记载的非秘密 app 标识 —— verified 的
     // providerAccountId 有官方来源（access_token 绝不离开本端口 —— 只作认证
     // 证据，不持久化、不投影）。
-    return { kind: "verified", providerAccountId: appId };
+    return verifiedWithCapabilityGap(appId);
   };
 }

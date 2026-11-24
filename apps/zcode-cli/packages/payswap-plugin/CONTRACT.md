@@ -22,6 +22,14 @@ refusal 码与表面纪律见 [src/contract.ts](src/contract.ts) 与 P0 附录
 - **MCP 进程无金融状态**：server 进程不持有凭据、账本访问或金融数据；它只做注册与
   typed refusal（Wave 1 为启动 env 快照判定）。真实数据与 live 状态判定属于 Wave 2+ 的
   认证 broker 桥（附录 §3），工具永远经 broker 访问 host 金融服务。
+- **`payswap_get_account_overview` 的 detail 原样透传、语义在描述里讲清**（P3，
+  ADR-P2-1 修订 2026-11-24）：broker 的 detail 联合经 `JSON.stringify` 原样给模型，
+  插件不重解释任何臂。detail 的能力面答案恰一 —— `evidence`（provider 读回证据）或
+  `capabilityRefusal`（typed 能力缺口：provider 官方无能力读回面，码
+  `capability_evidence_not_exposed`）。工具描述必须明示：`capabilityRefusal` 在场时
+  账户能力**未知**，不得从余额、支付对象、客户或争议数据推断，也不得当作任何操作
+  可用的证据（doc 05 §4「Unknown = `unavailable`, not optimistic defaults」的模型面
+  投影）；类别各自的 `refused` / `unavailable` 同样不得被当作数据为零。
 - **env 命名 = 插件自有命名空间 `PAYSWAP_`**：manifest `mcpServers.*.env` 注入的是
   插件子进程的 env（经 `${user_config.*}` 从插件设置解析），属插件自有变量，命名跟随
   既有官方插件先例（`ANDROID_PLUGIN_SDK_PATH` / `IOS_SIM_DEFAULT_DEVICE`），统一

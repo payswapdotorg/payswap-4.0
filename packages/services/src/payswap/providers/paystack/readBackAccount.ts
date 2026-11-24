@@ -7,17 +7,17 @@
  *    （官方：「Fetch the available balance on your integration」；test/live 同
  *    端点 —— 环境由键决定，无 per-request 模式开关，不发明）。adapter 是唯一
  *    知道 provider wire 格式的代码。
- * 2. **结局映射（doc 05 §6.4 读回纪律）**：
+ * 2. **结局映射（doc 05 §6.4 读回纪律；ADR-P2-1 修订 2026-11-24）**：
  *    - **401 是唯一的 auth-failed 证据**（官方「Unauthenticated requests fail
  *      with the status code 401: Unauthorized」—— provider 拒绝凭据，唯一能把
  *      连接状态翻到 `expired` 的证据）；
- *    - 200 + 官方封套（`status === true` 且 `data` 为数组）= 凭据被 provider
- *      认证 —— 但 `verified` 结局要求的 `providerAccountId` 在 Paystack 官方
- *      API **没有事实来源**（无 merchant/business self-identity 端点，官方
- *      reference 检索 2026-11-20 在案；settlement 派生的身份在测试模式结构性
- *      缺席 —— 官方「settlements aren't processed in test mode」）。缺证据 ≠
- *      捏造：映射为显式 typed `unavailable`（身份缺口 detail 操作员可读）——
- *      状态不变（unknown ≠ expired），绝不伪造身份摘要；
+ *    - 200 + 官方封套（`status === true` 且 `data` 为数组）= **凭据被 provider
+ *      认证** → `verified`。但两项 provider 面官方缺席（事实 pin 在案，均 typed、
+ *      均不捏造）：`providerAccountId: null` + `identityGap`（官方 API 无
+ *      merchant/business self-identity 端点 —— 结算派生的身份在测试模式结构性
+ *      缺席，官方「settlements aren't processed in test mode」）+ `capabilityGap`
+ *      （官方 API reference 无能力读回面）。读回并没有失败 —— 缺席不再是
+ *      `unavailable`；
  *    - 其余一切（非 200/401 状态、`status !== true` 封套、非 JSON、`data` 非
  *      数组、传输异常、超时）→ `unavailable` —— 永不假装成功，永不假装 auth
  *      失败。
@@ -44,6 +44,8 @@
 import type { ApiClient, ApiRequestInit } from "@zcode/shared";
 import {
   derivePayswapSecretKeyMode,
+  PAYSWAP_ACCOUNT_IDENTITY_GAP_CODE,
+  PAYSWAP_CAPABILITY_EVIDENCE_REFUSAL_CODE,
   PAYSWAP_PAYSTACK_AUTH_SPEC,
   type PayswapAccountReadBackInput,
   type PayswapAccountReadBackOutcome,
@@ -53,6 +55,25 @@ import { CUSTODIAN_SECRET_MARKER } from "../../accounts/accountService.js";
 
 /** 生产读回端点（官方 transfer-control 文档；test/live 同端点）。 */
 const DEFAULT_PAYSTACK_BALANCE_URL = "https://api.paystack.co/balance";
+
+/**
+ * provider 缺席面的 typed 声明（ADR-P2-1 修订 2026-11-24）—— 每条都是 adapter 对
+ * PAYSWAP_PAYSTACK_EVIDENCE_PIN 已钉住官方事实的显式声明，不是对读回缺席的推断；
+ * message 操作员/模型可读且零凭据材料。
+ */
+const PAYSTACK_IDENTITY_GAP = {
+  code: PAYSWAP_ACCOUNT_IDENTITY_GAP_CODE,
+  message:
+    "Paystack authenticated the credential (the balance read-back succeeded), but Paystack's documented API exposes " +
+    "no merchant/business self-identity endpoint (official reference checked 2026-11-20). No provider account " +
+    "identifier is available; none is fabricated.",
+} as const;
+const PAYSTACK_CAPABILITY_GAP = {
+  code: PAYSWAP_CAPABILITY_EVIDENCE_REFUSAL_CODE,
+  message:
+    "Paystack's documented API exposes no capability read-back surface (official API reference checked 2026-11-24). " +
+    "Account capabilities are unknown — do not infer them from balances, transactions or customers.",
+} as const;
 
 /** 缺省读回超时（用户面验证读回 —— 悬挂端点必须被切断，永不无限等待）。 */
 const DEFAULT_READ_BACK_TIMEOUT_MS = 10_000;
@@ -175,18 +196,16 @@ export function createPaystackAccountReadBackPort(
         detail: "The Paystack balance read-back returned an unexpected envelope; no account evidence.",
       };
     }
-    // 官方封套成立 = 凭据被 provider 认证。verified 结局的 providerAccountId 需要
-    // 官方身份面 —— Paystack 官方 API 不暴露 merchant/business self-identity
-    // （PAYSWAP_PAYSTACK_EVIDENCE_PIN，检索 2026-11-20 在案）。缺证据 ≠ 捏造：
-    // 显式 typed unavailable（状态不变 —— unknown ≠ expired；401 的 expiry 证据
-    // 不受影响）。官方身份端点发布时按再验证清单映射 verified。
+    // 官方封套成立 = 凭据被 provider 认证 → verified。两项 provider 面官方缺席
+    // 以 typed 缺口作答（PAYSWAP_PAYSTACK_EVIDENCE_PIN，检索日期在案）：身份缺口
+    // （无 self-identity 端点）与能力缺口（无能力读回面）。缺证据 ≠ 捏造：绝不伪造
+    // 账户标识、绝不伪造能力证据；401 的 expiry 证据不受影响。官方端点发布时按
+    // 再验证清单改为映射官方标识 / 捕获能力证据。
     return {
-      kind: "unavailable",
-      detail:
-        "Paystack authenticated the credential (the balance read-back succeeded), but the verified " +
-        "outcome requires an official provider account identity and Paystack's documented API exposes " +
-        "no merchant/business self-identity endpoint (official reference checked 2026-11-20). " +
-        "The connection stays in its current state; no account evidence is fabricated.",
+      kind: "verified",
+      providerAccountId: null,
+      identityGap: PAYSTACK_IDENTITY_GAP,
+      capabilityGap: PAYSTACK_CAPABILITY_GAP,
     };
   };
 }

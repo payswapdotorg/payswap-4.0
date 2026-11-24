@@ -31,11 +31,13 @@
 import { z } from "zod";
 import {
   payswapAccountCapabilityEvidenceSchema,
+  payswapAccountCapabilityRefusalSchema,
   payswapAccountRefusalSchema,
   payswapConnectionStatusProjectionSchema,
 } from "./account-connection.js";
 import type {
   PayswapAccountCapabilityEvidence,
+  PayswapAccountCapabilityRefusal,
   PayswapAccountRefusal,
   PayswapConnectionStatusProjection,
   PayswapPspSecretKind,
@@ -200,23 +202,31 @@ export type PayswapAccountDataReadPort = (
 // 概览 detail 联合（法则 5 —— 与 refreshEvidence 结果词汇同构）
 // ---------------------------------------------------------------------------
 
-/** 验证通过后的完整 detail：连接投影 + 能力证据 + 四类别结果（全部现读）。 */
+/** 验证通过后的完整 detail：连接投影 + 能力面答案（证据或 typed 缺口，恰一）+ 四类别结果（全部现读）。 */
 export interface PayswapAccountOverviewDetailData {
   readonly kind: "detail";
   readonly connection: PayswapConnectionStatusProjection;
-  readonly evidence: PayswapAccountCapabilityEvidence;
+  /** 能力证据（provider 读回；ADR-P2-1 修订 2026-11-24 起与 capabilityRefusal 恰一在场）。 */
+  readonly evidence?: PayswapAccountCapabilityEvidence;
+  /**
+   * typed 能力缺口（provider 官方无能力读回面 —— 能力未知）：与类别读的
+   * `refused` 同一词汇纪律。能力对下游（P4 eligibility）是 unknown =
+   * unavailable —— 余额/交易/客户数据都不是能力证据。
+   */
+  readonly capabilityRefusal?: PayswapAccountCapabilityRefusal;
   readonly data: Readonly<Record<PayswapReadonlyCategory, PayswapReadonlyCategoryResult>>;
 }
 
 /**
  * `get_account_overview` 的 detail 联合（connectionId 收窄时的回答负载）：
- * - `detail` —— 验证读通过（状态机 landed connected）+ 四类别已读；
+ * - `detail` —— 验证读通过（状态机 landed connected）+ 能力面答案在场 + 四类别
+ *   已读；
  * - `expired` —— 验证读 401（**唯一 expiry 证据**；状态机已翻 expired 并持久化，
  *   与 refreshEvidence 同一状态机、同一写纪律 —— 状态变更才写记录）；
  * - `revoked` —— 终态（零端口触达，直回投影 —— doc 05 §5「A revoked connection
  *   can never keep a stale "connected" status」）；
  * - `refused` —— 账户服务 typed 拒绝（unknown_connection / 存储 fail-closed /
- *   read_back_unavailable —— 端口缺席/传输异常/畸形结局/证据缺席）。
+ *   read_back_unavailable —— 端口缺席/传输异常/畸形结局/能力面答案缺席）。
  */
 export type PayswapAccountOverviewDetail =
   | PayswapAccountOverviewDetailData
@@ -299,38 +309,55 @@ export const payswapReadonlyCategoryResultSchemas: Readonly<
 // 值，桥两端共用这一份联合校验法则；叶子 schema 全部复用上方单一事实源）
 // ---------------------------------------------------------------------------
 
-export const payswapAccountOverviewDetailSchema = z.discriminatedUnion("kind", [
-  z
-    .object({
-      kind: z.literal("detail"),
-      connection: payswapConnectionStatusProjectionSchema,
-      evidence: payswapAccountCapabilityEvidenceSchema,
-      data: z
-        .object({
-          balance: payswapReadonlyCategoryResultSchemas.balance,
-          payment_objects: payswapReadonlyCategoryResultSchemas.payment_objects,
-          customers: payswapReadonlyCategoryResultSchemas.customers,
-          disputes: payswapReadonlyCategoryResultSchemas.disputes,
-        })
-        .strict(),
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("expired"),
-      connection: payswapConnectionStatusProjectionSchema,
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("revoked"),
-      connection: payswapConnectionStatusProjectionSchema,
-    })
-    .strict(),
-  z
-    .object({
-      kind: z.literal("refused"),
-      refusal: payswapAccountRefusalSchema,
-    })
-    .strict(),
-]);
+export const payswapAccountOverviewDetailSchema = z
+  .discriminatedUnion("kind", [
+    z
+      .object({
+        kind: z.literal("detail"),
+        connection: payswapConnectionStatusProjectionSchema,
+        evidence: payswapAccountCapabilityEvidenceSchema.optional(),
+        capabilityRefusal: payswapAccountCapabilityRefusalSchema.optional(),
+        data: z
+          .object({
+            balance: payswapReadonlyCategoryResultSchemas.balance,
+            payment_objects: payswapReadonlyCategoryResultSchemas.payment_objects,
+            customers: payswapReadonlyCategoryResultSchemas.customers,
+            disputes: payswapReadonlyCategoryResultSchemas.disputes,
+          })
+          .strict(),
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("expired"),
+        connection: payswapConnectionStatusProjectionSchema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("revoked"),
+        connection: payswapConnectionStatusProjectionSchema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal("refused"),
+        refusal: payswapAccountRefusalSchema,
+      })
+      .strict(),
+  ])
+  .superRefine((detail, ctx) => {
+    if (detail.kind !== "detail") return;
+    // 能力面答案恰一：evidence ⊕ capabilityRefusal。两者皆缺席 = 没有能力面答案
+    // （畸形 / 未携带）—— 桥两端同一法则，fail-closed。
+    const hasEvidence = detail.evidence !== undefined;
+    const hasRefusal = detail.capabilityRefusal !== undefined;
+    if (hasEvidence === hasRefusal) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["evidence"],
+        message:
+          "a detail must carry exactly one capability answer: evidence or capabilityRefusal",
+      });
+    }
+  });

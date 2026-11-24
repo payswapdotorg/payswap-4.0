@@ -92,13 +92,30 @@ P2.2 后续切片已全部落地（slice 5-9；ADR-P2-2 定案 —— 法则与�
   （认证语义不变；概览 detail 面对缺席证据 fail-closed 拒绝）。
 - **`getOverviewData` 编排半**（`accountService.ts`）：验证读先于数据读（复用
   refreshEvidence 同一状态机：401 翻 expired 持久化后答 `expired`、verified 翻回
-  connected；状态变更才写）；证据在场才读四类别（全部现读、固定顺序）；类别
-  403 → 该类别 typed 拒绝、其余照读；数据端口缺席 → 四类别诚实 `unavailable`；
-  revoked/unknown 终态零端口触达。
+  connected；状态变更才写）；**能力面答案在场才读四类别**（全部现读、固定顺序）：
+  读回证据 `evidence` 照原样入 detail；adapter 显式声明的 `capabilityGap` 以
+  `capabilityRefusal` 入 detail（shared CONTRACT「P3 provider 缺席面」）；二者皆
+  缺席 → detail fail-closed 拒绝（不变）；类别 403 → 该类别 typed 拒绝、其余照读；
+  数据端口缺席 → 四类别诚实 `unavailable`；revoked/unknown 终态零端口触达。
 - **broker detail 面**（`bootstrap payswap-broker/dispatch.ts`）：新注入面
   `accountDetailReader`（与 `accountOverviewReader` 同门）—— `connectionId`
   收窄且三码法则已过时被咨询；typed detail 联合原样入
   `PayswapAccountOverviewData.account`；抛错 → `internal_error`（§6.3）。
+
+**P3 读回 adapter 的缺席面声明**（shared CONTRACT「P3 provider 缺席面」的实现半；
+每个缺口都是 adapter 对已钉住官方事实的显式声明）：
+
+- **Paystack**（`providers/paystack/readBackAccount.ts`）：`/balance` 200 + 官方封套
+  = provider 认证了凭据 → `verified`，携 `providerAccountId: null` + `identityGap`
+  （官方无 merchant/business self-identity 端点，pin 在案）+ `capabilityGap`（官方
+  无能力读回面）。原「身份缺口 = `unavailable`」映射作废：读回并未失败，再拒绝会
+  把四类别对话读永久挡在门外。401 仍是唯一的 auth-failed 证据；其余结局不变。
+- **PayPal**（`providers/paypal/readBackAccount.ts`）：token 交换 200 + `app_id` →
+  `verified{providerAccountId: app_id}` + `capabilityGap`（token `scope` → PaySwap
+  操作能力的映射没有官方事实源，不编码）。直连与托管（custodian token 代理）两路
+  共用同一映射函数 —— 缺口声明不会在两路之间漂移。
+- **Stripe**：不变 —— 既不声明 `identityGap` 也不声明 `capabilityGap`；
+  `verified` 不带 `evidence` 时概览 detail 面照旧 fail-closed 拒绝。
 
 **P2.2 slice 5 —— 生产装配半（模块级）**：
 

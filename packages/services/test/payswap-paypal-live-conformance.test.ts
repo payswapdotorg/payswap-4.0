@@ -5,33 +5,33 @@
  * live 腿只在操作者经 env 供给 sandbox 凭据对时运行（凭据绝不入库、绝不入日志、
  * 绝不入证据 —— 证据只落结局状态形状）。
  *
- * 被钉住的验收行（每行都是 P3 只读契约的真实 API 证明）：
+ * 被钉住的验收行（每行都是 P3 只读契约的真实 API 证明；ADR-P2-1 修订 2026-11-24）：
  * 1. **connect**：client-credentials 凭据对（clientId + client secret + 声明
  *    mode）→ connected（mode test）—— connect 零网络触达。
  * 2. **verified 行**：真实 token 交换（POST /v1/oauth2/token，Basic 凭据对）
  *    → 200 + app_id → read-back `verified`（providerAccountId = 官方 app_id
- *    —— PayPal 有官方身份事实源，恢复行成立），状态 connected。
- * 3. **概览门（fail-closed）**：getOverviewData 的验证读通过（verified）但
- *    PayPal 契约的 verified 结局**不带能力证据**（client_credentials 对
- *    identity/userinfo 面的可达性无官方证据 —— shared pin 在案，绝不伪造）
- *    → 概览 detail 面 typed refused（read_back_unavailable）—— 与 Paystack
- *    的身份缺口门同款诚实纪律。
- * 4. **数据面真实读**：数据端口持真实凭据对直读真实 API —— 全新 sandbox 账户
- *    的真实空态：balance / payment_objects 的官方封套键（balances /
- *    transaction_details）缺席 → adapter fail-closed typed unavailable（无
- *    伪造空投影；账户携带数据时的 ok 行为已由单元电池钉住）；disputes 封套
- *    在场（items: []）→ ok 空行投影；customers → refused
+ *    —— PayPal 有官方身份事实源，恢复行成立）+ typed 能力缺口（官方 REST API
+ *    无能力读回面 —— 绝不伪造能力证据），状态 connected。
+ * 3. **概览 = 生产路径上的四类别对话读**：getOverviewData（真实 runtime 的读回
+ *    路由 + 数据路由）→ detail 携 typed 能力缺口，四类别照读、各自 typed 作答 ——
+ *    全新 sandbox 账户的真实空态：balance / payment_objects 的官方封套键
+ *    （balances / transaction_details）缺席 → adapter fail-closed typed
+ *    unavailable（无伪造空投影；账户携带数据时的 ok 行为已由单元电池钉住）；
+ *    disputes 封套在场（items: []）→ ok 空行投影；customers → refused
  *    （unsupported_operation —— 官方无列表端点，provider 缺席事实，零触达）。
- * 5. **安全行**：伪造 secret 对 → 真实 401（token 端点）→ expired（唯一
+ * 4. **安全行**：伪造 secret 对 → 真实 401（token 端点）→ expired（唯一
  *    expiry 证据）。
- * 6. **at-rest**：连接记录 store 永不携带凭据材料。
+ * 5. **at-rest**：连接记录 store 永不携带凭据材料。
  */
 
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createPaypalAccountDataReadPort, createPayswapAccountRuntime, setDataBaseDir } from "@zcode/services/node";
-import { PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY } from "@zcode/shared/payswap";
+import { createPayswapAccountRuntime, setDataBaseDir } from "@zcode/services/node";
+import {
+  PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY,
+  payswapAccountOverviewDetailSchema,
+} from "@zcode/shared/payswap";
 import { afterAll, describe, expect, it } from "vitest";
 
 const LIVE_CLIENT_ID = (process.env.ZCODE_PAYSWAP_PAYPAL_SANDBOX_CLIENT_ID ?? "").trim();
@@ -74,57 +74,47 @@ afterAll(async () => {
       expect(connected.connection.mode).toBe("test");
       const connectionId = connected.connection.connectionId;
 
-      // ---- 行 2：verified 行（真实 token 交换 + 官方 app_id 身份）----
+      // ---- 行 2：verified 行（真实 token 交换 + 官方 app_id 身份 + typed 能力缺口）----
       const verifiedRow = await runtime.accountService.refreshEvidence({ connectionId });
       expect(verifiedRow.kind).toBe("verified");
       if (verifiedRow.kind === "verified") {
         expect(typeof verifiedRow.providerAccountId).toBe("string");
-        expect(verifiedRow.providerAccountId.length).toBeGreaterThan(0);
+        expect((verifiedRow.providerAccountId ?? "").length).toBeGreaterThan(0);
+        // PayPal 有官方身份面（app_id）—— 绝不声明身份缺口。
+        expect("identityGap" in verifiedRow).toBe(false);
         expect(verifiedRow.connection.status).toBe("connected");
+        expect(JSON.stringify(verifiedRow).includes(LIVE_CLIENT_SECRET)).toBe(false);
       }
       const afterVerify = await runtime.accountService.listConnections();
       expect(afterVerify.find((c) => c.connectionId === connectionId)?.status).toBe("connected");
 
-      // ---- 行 3：概览门 fail-closed（verified 无能力证据 → refused）----
+      // ---- 行 3：概览 = 生产路径上的四类别对话读（typed 能力缺口在场 → 类别照读）----
       const overviewRow = await runtime.accountService.getOverviewData({ connectionId });
-      expect(overviewRow.kind).toBe("refused");
-      if (overviewRow.kind === "refused") {
-        expect(overviewRow.refusal.code).toBe("read_back_unavailable");
-      }
+      expect(overviewRow.kind).toBe("detail");
+      if (overviewRow.kind === "detail") {
+        expect(overviewRow.capabilityRefusal?.code).toBe("capability_evidence_not_exposed");
+        expect("evidence" in overviewRow).toBe(false);
+        // 跨进程值：桥两端同一份 strict 法则（含 JSON 往返）。
+        expect(payswapAccountOverviewDetailSchema.safeParse(overviewRow).success).toBe(true);
+        expect(
+          payswapAccountOverviewDetailSchema.safeParse(JSON.parse(JSON.stringify(overviewRow))).success,
+        ).toBe(true);
 
-      // ---- 行 4：数据面真实读（端口直读真实 API；ISO 4217 指数钉住）----
-      const dataPort = createPaypalAccountDataReadPort({});
-      const baseInput = {
-        providerId: "paypal",
-        mode: "test",
-        secretKind: "client-secret",
-        clientId: LIVE_CLIENT_ID,
-      } as const;
-
-      const balanceRow = await dataPort({ ...baseInput, secret: LIVE_CLIENT_SECRET, category: "balance" });
-      // 全新 sandbox 账户的真实空态：官方封套的 balances 键缺席 → adapter
-      // fail-closed typed unavailable（无伪造空投影）。
-      expect(balanceRow.status).toBe("unavailable");
-
-      const transactionsRow = await dataPort({
-        ...baseInput,
-        secret: LIVE_CLIENT_SECRET,
-        category: "payment_objects",
-      });
-      // 同款真实空态：transaction_details 键缺席 → typed unavailable。
-      expect(transactionsRow.status).toBe("unavailable");
-
-      // customers：官方无列表端点 —— 零触达直拒（provider 缺席事实，pin 在案）。
-      const customersRow = await dataPort({ ...baseInput, secret: LIVE_CLIENT_SECRET, category: "customers" });
-      expect(customersRow.status).toBe("refused");
-      if (customersRow.status === "refused") {
-        expect(customersRow.refusal.code).toBe("unsupported_operation");
-      }
-
-      const disputesRow = await dataPort({ ...baseInput, secret: LIVE_CLIENT_SECRET, category: "disputes" });
-      expect(disputesRow.status).toBe("ok");
-      if (disputesRow.status === "ok") {
-        expect(Array.isArray(disputesRow.data)).toBe(true);
+        // 全新 sandbox 账户的真实空态：官方封套的 balances 键缺席 → adapter
+        // fail-closed typed unavailable（无伪造空投影）。
+        expect(overviewRow.data.balance.status).toBe("unavailable");
+        // 同款真实空态：transaction_details 键缺席 → typed unavailable。
+        expect(overviewRow.data.payment_objects.status).toBe("unavailable");
+        // customers：官方无列表端点 —— 零触达直拒（provider 缺席事实，pin 在案）。
+        expect(overviewRow.data.customers.status).toBe("refused");
+        if (overviewRow.data.customers.status === "refused") {
+          expect(overviewRow.data.customers.refusal.code).toBe("unsupported_operation");
+        }
+        expect(overviewRow.data.disputes.status).toBe("ok");
+        if (overviewRow.data.disputes.status === "ok") {
+          expect(Array.isArray(overviewRow.data.disputes.data)).toBe(true);
+        }
+        expect(JSON.stringify(overviewRow).includes(LIVE_CLIENT_SECRET)).toBe(false);
       }
 
       // ---- 行 4：安全行（伪造 secret 对 → 真实 401 → expired）----

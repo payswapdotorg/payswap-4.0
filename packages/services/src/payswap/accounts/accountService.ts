@@ -472,7 +472,22 @@ export function createPayswapAccountService(
       }
       if (outcome.kind === "verified") {
         // 恢复行：expired → connected（provider 证据翻回）；connected 保持 →
-        // 状态变更才写（无变更不写，记录无 churn）。
+        // 状态变更才写（无变更不写，记录无 churn）。身份缺口 provider
+        // （providerAccountId null + identityGap —— 官方 API 不暴露账户标识）同样
+        // 走恢复行：provider 接受凭据就是恢复证据；缺口原样随结果，不留 undefined 键。
+        const verifiedResult = (connection: PayswapConnectionRecord): PayswapRefreshResult =>
+          outcome.providerAccountId === null
+            ? {
+                kind: "verified",
+                connection: projectPayswapConnectionStatus(connection),
+                providerAccountId: null,
+                identityGap: outcome.identityGap,
+              }
+            : {
+                kind: "verified",
+                connection: projectPayswapConnectionStatus(connection),
+                providerAccountId: outcome.providerAccountId,
+              };
         if (record.status === "expired") {
           const restored = payswapConnectionRecordSchema.parse({
             ...record,
@@ -480,17 +495,9 @@ export function createPayswapAccountService(
             updatedAt: now(),
           });
           await connectionStore.upsert(restored);
-          return {
-            kind: "verified",
-            connection: projectPayswapConnectionStatus(restored),
-            providerAccountId: outcome.providerAccountId,
-          };
+          return verifiedResult(restored);
         }
-        return {
-          kind: "verified",
-          connection: projectPayswapConnectionStatus(record),
-          providerAccountId: outcome.providerAccountId,
-        };
+        return verifiedResult(record);
       }
       // auth-failed：唯一的 expiry 证据是 provider 的拒绝。已 expired 再拒绝 →
       // 状态不变（无写）；connected → expired（先落记录 —— 状态即真相）。
@@ -631,13 +638,16 @@ export function createPayswapAccountService(
         }
         return { kind: "expired", connection: projectPayswapConnectionStatus(record) };
       }
-      // verified：能力证据缺席 = 概览 detail 面 fail-closed（证据永不缺席时才答数据）。
-      if (outcome.evidence === undefined) {
+      // verified：能力面答案恰一 —— 读回证据在场，或 adapter 显式声明了能力缺口
+      // （provider 官方无能力读回面；ADR-P2-1 修订 2026-11-24）。二者皆缺席 = 没有
+      // 能力面答案（畸形 / 未携带）→ 概览 detail 面 fail-closed：服务永不因
+      // `evidence` 恰好缺席而放行。
+      if (outcome.evidence === undefined && outcome.capabilityGap === undefined) {
         return {
           kind: "refused",
           refusal: {
             code: "read_back_unavailable",
-            message: `The provider read-back for '${record.providerId}' returned no capability evidence; refusing the overview detail.`,
+            message: `The provider read-back for '${record.providerId}' returned neither capability evidence nor an explicit capability gap; refusing the overview detail.`,
           },
         };
       }
@@ -707,7 +717,9 @@ export function createPayswapAccountService(
       return {
         kind: "detail",
         connection: projectPayswapConnectionStatus(currentRecord),
-        evidence: outcome.evidence,
+        // 能力面答案恰一（上方 fail-closed 门已保证）：证据，或 typed 能力缺口。
+        ...(outcome.evidence !== undefined ? { evidence: outcome.evidence } : {}),
+        ...(outcome.capabilityGap !== undefined ? { capabilityRefusal: outcome.capabilityGap } : {}),
         data: data as Readonly<Record<(typeof PAYSWAP_READONLY_CATEGORIES)[number], PayswapReadonlyCategoryResult>>,
       };
     },

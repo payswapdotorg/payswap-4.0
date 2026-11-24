@@ -27,9 +27,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ApiClient, ApiRequestInit } from "@zcode/shared";
 import {
+  PAYSWAP_PAYSTACK_AUTH_SPEC,
   PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY,
   payswapAccountOverviewDetailSchema,
   payswapAccountReadBackOutcomeSchema,
+  payswapRefreshResultSchema,
+  type PayswapAccountDataReadPort,
+  type PayswapAccountReadBackOutcome,
+  type PayswapConnectionStatusProjection,
 } from "@zcode/shared/payswap";
 import {
   createCredentialService,
@@ -645,5 +650,257 @@ describe("payswap account service getOverviewData (ADR-P2-1) — the orchestrati
       }
     }
     expect(client.calls.filter((call) => !call.input.includes("/v1/account")).length).toBe(0);
+  });
+});
+
+describe("P3 provider-absent surfaces (ADR-P2-1 amendment 2026-11-24) — typed gaps, not detail refusals", () => {
+  const PAYSTACK_SECRET = `sk_test_${"e5f6a7b8".repeat(5)}`;
+  const IDENTITY_GAP = {
+    code: "provider_identity_not_exposed",
+    message: "The provider authenticated the credential but exposes no account identifier.",
+  };
+  const CAPABILITY_GAP = {
+    code: "capability_evidence_not_exposed",
+    message:
+      "The provider exposes no capability read-back surface; capabilities are unknown and must not be inferred.",
+  };
+  const STRIPE_EVIDENCE = {
+    capabilities: [{ name: "card_payments", status: "active" as const }],
+    requirements: null,
+  };
+
+  /** 四类别各一种结局 —— 证明 capabilityRefusal 在场时类别照读、各自 typed 作答。 */
+  const DATA_PORT: PayswapAccountDataReadPort = async (input) => {
+    switch (input.category) {
+      case "balance":
+        return { status: "ok", data: { available: [{ amount: "12500", currency: "GHS" }], pending: [] } };
+      case "payment_objects":
+        return { status: "ok", data: [] };
+      case "customers":
+        return { status: "refused", refusal: { code: "unsupported_operation", message: "no official surface" } };
+      case "disputes":
+        return { status: "unavailable", detail: "official items carry no top-level amount" };
+    }
+  };
+
+  interface Assembly {
+    service: ReturnType<typeof createPayswapAccountService>;
+    connectionId: string;
+    connection: PayswapConnectionStatusProjection;
+  }
+
+  async function assemble(
+    readBack: (attempt: number) => PayswapAccountReadBackOutcome,
+    withDataPort = true,
+  ): Promise<Assembly> {
+    const dir = await mkdtemp(join(tmpdir(), "payswap-p3-gaps-"));
+    createdDirs.push(dir);
+    setDataBaseDir(dir);
+    const connectionsPath = join(dir, "payswap-connections.json");
+    let attempt = 0;
+    const service = createPayswapAccountService({
+      credentialPort: createCredentialService({
+        env: { [PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY]: "e".repeat(64) },
+      }),
+      connectionStore: createPayswapConnectionRecordStore({ resolveStorePath: () => connectionsPath }),
+      authSpecs: [PAYSWAP_PAYSTACK_AUTH_SPEC],
+      readBackAccount: async () => readBack(attempt++),
+      ...(withDataPort ? { readAccountData: DATA_PORT } : {}),
+    });
+    const connected = await service.connect({ providerId: "paystack", operatorSecret: PAYSTACK_SECRET });
+    if (connected.kind !== "connected") throw new Error("connect refused");
+    return { service, connectionId: connected.connection.connectionId, connection: connected.connection };
+  }
+
+  describe("shared law schemas", () => {
+    it("verified outcome: providerAccountId null ⇔ identityGap — null without the gap, an id beside the gap and a foreign gap code are all malformed", () => {
+      const schema = payswapAccountReadBackOutcomeSchema;
+      expect(
+        schema.safeParse({ kind: "verified", providerAccountId: null, identityGap: IDENTITY_GAP }).success,
+      ).toBe(true);
+      expect(schema.safeParse({ kind: "verified", providerAccountId: null }).success).toBe(false);
+      expect(
+        schema.safeParse({ kind: "verified", providerAccountId: "acct_1", identityGap: IDENTITY_GAP }).success,
+      ).toBe(false);
+      expect(
+        schema.safeParse({
+          kind: "verified",
+          providerAccountId: null,
+          identityGap: { code: "capability_evidence_not_exposed", message: "wrong code" },
+        }).success,
+      ).toBe(false);
+    });
+
+    it("verified outcome: capabilityGap excludes evidence (both present = malformed); a legacy verified outcome with neither is byte-for-byte unchanged", () => {
+      const schema = payswapAccountReadBackOutcomeSchema;
+      expect(
+        schema.safeParse({ kind: "verified", providerAccountId: "acct_1", capabilityGap: CAPABILITY_GAP }).success,
+      ).toBe(true);
+      expect(
+        schema.safeParse({
+          kind: "verified",
+          providerAccountId: "acct_1",
+          capabilityGap: CAPABILITY_GAP,
+          evidence: STRIPE_EVIDENCE,
+        }).success,
+      ).toBe(false);
+      expect(schema.safeParse({ kind: "verified", providerAccountId: "acct_1" }).success).toBe(true);
+      expect(schema.safeParse({ kind: "verified", providerAccountId: "acct_1", evidence: STRIPE_EVIDENCE }).success).toBe(
+        true,
+      );
+    });
+
+    it("overview detail: evidence XOR capabilityRefusal — neither and both are malformed; the evidence arm is unchanged", async () => {
+      const { connection } = await assemble(() => ({ kind: "auth-failed", detail: "unused" }));
+      const data = {
+        balance: { status: "unavailable", detail: "x" },
+        payment_objects: { status: "unavailable", detail: "x" },
+        customers: { status: "unavailable", detail: "x" },
+        disputes: { status: "unavailable", detail: "x" },
+      };
+      expect(
+        payswapAccountOverviewDetailSchema.safeParse({ kind: "detail", connection, evidence: STRIPE_EVIDENCE, data })
+          .success,
+      ).toBe(true);
+      expect(
+        payswapAccountOverviewDetailSchema.safeParse({
+          kind: "detail",
+          connection,
+          capabilityRefusal: CAPABILITY_GAP,
+          data,
+        }).success,
+      ).toBe(true);
+      expect(payswapAccountOverviewDetailSchema.safeParse({ kind: "detail", connection, data }).success).toBe(
+        false,
+      );
+      expect(
+        payswapAccountOverviewDetailSchema.safeParse({
+          kind: "detail",
+          connection,
+          evidence: STRIPE_EVIDENCE,
+          capabilityRefusal: CAPABILITY_GAP,
+          data,
+        }).success,
+      ).toBe(false);
+    });
+
+    it("refresh result: verified with a null providerAccountId requires identityGap; an id beside the gap is malformed", async () => {
+      const { connection } = await assemble(() => ({ kind: "auth-failed", detail: "unused" }));
+      expect(payswapRefreshResultSchema.safeParse({ kind: "verified", connection, providerAccountId: "acct_1" }).success).toBe(
+        true,
+      );
+      expect(
+        payswapRefreshResultSchema.safeParse({
+          kind: "verified",
+          connection,
+          providerAccountId: null,
+          identityGap: IDENTITY_GAP,
+        }).success,
+      ).toBe(true);
+      expect(
+        payswapRefreshResultSchema.safeParse({ kind: "verified", connection, providerAccountId: null }).success,
+      ).toBe(false);
+      expect(
+        payswapRefreshResultSchema.safeParse({
+          kind: "verified",
+          connection,
+          providerAccountId: "acct_1",
+          identityGap: IDENTITY_GAP,
+        }).success,
+      ).toBe(false);
+    });
+  });
+
+  describe("account service orchestration", () => {
+    it("verified + capabilityGap (the PayPal shape) → the detail carries capabilityRefusal and all four categories are read, each with its own typed answer", async () => {
+      const assembly = await assemble(() => ({
+        kind: "verified",
+        providerAccountId: "APP-1",
+        capabilityGap: CAPABILITY_GAP,
+      }));
+      const detail = await assembly.service.getOverviewData({ connectionId: assembly.connectionId });
+      expect(detail.kind).toBe("detail");
+      if (detail.kind === "detail") {
+        expect(detail.capabilityRefusal).toEqual(CAPABILITY_GAP);
+        expect("evidence" in detail).toBe(false);
+        expect(detail.data.balance).toEqual({
+          status: "ok",
+          data: { available: [{ amount: "12500", currency: "GHS" }], pending: [] },
+        });
+        expect(detail.data.payment_objects.status).toBe("ok");
+        expect(detail.data.customers).toEqual({
+          status: "refused",
+          refusal: { code: "unsupported_operation", message: "no official surface" },
+        });
+        expect(detail.data.disputes.status).toBe("unavailable");
+        // 跨进程值：detail 过桥两端的同一份 strict 法则。
+        expect(payswapAccountOverviewDetailSchema.safeParse(detail).success).toBe(true);
+        expect(payswapAccountOverviewDetailSchema.safeParse(JSON.parse(JSON.stringify(detail))).success).toBe(true);
+      }
+    });
+
+    it("verified + identityGap + capabilityGap (the Paystack shape) → refresh answers verified with a null id and the gap; an expired record recovers to connected; the overview answers the categories", async () => {
+      let rejectCredential = true;
+      const assembly = await assemble(() =>
+        rejectCredential
+          ? { kind: "auth-failed", detail: "HTTP 401" }
+          : { kind: "verified", providerAccountId: null, identityGap: IDENTITY_GAP, capabilityGap: CAPABILITY_GAP },
+      );
+
+      // 安全行先行：401 是唯一的 expiry 证据。
+      const expired = await assembly.service.refreshEvidence({ connectionId: assembly.connectionId });
+      expect(expired.kind).toBe("expired");
+
+      // 恢复行：provider 接受凭据 = 恢复证据，即使 provider 不签发账户标识。
+      rejectCredential = false;
+      const verified = await assembly.service.refreshEvidence({ connectionId: assembly.connectionId });
+      expect(verified.kind).toBe("verified");
+      if (verified.kind === "verified") {
+        expect(verified.providerAccountId).toBe(null);
+        expect(verified.identityGap).toEqual(IDENTITY_GAP);
+        expect(verified.connection.status).toBe("connected");
+        // 无 undefined 键 —— RPC/桥序列化前后的形状一致。
+        expect(Object.keys(verified).sort()).toEqual(["connection", "identityGap", "kind", "providerAccountId"]);
+        expect(payswapRefreshResultSchema.safeParse(verified).success).toBe(true);
+      }
+      const listed = await assembly.service.listConnections();
+      expect(listed[0]?.status).toBe("connected");
+
+      const detail = await assembly.service.getOverviewData({ connectionId: assembly.connectionId });
+      expect(detail.kind).toBe("detail");
+      if (detail.kind === "detail") {
+        expect(detail.capabilityRefusal).toEqual(CAPABILITY_GAP);
+        expect("evidence" in detail).toBe(false);
+        for (const category of ["balance", "payment_objects", "customers", "disputes"] as const) {
+          expect(["ok", "refused", "unavailable"]).toContain(detail.data[category].status);
+        }
+        expect(payswapAccountOverviewDetailSchema.safeParse(detail).success).toBe(true);
+      }
+    });
+
+    it("a verified outcome with neither evidence nor capabilityGap still refuses the detail — the service never infers a gap from absent evidence", async () => {
+      const assembly = await assemble(() => ({ kind: "verified", providerAccountId: "acct_1" }));
+      const detail = await assembly.service.getOverviewData({ connectionId: assembly.connectionId });
+      expect(detail.kind).toBe("refused");
+      if (detail.kind === "refused") {
+        expect(detail.refusal.code).toBe("read_back_unavailable");
+        expect(detail.refusal.message.includes(PAYSTACK_SECRET)).toBe(false);
+      }
+    });
+
+    it("a capabilityRefusal detail with no data port answers all four categories honestly unavailable (never invented)", async () => {
+      const assembly = await assemble(
+        () => ({ kind: "verified", providerAccountId: null, identityGap: IDENTITY_GAP, capabilityGap: CAPABILITY_GAP }),
+        false,
+      );
+      const detail = await assembly.service.getOverviewData({ connectionId: assembly.connectionId });
+      expect(detail.kind).toBe("detail");
+      if (detail.kind === "detail") {
+        expect(detail.capabilityRefusal).toEqual(CAPABILITY_GAP);
+        for (const category of ["balance", "payment_objects", "customers", "disputes"] as const) {
+          expect(detail.data[category].status).toBe("unavailable");
+        }
+      }
+    });
   });
 });
