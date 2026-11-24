@@ -20,11 +20,9 @@ When the roadmap changes, update the canonical file and its integrity checks in 
 
 ## Current starting point
 
-P0 and P1 are recorded complete in the canonical roadmap. P2 remains
-`in_progress`: the real Stripe test account has connected and the read-only
-platform path is evidenced, but the four-category conversational read-back /
-final TL adjudication remains open. P3–P9 have not started. The approved
-2026-11-15 architecture rebaseline makes P3–P9 deliver one payment-centric
-multi-agent ZCode harness on the existing PaySwap financial core. Start P3 only
-after the canonical P2 gate closes; do not infer or backdate P2 completion.
-The roadmap is the source of truth for all live status.
+Live status is read from the canonical register only. This page deliberately does
+not restate it: the paragraph that previously stood here ("P2 remains
+`in_progress` … P3–P9 have not started") had gone stale against the register and
+was removed on 2026-11-23, so that the documentation index cannot become a second,
+competing status statement. Start work from the register's current row and its
+recorded next action. The roadmap is the source of truth for all live status.

@@ -118,6 +118,7 @@ jobs:
           packages/services/test/payswap-account-runtime.test.ts
           packages/services/test/payswap-account-service.test.ts
           packages/services/test/payswap-credential-security.test.ts
+          packages/services/test/payswap-custodian-fail-closed.test.ts
           packages/services/test/payswap-paystack-provider.test.ts
           packages/services/test/payswap-paypal-provider.test.ts
           packages/services/test/payswap-paypal-data.test.ts
@@ -129,13 +130,19 @@ jobs:
 
       # PaySwap P3（架构师 2026-11-15 交接开工）：协议契约法则电池的 PR CI 注册
       # （同 P2 模式 —— exact PR head 上可复现的绿；清单本身不是执行证据）。
+      # 2026-11-23：加入协议宿主边界电池（services）与协议运行时在真实 desktop main
+      # 受监督运行时里的装配电池（desktop）—— P3-A/P3-D 的生产调用面证明。
+      # 上一步的 custodian-fail-closed 同日补入：它是唯一的 custodian-required 安全
+      # 套件，此前在清单里却不在任何 CI / runner 列表中（从未在门禁上执行）。
       - name: Payswap P3 protocol-contract law battery (root engineering project)
         run: >
           pnpm exec vitest run --project engineering
           packages/services/test/payswap-protocol-contract.test.ts
+          packages/services/test/payswap-protocol-host.test.ts
           packages/services/test/payswap-ap2-message-face.test.ts
           packages/services/test/payswap-x402-message-face.test.ts
           packages/services/test/payswap-mpp-message-face.test.ts
+          packages/desktop/test/payswap-protocol-runtime-wiring.test.ts
 
       # PaySwap P1.6：server 侧 operator-principal 生产边界套件（真实 createHttpServer +
       # 真实 HTTP/WS 升级握手 + 0600 原子持久化；packages/server/vitest.config.ts 装配

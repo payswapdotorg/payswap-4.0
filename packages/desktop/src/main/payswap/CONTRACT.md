@@ -148,5 +148,32 @@ CLI 拓扑不变）。不变量：中继不校验、不改写、不解释桥消�
 装配级证明：`bootstrap/tests/payswap-stdio-bridge-port.test.ts`（适配器 + 队列
 旁路 + 端到端 stub 往返）、`packages/desktop/test/payswap-reader-bridge-relay.test.ts`
 （中继透明性/路由/缺席-故障有别/生命周期）、`packages/desktop/test/
-payswap-reader-bridge-entry.test.ts`（端口适配 + 铸造端到端经真实受监督运行时）。
-desktop Browser E2E 桥臂归 CI（本地 file:// modulepreload 环境缺陷不变）。
+  payswap-reader-bridge-entry.test.ts`（端口适配 + 铸造端到端经真实受监督运行时）。
+  desktop Browser E2E 桥臂归 CI（本地 file:// modulepreload 环境缺陷不变）。
+
+P3-D 增补（协议宿主的进程安放）：法则住 `services-payswap/protocols/`（shared
+CONTRACT「P3 协议适配器边界」+ services CONTRACT「P3 协议宿主边界」）；本模块
+只在 `accountRuntimeWiring.ts` 的受监督运行时里**持有**它。不变量：
+
+- **一个 PaySwap 运行时**：协议宿主（services 的 `createPayswapProtocolRuntime`）
+  住既有的 desktop main 受监督账户运行时 —— `protocolRuntime` 是其只读面；
+  不另起第二个运行时 / 注册表 / 账本。
+- **恰装配一次，不随账户运行时重建而重建**：键可用性变化会重建账户运行时
+  （上节法则「受监督运行时」），协议宿主的 challenge 注册表**不**跟着重建 ——
+  否则一次钥匙串事件就会静默重置重放状态。协议运行时在构造时创建（纯内存
+  装配，无 IO、不触键 store），账户运行时仍保持懒装配。
+- **时钟同源**：协议宿主的过期裁决时钟与账户运行时共用同一注入的 `now`
+  （生产 = 真实时钟）；进站调用不接收时间参数。
+- **生产面不发收据**：`protocolRuntime` 的返回面只有 `protocolHost`（收据发射
+  只收 `evidenceRef`，无证据签发能力）—— P3 的桌面宿主对任何协议都发不出
+  协议收据（P7 的执行/对账权威接管签发后才有）。
+- **与凭据保管正交**：Windows 生产组合（`credentialCustody: "custodian-required"`
+  + 无 custodian 桥）下账户 connect fail-closed 拒绝，协议边界照常 —— 协议面
+  不触 provider、不触 PSP 键仓。
+- **尚无生产入口**：P3 只装配宿主边界；协议消息进入产品的入口（P6「protocol
+  translation at the edge」）落地前，没有任何生产调用方触达 `protocolHost`。
+  这是有意的（addendum §10「Integration remains disabled until its evidence
+  and acceptance suite passes」）。
+- 装配级证明：`packages/desktop/test/payswap-protocol-runtime-wiring.test.ts`
+  （真实 `installDesktopPayswapConnections` → 受监督运行时 → 协议宿主；重建
+  不重置重放状态；无签发者；custodian-required 组合；保全）。

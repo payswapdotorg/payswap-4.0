@@ -303,6 +303,7 @@ async function stageWindowsSecureStorage(context) {
       "packages/services/test/payswap-account-runtime.test.ts",
       "packages/services/test/payswap-account-service.test.ts",
       "packages/services/test/payswap-credential-security.test.ts",
+      "packages/services/test/payswap-custodian-fail-closed.test.ts",
       "packages/services/test/payswap-paystack-provider.test.ts",
       "packages/services/test/payswap-paypal-provider.test.ts",
       "packages/services/test/payswap-paypal-data.test.ts",
@@ -311,10 +312,18 @@ async function stageWindowsSecureStorage(context) {
       "packages/services/test/payswap-paypal-live-conformance.test.ts",
       "packages/services/test/payswap-stripe-read-back.test.ts",
       "packages/ui/test/payswap-connection-ui-presentation.test.ts",
+      // P3 协议面（2026-11-23）：契约 / 宿主边界 / 三个消息面 / 真实 desktop main
+      // 受监督运行时装配 —— 与 ci.yml 的 P3 电池同一集合（CI-canonical surface）。
+      "packages/services/test/payswap-protocol-contract.test.ts",
+      "packages/services/test/payswap-protocol-host.test.ts",
+      "packages/services/test/payswap-ap2-message-face.test.ts",
+      "packages/services/test/payswap-x402-message-face.test.ts",
+      "packages/services/test/payswap-mpp-message-face.test.ts",
+      "packages/desktop/test/payswap-protocol-runtime-wiring.test.ts",
     ],
     { timeoutMs: 15 * 60 * 1000 },
   );
-  steps.push({ name: "vitest: P2 engineering law battery (18 suites, CI-canonical surface)", code: vitest.code });
+  steps.push({ name: "vitest: P2+P3 engineering law battery (28 suites, CI-canonical surface)", code: vitest.code });
 
   // 3) harness 平台门回归（win32 路径永不触碰 Linux-only API）。
   log.append("\n[runner] step: harness platform-gate regression (node --test)\n");

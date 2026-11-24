@@ -218,6 +218,33 @@ export {
   type PayswapAccountRuntimeDependencies,
   type PayswapCustodianBridge,
 } from "#src/payswap/index.js";
+// PaySwap P3-A/P3-D：协议宿主边界（challenge 签发/消费 + 证据权威签发/验证 +
+// 三协议适配器装配 + 生产装配）。适配器只持有 verifier 端口，不持有签发能力。
+export {
+  PAYSWAP_X402_CONSUMED_CREDENTIAL_RETENTION_MAX,
+  createPayswapHostEvidenceAuthority,
+  createPayswapProtocolChallengeRegistry,
+  createPayswapProtocolHost,
+  createPayswapProtocolRuntime,
+  type PayswapChallengeConsumeOutcome,
+  type PayswapHostEvidenceAuthority,
+  type PayswapHostEvidenceClaim,
+  type PayswapMppChallengeConsumeInput,
+  type PayswapMppChallengeIssueInput,
+  type PayswapMppChallengeRegistryFace,
+  type PayswapProtocolChallengeRecord,
+  type PayswapProtocolChallengeRegistry,
+  type PayswapProtocolHost,
+  type PayswapProtocolHostInboundOutcome,
+  type PayswapProtocolHostOptions,
+  type PayswapProtocolRuntime,
+  type PayswapProtocolRuntimeDependencies,
+  type PayswapX402AdvertiseInput,
+  type PayswapX402CredentialConsume,
+  type PayswapX402PaymentRegistryFace,
+  type PayswapX402RequirementsMatch,
+  type PayswapX402RequirementsRecord,
+} from "#src/payswap/index.js";
 export { createBroadcastService } from "./broadcast/broadcastService.js";
 export { createZCodeAgentService } from "./zcode-agent/zcodeAgentService.js";
 export { createZCodeTaskServiceAdapter } from "./zcode-agent/zcodeTaskServiceAdapter.js";

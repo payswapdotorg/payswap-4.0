@@ -24,6 +24,7 @@ import {
   payswapAp2ActionAuthorizationErrorKind,
   type PayswapProtocolAdapterDescriptor,
 } from "@zcode/shared/payswap";
+import { createPayswapHostEvidenceAuthority } from "@zcode/services/node";
 import { describe, expect, it } from "vitest";
 
 const AP2_DESCRIPTOR: PayswapProtocolAdapterDescriptor = {
@@ -43,8 +44,11 @@ async function expectedCheckoutHash(jwt: string): Promise<string> {
   return base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function makeFace(descriptor: PayswapProtocolAdapterDescriptor = AP2_DESCRIPTOR) {
-  return createPayswapAp2MessageFace(descriptor);
+function makeFace(
+  descriptor: PayswapProtocolAdapterDescriptor = AP2_DESCRIPTOR,
+  options: Parameters<typeof createPayswapAp2MessageFace>[1] = {},
+) {
+  return createPayswapAp2MessageFace(descriptor, options);
 }
 
 async function closedCheckoutMandate(overrides: {
@@ -762,14 +766,18 @@ describe("AP2 message face — digest binding + receipt evidence gate (laws 2/3)
   });
 
   it("indeterminate / pending / failed evidence states refuse (indeterminate ≠ successful receipt)", async () => {
-    const face = makeFace();
-    for (const state of ["indeterminate", "pending", "failed"] as const) {
-      const outcome = await face.emitReceipt({
-        evidenceRef: "ledger://evidence/settlement-1",
+    const authority = createPayswapHostEvidenceAuthority();
+    const face = makeFace(AP2_DESCRIPTOR, { evidenceVerifier: authority.verifier });
+    for (const [index, state] of (["indeterminate", "pending", "failed"] as const).entries()) {
+      const evidence = authority.issue({
+        evidenceRef: `ledger://evidence/settlement-${index}`,
         evidenceDigest: "a".repeat(64),
         state,
         capturedAt: "2026-11-22T00:00:00Z",
+        protocolId: "ap2",
+        subjectRef: "execution://exec-1",
       });
+      const outcome = await face.emitReceipt(evidence);
       expect(outcome.kind).toBe("refused");
       if (outcome.kind !== "refused") return;
       expect(outcome.refusal.code).toBe("protocol_receipt_unavailable");
@@ -777,12 +785,18 @@ describe("AP2 message face — digest binding + receipt evidence gate (laws 2/3)
   });
 
   it("settled-verified host evidence → receipt-emitted (exact keys, no financial authority)", async () => {
-    const outcome = await makeFace().emitReceipt({
+    const authority = createPayswapHostEvidenceAuthority();
+    const evidence = authority.issue({
       evidenceRef: "ledger://evidence/settlement-1",
       evidenceDigest: "a".repeat(64),
       state: "settled-verified",
       capturedAt: "2026-11-22T00:00:00Z",
+      protocolId: "ap2",
+      subjectRef: "execution://exec-1",
     });
+    const outcome = await makeFace(AP2_DESCRIPTOR, {
+      evidenceVerifier: authority.verifier,
+    }).emitReceipt(evidence);
     expect(outcome.kind).toBe("receipt-emitted");
     if (outcome.kind !== "receipt-emitted") return;
     expect(Object.keys(outcome).sort()).toEqual([

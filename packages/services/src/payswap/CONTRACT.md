@@ -118,3 +118,62 @@ P2.2 后续切片已全部落地（slice 5-9；ADR-P2-2 定案 —— 法则与�
 - **放置决策已定案**（ADR-P2-2，Option A）：账户运行时住 desktop main，
   broker 的 reader 面是类型化跨进程桥（host 进程永不接触 PSP 秘密材料）；
   additive RPC channel（连接 UI 的 renderer 面）住 main —— 已随 slice 6-9 落地。
+
+**P3 协议宿主边界**（`protocols/`；addendum §10 + doc 12 §6；shared CONTRACT
+「P3 协议适配器边界」的宿主半 —— 消息面法则住 shared，本模块是其**唯一生产
+调用面**）：
+
+- **一个宿主、一个实例**（`protocolRuntime.ts`）：生产装配只经
+  `createPayswapProtocolRuntime` —— 证据权威、challenge 注册表、三个已落地
+  消息面（登记表 `createPayswapProtocolMessageFaces`）与协议宿主成套创建。
+  返回面只有 `protocolHost`：证据签发能力（`issue`）留在闭包内。desktop main
+  经既有的受监督账户运行时持有它（一个 PaySwap 运行时，不另起第二个）。
+- **适配器只是不受信消息解释器**（`host.ts` 法则 1）：只有协议宿主调用
+  `translateInbound` / `emitReceipt`；每个协议恰一个适配器（重复 = 装配抛错）。
+  适配器不持有 challenge 注册表、证据权威或 provider 凭据。
+- **宿主时钟是唯一时间源**（`host.ts` 法则 3）：进站调用不接收时间参数；
+  过期裁决不可能被调用方供时影响。缺省系统时钟，测试注入。
+- **challenge 关联与单次消费在宿主裁决**（`challengeRegistry.ts`）：
+  - 注册表生命周期 = 宿主金融服务的进程生命周期（addendum §3.5(7) 同款：
+    dedupe scope 是实例，不是连接）。适配器/agent 重连、账户运行时因钥匙串
+    事件重建，都**不**重建它；宿主进程重启 = 一切旧 challenge 答 unknown
+    （fail-closed）。全内存、无 IO —— 不是账本，不记录资金事实。
+  - **MPP**：`issueMppChallenge` 要求 wire challenge 过 pinned schema、携 RFC
+    3339 `expires` 且签发时刻未过期（宿主策略）、id 在存活期内唯一。凭据回显
+    经适配器后给出 `mpp-challenge-echo`；宿主把回显按规范绑定字段投影
+    （id/realm/method/intent/request/expires/digest/opaque/header；
+    `description` 与未知参数不入绑定）重算 canonical 摘要，与签发记录逐字
+    比对。裁决次序：unknown → method/intent 错配 → 绑定错配 → consumed →
+    expired → 消费（「已消费」先于「已过期」：重放事实不被过期掩盖；过期不
+    消费记录）。
+  - **x402**（wire 上没有 challenge id —— 两个身份分开）：`issueX402Payment-
+    Required` 把 402 的每个 accepts 条目按 canonical 摘要**广告**（幂等：重发
+    刷新有效期；有效期 = 广告时刻 + 该条目 `maxTimeoutSeconds` —— **宿主
+    策略**，spec 对 stale-402 服务端行为沉默），条目必须落在 supported subset
+    内（宿主不得广告自己无法承兑的 requirements）。进站付款载荷：选中的
+    requirements 必须命中一条在有效期内的已广告记录（否则 unknown / expired），
+    且付款授权身份（network + from + nonce —— **不含签名字节**，ECDSA 可延展）
+    恰好消费一次（否则 consumed）；消费记录保留至该授权的 `validBefore` 或
+    保留上限（`PAYSWAP_X402_CONSUMED_CREDENTIAL_RETENTION_MAX`）。同一
+    requirements 的第二笔合法付款不是重放。
+  - **原子 check-and-set**：检查与置位之间没有 await —— 并发重复提交恰有一个
+    成功。清理按规模阈值摊还（`maybeSweep`），长期运行不退化成每次 O(n)。
+  - **AP2**：mandate / receipt 不是宿主签发的 challenge —— 进站只是不可信
+    提案，不产生宿主状态；本宿主不假装拥有其单次使用语义。
+- **消费 ≠ 认证**（`host.ts` 法则 4）：消费成功的结局是 `challenge-consumed`
+  且 `credential: "unverified"`。P3 不做密码学验签（shared CONTRACT「签名
+  姿态」）—— 履行前必须经网络 / facilitator 验证；结局里没有任何
+  verified / authenticated / settled 位可被下游读取。
+- **收据只从宿主证据权威签发过的证据发出**（`host.ts` 法则 5 +
+  `evidenceAuthority.ts`）：调用方只能给 `evidenceRef`，宿主按引用取回本宿主
+  签发的记录再交给适配器；伪造引用 → `protocol_receipt_unavailable`，跨协议
+  复用 → `protocol_evidence_untrusted`（evidence-gate）。不可伪造性 = 进程内
+  能力（对象身份即签发记录：克隆 / 序列化往返 / 另一权威实例的对象都不在册）
+  —— 与 P1 grant ledger 的配对 minter 同一纪律；`issue` 只接受收据门会接受
+  的形状（签发即合形）。
+- **P3 的生产姿态：发不出任何收据**。P3 没有结算事实的签发者（P7 的执行/
+  对账权威才接管 `issue`）—— 生产宿主对任何协议、任何证据引用都 typed 拒绝。
+  这是设计结论，不是缺陷：API acceptance ≠ settlement。
+- **不是第二个账本**：本目录不持久化、不写任何账本；challenge 注册表是有界的
+  传输/重放状态（doc 12 §6「Protocol transport state may be bounded adapter
+  state；financial facts remain in the one PaySwap ledger」）。

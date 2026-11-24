@@ -15,6 +15,7 @@ import {
   payswapMppMethodIntentSupported,
   type PayswapProtocolAdapterDescriptor,
 } from "@zcode/shared/payswap";
+import { createPayswapHostEvidenceAuthority } from "@zcode/services/node";
 import { describe, expect, it } from "vitest";
 
 const MPP_DESCRIPTOR: PayswapProtocolAdapterDescriptor = {
@@ -159,8 +160,11 @@ const RECEIPTS: Record<string, Record<string, unknown>> = {
   },
 };
 
-function makeFace(descriptor: PayswapProtocolAdapterDescriptor = MPP_DESCRIPTOR) {
-  return createPayswapMppMessageFace(descriptor);
+function makeFace(
+  descriptor: PayswapProtocolAdapterDescriptor = MPP_DESCRIPTOR,
+  options: Parameters<typeof createPayswapMppMessageFace>[1] = {},
+) {
+  return createPayswapMppMessageFace(descriptor, options);
 }
 
 function challengeFor(comboKey: string, requestOverride?: unknown) {
@@ -232,7 +236,7 @@ describe("MPP message face — compatibility matrix (five pinned combos)", () =>
     }
   });
 
-  it("four unsupported in-scope combos refuse with the combo in the message", async () => {
+  it("four unsupported in-scope combos refuse protocol_feature_unsupported with the combo in the message", async () => {
     const face = makeFace();
     const unsupported = ["stripe+session", "evm+subscription", "tempo+charge", "tempo+session"];
     for (const comboKey of unsupported) {
@@ -249,9 +253,56 @@ describe("MPP message face — compatibility matrix (five pinned combos)", () =>
       });
       expect(outcome.kind).toBe("refused");
       if (outcome.kind !== "refused") return;
-      expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
+      // 2026-11-23：矩阵外 rail = 注册表 unsupportedCapabilities 的 typed 拒绝面
+      // ——「不可用，不是模拟」用其专码，不再与结构违规共用 unverifiable。
+      expect(outcome.refusal.code).toBe("protocol_feature_unsupported");
       expect(outcome.refusal.message).toContain(comboKey);
     }
+  });
+
+  it("an unpinned rail method name (charge on hedera) refuses protocol_feature_unsupported — unavailable, not simulated", async () => {
+    const outcome = await makeFace().translateInbound({
+      mppKind: "challenge",
+      payload: {
+        id: "ch_x",
+        realm: "api.example.com",
+        method: "hedera",
+        intent: "charge",
+        request: jcsBase64Url({ amount: "100", currency: "usd" }),
+      },
+    });
+    expect(outcome.kind).toBe("refused");
+    if (outcome.kind !== "refused") return;
+    expect(outcome.refusal.code).toBe("protocol_feature_unsupported");
+  });
+
+  it("a non-string method/intent is a structural violation, not a rail verdict (stays unverifiable)", async () => {
+    const outcome = await makeFace().translateInbound({
+      mppKind: "challenge",
+      payload: { ...CHALLENGE_FIXTURES["stripe+charge"], method: 7 },
+    });
+    expect(outcome.kind).toBe("refused");
+    if (outcome.kind !== "refused") return;
+    expect(outcome.refusal.code).toBe("protocol_message_unverifiable");
+  });
+
+  it("a credential echoing an out-of-matrix rail refuses before payload validation", async () => {
+    const outcome = await makeFace().translateInbound({
+      mppKind: "credential",
+      payload: {
+        challenge: {
+          id: "ch_x",
+          realm: "api.example.com",
+          method: "evm",
+          intent: "subscription",
+          request: jcsBase64Url({ amount: "100", currency: "usd" }),
+        },
+        payload: { spt: "spt_abc123" },
+      },
+    });
+    expect(outcome.kind).toBe("refused");
+    if (outcome.kind !== "refused") return;
+    expect(outcome.refusal.code).toBe("protocol_feature_unsupported");
   });
 });
 
@@ -748,14 +799,18 @@ describe("MPP message face — digest binding + receipt evidence gate (laws 2/3)
   });
 
   it("indeterminate / pending / failed evidence states refuse (indeterminate ≠ successful receipt)", async () => {
-    const face = makeFace();
-    for (const state of ["indeterminate", "pending", "failed"] as const) {
-      const outcome = await face.emitReceipt({
-        evidenceRef: "ledger://evidence/settlement-1",
+    const authority = createPayswapHostEvidenceAuthority();
+    const face = makeFace(MPP_DESCRIPTOR, { evidenceVerifier: authority.verifier });
+    for (const [index, state] of (["indeterminate", "pending", "failed"] as const).entries()) {
+      const evidence = authority.issue({
+        evidenceRef: `ledger://evidence/settlement-${index}`,
         evidenceDigest: "a".repeat(64),
         state,
         capturedAt: "2026-11-22T00:00:00Z",
+        protocolId: "mpp",
+        subjectRef: "execution://exec-1",
       });
+      const outcome = await face.emitReceipt(evidence);
       expect(outcome.kind).toBe("refused");
       if (outcome.kind !== "refused") return;
       expect(outcome.refusal.code).toBe("protocol_receipt_unavailable");
@@ -763,12 +818,18 @@ describe("MPP message face — digest binding + receipt evidence gate (laws 2/3)
   });
 
   it("settled-verified host evidence → receipt-emitted (exact keys, no financial authority)", async () => {
-    const outcome = await makeFace().emitReceipt({
+    const authority = createPayswapHostEvidenceAuthority();
+    const evidence = authority.issue({
       evidenceRef: "ledger://evidence/settlement-1",
       evidenceDigest: "a".repeat(64),
       state: "settled-verified",
       capturedAt: "2026-11-22T00:00:00Z",
+      protocolId: "mpp",
+      subjectRef: "execution://exec-1",
     });
+    const outcome = await makeFace(MPP_DESCRIPTOR, {
+      evidenceVerifier: authority.verifier,
+    }).emitReceipt(evidence);
     expect(outcome.kind).toBe("receipt-emitted");
     if (outcome.kind !== "receipt-emitted") return;
     expect(Object.keys(outcome).sort()).toEqual([

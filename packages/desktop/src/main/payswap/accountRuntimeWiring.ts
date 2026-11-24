@@ -24,6 +24,12 @@
  *    typed refusal 作数据透传 —— account-reader-bridge 法则全文）。
  * 5. **IO 全注入**：keyStore、runtime 依赖（store 路径/transport/时钟/ID 铸造）、
  *    port 全部注入；本模块无 Electron import（入口适配在接线半）。
+ * 6. **协议运行时恰装配一次（P3-D）**：协议宿主（services 的
+ *    `createPayswapProtocolRuntime`）住本受监督运行时 —— 一个 PaySwap 运行时，
+ *    不另起第二个。它在构造时创建（纯内存装配，无 IO、不触键 store），**不随
+ *    账户运行时重建而重建**：challenge 注册表是宿主实例状态（challengeRegistry
+ *    法则 2），否则一次钥匙串事件就会静默重置重放状态。时钟与账户运行时共用
+ *    同一注入的 `now` 时间源（生产 = 真实时钟）。
  */
 
 import {
@@ -33,8 +39,10 @@ import {
 } from "@zcode/shared/payswap";
 import {
   createPayswapAccountRuntime,
+  createPayswapProtocolRuntime,
   type PayswapAccountRuntime,
   type PayswapAccountRuntimeDependencies,
+  type PayswapProtocolRuntime,
 } from "@zcode/services/node";
 import {
   warmupPayswapPspRuntimeEnv,
@@ -63,11 +71,17 @@ export interface PayswapDesktopAccountRuntime {
   warmup(): Promise<PayswapPspWarmupResult>;
   /** reader 桥服务端（shared 法则；请求串行内嵌 warmup + 按需重建 —— 法则 1/4）。 */
   serve(port: PayswapReaderBridgePort): PayswapReaderBridgeServer;
+  /**
+   * 协议运行时（P3-D，法则 6）：恰装配一次 —— 只含 `protocolHost` 面（无证据
+   * 签发能力）；不随账户运行时重建而重建。
+   */
+  readonly protocolRuntime: PayswapProtocolRuntime;
 }
 
 /**
- * 受监督账户运行时装配（法则 1-5）。无 boot 副作用 —— 首个请求/预热才触达键
- * store；runtime 内部懒装配（store/凭据文件按操作触达）。
+ * 受监督账户运行时装配（法则 1-6）。除协议运行时（纯内存、构造即装配）外无
+ * boot 副作用 —— 首个请求/预热才触达键 store；runtime 内部懒装配（store/凭据
+ * 文件按操作触达）。
  */
 export function createPayswapDesktopAccountRuntime(
   options: PayswapDesktopAccountRuntimeOptions,
@@ -80,6 +94,11 @@ export function createPayswapDesktopAccountRuntime(
   // 装配一次（keyAvailable 不变化，法则 1 的单实例仍然成立）。
   const custodianRequired =
     options.runtimeDependencies?.credentialCustody === "custodian-required";
+  const accountNow = options.runtimeDependencies?.now;
+  // 法则 6：协议运行时恰装配一次 —— 与账户运行时的按需重建互不相干。
+  const protocolRuntime = createPayswapProtocolRuntime(
+    accountNow === undefined ? {} : { clock: () => new Date(accountNow()) },
+  );
 
   async function ensureRuntime(): Promise<PayswapAccountRuntime> {
     const warm = custodianRequired
@@ -103,6 +122,7 @@ export function createPayswapDesktopAccountRuntime(
   }
 
   return {
+    protocolRuntime,
     getRuntime: () => ensureRuntime(),
     get runtimeRebuilds(): number {
       return rebuilds;

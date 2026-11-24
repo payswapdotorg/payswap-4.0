@@ -17,14 +17,38 @@
  *    （消息 schema、验证规则、收据形态）之前的再验证清单 —— doc 12 §6
  *    「fails closed on unknown versions」的注册表半。清单未空时，协议的
  *    消息面实现不得落地（边界契约可以先落 —— 本文件与 protocol-contract.ts
- *    就是边界，不是消息实现）。
+ *    就是边界，不是消息实现），注册门对一切适配器 typed 拒绝。
+ *    **已知的「不支持」不是「未验证」**：未检索到的变体、官方 spec 沉默的
+ *    行、未实现的验证，凡消息面对其 typed 拒绝（或明确不作声明）的，记入
+ *    `unsupportedCapabilities`（每项带 typed refusal）而不是留在清单里
+ *    （2026-11-23 修正：MPP 与 x402 的消息面落地时清单仍非空 —— 注册表、
+ *    法则电池与源码树互相矛盾）。
  * 4. **协议在场 ≠ 能力或同意**（doc 12 §3 三注册表分离）：本注册表不记录任何
  *    provider 能力、用户同意或可用性事实 —— 那些分别属于 provider-capability
  *    注册表（证据支撑）与授权面（envelope/grant）。
  */
 
+import type { PayswapProtocolRefusalCode } from "./protocol-refusal.js";
+
 /** 协议 id 闭集（doc 12 §6 表的 PaySwap 首批协议面；新增 id = 注册表演更）。 */
 export type PayswapProtocolId = "ap2" | "x402" | "mpp";
+
+/**
+ * 显式不支持能力（doc 12 §6「Unsupported features are unavailable, not
+ * simulated as production support」）。
+ */
+export interface PayswapUnsupportedProtocolCapability {
+  /** 能力/变体/行为。 */
+  readonly capability: string;
+  /** 官方状态（spec 沉默 / 未逐字段入 pin / 验证前提不在案 —— 引文级）。 */
+  readonly officialStatus: string;
+  /**
+   * typed refusal：消息面对该面拒绝时回答的闭集码。`null` = 没有 wire 行为被
+   * 编码或被拒绝 —— 本面对该项不作任何声明（宿主策略或未实现的验证管辖），
+   * 不是「已支持」。
+   */
+  readonly refusal: PayswapProtocolRefusalCode | null;
+}
 
 /** pinned 协议事实（单一来源；适配器描述符必须与之一致才可注册）。 */
 export interface PayswapProtocolPin {
@@ -41,6 +65,8 @@ export interface PayswapProtocolPin {
   readonly verifiedBoundaryFacts: readonly string[];
   /** 适配器消息面实现前的再验证清单（doc 04 §5 纪律；空 = 门已关）。 */
   readonly reverifyBeforeAdapter: readonly string[];
+  /** 显式不支持能力清单（不可用，不是模拟；每项带 typed refusal 或明示不作声明）。 */
+  readonly unsupportedCapabilities: readonly PayswapUnsupportedProtocolCapability[];
 }
 
 /** 检索日期（本注册表事实的统一检索批次）。 */
@@ -78,6 +104,7 @@ export const PAYSWAP_PROTOCOL_PIN_AP2: PayswapProtocolPin = {
     "Checkout Mandate 字段级 schema（checkout_mandate.md，检索 2026-11-21）：closed MUST 用 vct = mandate.checkout.1，open MUST 用 mandate.checkout.open.1；closed 字段集 = vct（string，必填，不可披露）/ checkout_jwt（string，必填，可披露 —— merchant 签名的 base64url serialized Checkout payload JWT）/ checkout_hash（string，必填，不可披露 —— checkout_jwt 的 base64url 哈希，算法 MUST 同 SD-JWT 的 _sd_alg，缺省 sha-256 MUST）/ iat、exp（integer，可选 Unix epoch）；示例签名结构 ES256 SD-JWT（closed 为 kb+sd-jwt，payload 含 delegate_payload/iat/aud:\"merchant\"/nonce/sd_hash/_sd_alg）；约束集 = checkout.allowed_merchants（type + allowed 数组，Merchant MUST 出现在 revealed elements 中，缺失或空 = 约束无效）与 checkout.line_items（type + items：id/acceptable_items/quantity，每项数量须匹配且不得复用）；Checkout Receipt schema = status（Success|Error）/ iss / iat / reference（绑定的 closed Mandate 哈希）/ 可选 error、error_description（仅 Error）与 order_id（仅 Success）",
   ],
   reverifyBeforeAdapter: [],
+  unsupportedCapabilities: [],
 };
 
 /**
@@ -113,9 +140,59 @@ export const PAYSWAP_PROTOCOL_PIN_X402: PayswapProtocolPin = {
     "facilitator 语义（docs.x402.org/core-concepts/facilitator，检索 2026-11-22）：调用者是**资源服务器**（客户端永不联系 facilitator —— 客户端只发 PAYMENT-SIGNATURE 头）；流程 = POST Payment Payload + Payment Details 到 /verify，验证有效才执行工作，再 POST /settle；facilitator 校验「payment payload meets the server's declared payment requirements」并检查 scheme 与 networkId；「does not hold funds or act as a custodian - it performs verification and execution of onchain transactions」；settlement_pending = 非终态（广播成功但确认未建立）—— 响应携 transaction 哈希 + network，资源服务器自动重试结算**恰一次**（PendingSettlementStore 按交易哈希键控防双花；适用于 exact/upto/batch-settlement 的 EVM 与 SVM，仅 v2）；facilitator HTTP 请求缺省 90 秒超时，settle 期间超时 = 不可判定结局",
     "窗口/重放/超时的 scheme 级语义（第四批检索 2026-11-22，Session C 矩阵 —— 官方 scheme 分册逐字）：validAfter/validBefore 的执行侧强制在 **scheme 分册**在案而非核心规范 —— exact/EVM 把有效期校验写入 verifier 流程且 Permit2 代理在链上强制 witness.validAfter；upto 对全部网络以 MUST 表述；仅 batch-settlement/SVM 有字面 facilitator MUST。重放保证 **per-scheme 以 MUST 强度**在案：upto 单次使用；batch-settlement/EVM 累计水位线 + 「MUST NOT auto-retry /settle」；SVM 单次 requestId（重放 → duplicate_settlement）—— 核心 §10.1 仅覆盖 EIP-3009/EVM，无跨 scheme 一揽子表述。maxTimeoutSeconds 的 MUST 仅在绑定层（SVM batch、Starknet、Stellar）；EVM 上该字段与 validBefore 的联动官方**明确未记载**（SDK 实现 validBefore = now + maxTimeoutSeconds —— 实现证据，非规范）",
     "九项附加 wire 行为（第四批检索 2026-11-22，Session C 矩阵 —— 官方源逐字）：flow 不变式；/verify 只读（无链上动作）；upto 分阶段金额；412 allowance 路径；extensions 回显规则；纠正式 402（新 challenge）；CORS 语义；/supported 的 signers 字段",
+    "exact/EVM payload 字段级（specs/schemes/exact/scheme_exact_evm.md §1 + core §5.2.2，检索 2026-11-23 @ x402-foundation/x402 b711fa9fead4cf8a955e8afeafd179de9af75402）：`payload` 「must contain」`signature`（「The 65-byte signature of the `transferWithAuthorization` operation」）+ `authorization`（「The parameters required to reconstruct the signed message」）；core §5.2.2 Authorization 表：`from`（「Payer's wallet address」）/ `to`（「Recipient's wallet address」）/ `value`（「Payment amount in atomic units」）/ `validAfter`（「Unix timestamp when authorization becomes valid」）/ `validBefore`（「Unix timestamp when authorization expires」）/ `nonce`（「32-byte random nonce to prevent replay attacks」）—— 全部 Required、type string，官方示例 nonce 为 0x + 64 hex；`extra.assetTransferMethod`（optional in PaymentRequired，default \"eip3009\"）：「if present, MUST be \"eip3009\"」；`extra.name`（required）/ `extra.version`（required）：token 合约的 EIP-712 domain name/version（「Used for `transferWithAuthorization` signature construction」）；「If no `assetTransferMethod` is specified in `PaymentRequired.extra`, clients should default to \"eip3009\". Payment payloads that use a non-default transfer method should echo the selected `assetTransferMethod` in `accepted.extra`.」；exact/EVM 共三种转账方法 eip3009 / Permit2 / ERC-7710 —— 后两者的 payload（`signature` + `permit2Authorization` / `permissionContext`）本注册表未逐字段入 pin；core §5.1.2 ResourceInfo 字段集（url REQUIRED；description/mimeType/serviceName/tags/iconUrl optional）对 PaymentRequired 与 PaymentPayload 的 `resource` 同型；Extensions 值 = `{info: object (Required), schema: object (Required)}`",
+    "验签、窗口与重放归 facilitator（scheme_exact_evm.md Phase 2 + core §7.1/§9/§10.1/§6.1，检索 2026-11-23 @ b711fa9f）：Verification Logic 逐字「1. **Verify** the signature is valid and recovers to the `authorization.from` address. 2. **Verify** the `client` has sufficient balance of the `asset`. 3. **Verify** the authorization parameters (Amount, Validity Window) meet the `PaymentRequirements`. 4. **Verify** the Token and Network match the requirement. 5. **Simulate** `token.transferWithAuthorization(...)` to ensure success.」；/verify「is **read-only**: it validates payment state but MUST NOT commit payment state or write onchain state」；§10.1 重放防线逐字「**EIP-3009 Nonce**: Each authorization includes a unique 32-byte nonce to prevent replay attacks」+「**Blockchain Protection**: EIP-3009 contracts inherently prevent nonce reuse at the smart contract level」+ 时间窗 +「All authorizations are cryptographically signed by the payer」—— 重放身份是付款人的 nonce/签名，不是 requirements；§6.1：`extra.assetTransferMethod` 与 `extra.paymentFlow` 是协议保留键（「clients and servers MUST interpret them as defined here rather than as opaque scheme-private fields」），三种流 `authorization`（default：verify → resource → settle → respond）/ `upfront` / `escrow`，「Resource servers MUST reject unsupported `assetTransferMethod` / payment flow combinations. Clients MUST NOT construct a payment for a `paymentFlow` they do not recognize」；§9 错误码含 `invalid_x402_version` / `unsupported_scheme` / `invalid_scheme` / `invalid_network` / `invalid_payload` / `invalid_payment_requirements` / `invalid_exact_evm_payload_signature` / `invalid_exact_evm_payload_recipient_mismatch` / `invalid_exact_evm_payload_authorization_value_mismatch`（「MUST use the corresponding invalidReason or errorReason code and MUST NOT rely on message text」）",
   ],
-  reverifyBeforeAdapter: [
-    "官方源未记载、spec 沉默的执行细节（第五批候选，未验证到的不发明）：EVM 上 validAfter/validBefore 与 maxTimeoutSeconds 的联动（仅 SDK 实现证据）、核心规范的跨 scheme 重放一揽子表述、核心规范的强制执行者指派、maxTimeoutSeconds 的取值边界、stale-402 的服务端行为",
+  reverifyBeforeAdapter: [],
+  unsupportedCapabilities: [
+    {
+      capability: "EVM 上 validAfter/validBefore 与 maxTimeoutSeconds 的联动",
+      officialStatus:
+        "spec 沉默：核心规范与 scheme 分册均未把 maxTimeoutSeconds 链接到 validBefore（SDK 实现 validBefore = now + maxTimeoutSeconds —— 实现证据，非规范）。本面只做结构校验 validAfter < validBefore，不派生、不强制联动。",
+      refusal: null,
+    },
+    {
+      capability: "核心规范的跨 scheme 重放一揽子表述",
+      officialStatus:
+        "spec 沉默：core §10.1 只覆盖 EIP-3009 nonce（EVM），无跨 scheme 一揽子重放保证 —— 本面不作跨 scheme 重放声明；nonce 缺席/畸形按结构拒绝（protocol_message_unverifiable）。",
+      refusal: null,
+    },
+    {
+      capability: "强制执行者指派（验签 / nonce 消费 / 窗口强制由哪一方执行）",
+      officialStatus:
+        "spec 沉默：核心规范不指派执行者；facilitator 语义把 /verify /settle 的调用者记为资源服务器。本面不是执行者，不做强制。",
+      refusal: null,
+    },
+    {
+      capability: "maxTimeoutSeconds 取值边界",
+      officialStatus:
+        "spec 沉默：官方只记载 REQUIRED number，无上下界。本面只校验正整数在场；边界策略属宿主。",
+      refusal: null,
+    },
+    {
+      capability: "stale-402 的服务端行为",
+      officialStatus:
+        "spec 沉默：HTTP transport 只定义状态码映射，未记载过期 challenge 被重试时的服务端行为。宿主策略管辖 —— 已签发 requirements 的有效期 = 签发时刻 + 该条目的 maxTimeoutSeconds，过期后答 protocol_challenge_expired（宿主策略，非协议语义）。",
+      refusal: "protocol_challenge_expired",
+    },
+    {
+      capability: "付款授权的密码学验签与有效期窗口强制",
+      officialStatus:
+        "spec 把验签/窗口/余额校验记为 facilitator /verify 逻辑（「Verify the signature is valid and recovers to the authorization.from address」）。本面不验签、不强制窗口：形态合法的签名一律保持 untrusted 提案；真实验签需要 secp256k1 + keccak256 的审计依赖（仓库未批准）—— addendum §10 的验证要求未撤回，集成在验签落地前保持禁用。",
+      refusal: null,
+    },
+    {
+      capability: "exact 以外的 scheme（upto / batch-settlement / auth-capture）与非 EVM 网络族",
+      officialStatus:
+        "v2 核心规范列明这些 scheme 存在，但其付款 payload wire 未逐字段入本注册表 —— 不可用，不是模拟。",
+      refusal: "protocol_feature_unsupported",
+    },
+    {
+      capability: "exact/EVM 的 permit2 与 erc7710 转账方法、upfront 与 escrow 付款流",
+      officialStatus:
+        "scheme 分册有示例与字段说明，但未逐字段入本注册表。本面只支持缺省 eip3009 转账方法 + 缺省 authorization 流。",
+      refusal: "protocol_feature_unsupported",
+    },
   ],
 };
 
@@ -158,8 +235,15 @@ export const PAYSWAP_PROTOCOL_PIN_MPP: PayswapProtocolPin = {
     "Tempo subscription rail 字段级（draft-tempo-subscription-00，paymentauth.org，检索 2026-11-22）：与 Stripe 变体的结构差异 = 无 networkId（用 chainId，缺省 42431 Tempo mainnet）；methodDetails.accessKey REQUIRED（accessKeyAddress + keyType MUST p256|secp256k1|webAuthn）；**仅支持 key-authorization 承兑**（payload type = keyAuthorization，签名 = RLP 编码的密钥授权）；subscriptionExpires REQUIRED（Tempo 密钥授权有时间界）；periodUnit = month MUST 拒（限额按固定时长周期）；计费锚 = 链上结算块时间戳（MUST 源自链上数据而非本地时钟）；MUST 不多于一周期一次成功续费；漏周期不累积容量（限额重置而非累加）；MUST 维护持久本地状态（订阅 id/锚/最后计费索引/在途/过期/撤销）",
     "challenge 可选参数（draft-httpauth-payment-01 core，检索 2026-11-22）：digest = 请求体的 content digest（RFC 9530 形态，例 sha-256=:base64=:）—— 服务端重算并比对，不匹配即拒；expires = RFC 3339 时间串 —— 「Clients MUST NOT submit credentials for expired challenges」（过期 challenge ID → 402 payment-expired）；header = 在案时值 MUST 为 \"Payment-Authorization\"（凭据字段选择器）—— 客户端 MUST 原样回显；opaque = base64url(JCS JSON) 的扁平 string-to-string map —— 客户端 MUST 原样回显且 MUST NOT 修改，并纳入 challenge 绑定；description = 仅展示用途，「MUST NOT be relied upon for payment verification」且不入 challenge 绑定；未知参数「MUST be ignored by clients」（客户端忽略，不当事实）",
   ],
-  reverifyBeforeAdapter: [
-    "未检索的 per-network 分册（不发明）：charge 的 hedera/lightning/solana/xrpl/nearintents/usdc/cardano 变体、session 的 hedera/lightning/solana/tempo/xrpl 变体、subscription 的 solana 变体、discovery-01 的语义、batch-settlement 分册的字段级细节 —— 这些变体在消息面实现中被 typed 拒绝（method 闭集 = stripe/evm/tempo 五组合），其完整性只 gate 未来覆盖这些网络的完整 rail 适配器",
+  reverifyBeforeAdapter: [],
+  unsupportedCapabilities: [
+    {
+      capability:
+        "未检索的 per-network 分册：charge 的 hedera/lightning/solana/xrpl/nearintents/usdc/cardano 变体、session 的 hedera/lightning/solana/tempo/xrpl 变体、subscription 的 solana 变体、discovery-01 的语义、batch-settlement 分册的字段级细节",
+      officialStatus:
+        "官方分册存在（paymentauth.org 目录在案）但未检索、未逐字段入本注册表 —— 不发明。消息面按 method/intent 兼容矩阵（stripe/evm/tempo 五组合）typed 拒绝矩阵外组合；其完整性只 gate 未来覆盖这些网络的完整 rail 适配器。",
+      refusal: "protocol_feature_unsupported",
+    },
   ],
 };
 

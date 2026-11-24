@@ -1,175 +1,358 @@
-# x402 five-row disposition — 2026-11-22
+# x402 five-row disposition — 2026-11-22, re-verified 2026-11-23
 
-The canonical x402 fact register (protocol-facts.ts) pins the wire schemas,
-facilitator semantics, transport rules and nine wire behaviors (fourth-pass
-retrieval, 2026-11-22). Five specification-silent rows remain. This document
-provides the row-by-row disposition required by the handoff (§3 P3-B): for each
-row, what the official specification actually says, whether the behavior is
-supported/implemented/silent, the exact typed refusal, and whether the gap is a
-P3 blocker or an explicitly unsupported capability for the Windows MVP.
+The canonical x402 fact register (`packages/shared/src/payswap/protocols/protocol-facts.ts`)
+pins the wire schemas, facilitator semantics, transport rules and nine wire behaviors
+(fourth-pass retrieval, 2026-11-22). Five rows stayed **specification-silent**. This
+document is the row-by-row disposition required by the handoff (P3-B): for each row,
+what the official specification actually says, which behaviors are supported and
+implemented, which remain silent or inaccessible, the **exact** typed refusal, and
+whether the gap is a P3 blocker or an explicitly unsupported capability for the
+Windows MVP.
+
+## Source of record for every quote below
+
+| Item | Value |
+|---|---|
+| Repository | `x402-foundation/x402` (canonical; `coinbase/x402` is a fork) |
+| Commit | `b711fa9fead4cf8a955e8afeafd179de9af75402` (branch `main`) |
+| Retrieved | 2026-11-23T17:15:15Z (raw files, byte-identical copies hashed below) |
+| Files | `specs/x402-specification-v2.md` (sha256 `c0c94b8c…`, 733 lines), `specs/schemes/exact/scheme_exact_evm.md` (`186111e2…`), `specs/transports-v2/http.md` (`7f8b0469…`) |
+| Re-verification | Before any P6/P9 integration is enabled, and at the latest 2026-12-23 |
+
+Quotes are verbatim from those files at that commit. Nothing below is taken from
+secondary sources; SDK behavior is labelled as implementation evidence wherever it
+is mentioned, and is never the basis for an encoded rule.
+
+## What changed on 2026-11-23, and why
+
+PR #93 produced the first version of this document and landed an x402 message face
+described as a "supported subset". Two things were wrong with that state and are
+corrected in the same change as this re-verification:
+
+1. **The contract's implementation gate was contradicted by the tree.** The protocol
+   contract (law 5) says a protocol's message face must not land while the registry's
+   `reverifyBeforeAdapter` list is non-empty, and the law battery asserted that x402
+   and MPP were still blocked — while faces for both were merged. The previous
+   version of this document said the face "can be law-unblocked by … recording these
+   five rows … in the reverify list"; no such recording was ever made. The registry now
+   carries an explicit `unsupportedCapabilities` list (each entry with its typed
+   refusal), the re-verification lists are empty for all three landed faces, and the
+   registration gate itself refuses `protocol_reverify_pending` while a list is
+   non-empty.
+2. **The "supported subset" accepted more than it validated.** The face validated any
+   `scheme`/`network` and left the scheme-specific `payload` unvalidated, then returned
+   `validated-untrusted-proposal`. The subset is now exactly what the register pins
+   field-by-field — `exact` on `eip155:*` via the default `eip3009` transfer method and
+   the default `authorization` flow — with a strict payload schema; everything else is
+   typed `protocol_feature_unsupported` (unavailable, not simulated).
+
+The five rows themselves are unchanged in substance: **none is a P3 blocker**, and
+none is implemented by invention.
 
 ---
 
-## Row 1 — EVM validAfter/validBefore ↔ maxTimeoutSeconds linkage
+## Row 1 — EVM `validAfter` / `validBefore` ↔ `maxTimeoutSeconds` linkage
 
-**Official specification**: The core v2 spec (specs/x402-specification-v2.md)
-defines `validAfter` and `validBefore` as EIP-3009 authorization parameters
-inside the `authorization` object of the exact-EVM payment payload. It does
-NOT document how the server or facilitator enforces the validity window, nor
-does it link `maxTimeoutSeconds` to `validBefore`.
+**Official specification (verbatim).** The core spec defines the fields but never
+links them:
 
-**SDK evidence (non-normative)**: The x402-fetch SDK sets
-`validBefore = now + maxTimeoutSeconds` before signing. The facilitator SDK
-checks the window during verification. This is implementation behavior, not
-normative specification.
+> `validBefore` | `string` | Required | Unix timestamp when authorization expires
+> — `specs/x402-specification-v2.md` §5.2.2
 
-**Disposition**: The window enforcement is a **facilitator-side or
-server-side execution concern**, not a PaySwap message-face concern. PaySwap's
-x402 adapter validates the STRUCTURE of the payment payload (field presence,
-types, addresses) but does not execute payments or enforce authorization
-windows on-chain. The adapter can verify that `validAfter` < `validBefore`
-structurally and refuse otherwise (a cheap structural check). The deeper
-enforcement (on-chain window check, nonce consumption) belongs to the
-facilitator/verifier, which PaySwap does not own.
+> `maxTimeoutSeconds` | `number` | Required | Maximum time allowed for payment completion
+> — §5.1.2
 
-**P3 blocker**: No. The adapter's message face can validate payload structure
-without enforcing on-chain windows. The unverifiable enforcement semantics
-are explicitly outside PaySwap's authority boundary (addendum §10: protocol
-adapters are not executors).
+The scheme binding's verification logic says only:
 
-**Typed refusal**: If the adapter receives a payload with `validAfter` ≥
-`validBefore`, it refuses `protocol_message_unverifiable` (malformed
-authorization window).
+> **Verify** the authorization parameters (Amount, Validity Window) meet the `PaymentRequirements`.
+> — `specs/schemes/exact/scheme_exact_evm.md`, Phase 2: Verification Logic, step 3
+
+No document at this commit derives `validBefore` from `maxTimeoutSeconds`.
+
+**SDK evidence (non-normative, not encoded).** The x402 client SDK sets
+`validBefore = now + maxTimeoutSeconds` before signing, and the facilitator SDK
+checks the window. This is implementation behavior; the register records it as
+implementation evidence and encodes none of it.
+
+**Supported and implemented.** A structural window check only: `validAfter < validBefore`
+(compared as integers). Both fields must be present digit-strings.
+
+**Silent / inaccessible.** The linkage itself. PaySwap neither derives a `validBefore`
+from `maxTimeoutSeconds` nor rejects a payload whose `validBefore` differs from
+`issueTime + maxTimeoutSeconds`. Enforcing the window against the current time is the
+facilitator's verification step (Row 3).
+
+**Exact typed refusal.** `protocol_message_unverifiable` when `validAfter ≥ validBefore`
+or either field is missing / not a digit string.
+
+**Proving tests.** `packages/services/test/payswap-x402-message-face.test.ts` →
+"validAfter ≥ validBefore refuses (structural window check — Row 1 disposition)";
+"validAfter is not a timestamp string refuses …"; "validBefore is negative refuses …".
+
+**P3 blocker?** **No.** The unverifiable linkage is not encoded. It becomes relevant
+only if PaySwap ever *constructs* payments (a client role, P6+), at which point the
+client SDK's behavior must be pinned from an official source first.
 
 ---
 
 ## Row 2 — Core cross-scheme replay statement
 
-**Official specification**: The core v2 spec §10.1 (Security Considerations)
-documents replay prevention ONLY for EIP-3009/EVM (the `nonce` field is
-"32-byte random nonce to prevent replay attacks"). No cross-scheme replay
-guarantee is stated for `upto`, `batch-settlement`, or non-EVM schemes.
+**Official specification (verbatim).** The core security section covers one mechanism
+family only:
 
-**SDK evidence**: The EVM SDK maintains a consumed-nonce set per token
-contract. The SVM SDK maintains a consumed-`requestId` set. These are
-per-scheme implementation details.
+> **EIP-3009 Nonce**: Each authorization includes a unique 32-byte nonce to prevent replay attacks
+> **Blockchain Protection**: EIP-3009 contracts inherently prevent nonce reuse at the smart contract level
+> **Time Constraints**: Authorizations have explicit valid time windows to limit their lifetime
+> **Signature Verification**: All authorizations are cryptographically signed by the payer
+> — §10.1 Replay Attack Prevention
 
-**Disposition**: The absence of a cross-scheme replay statement means PaySwap
-cannot make a general "replay-safe" claim across schemes. Each scheme's
-replay behavior must be individually verified. For the message face, the
-adapter validates payload STRUCTURE (field presence, format) but does not
-enforce nonce consumption (that's the facilitator/server). The adapter can
-structurally reject payloads with missing or empty nonce fields.
+and the field table:
 
-**P3 blocker**: No. The message face validates structure without claiming
-replay safety. The facilitator/server replay enforcement is outside PaySwap's
-authority boundary. The five spec-silent items are recorded as explicit
-limitations, not fabricated as verified.
+> `nonce` | `string` | Required | 32-byte random nonce to prevent replay attacks
+> — §5.2.2
 
-**Typed refusal**: If the adapter receives a payment payload with a missing
-or empty nonce field (for EVM exact), it refuses
-`protocol_message_unverifiable` (the nonce is REQUIRED and its absence means
-replay cannot be prevented).
+No cross-scheme ("all schemes") replay guarantee is stated. Per-scheme MUSTs for
+other schemes live in their own scheme documents and are recorded in the register's
+fourth-pass facts.
+
+**Supported and implemented.**
+
+- Structural: `nonce` is required and must be 32 bytes (`0x` + 64 hex, the only
+  encoding the official example shows).
+- Host boundary (services protocol host): the **payment authorization identity** —
+  `network + payer + nonce` — is consumed exactly once, atomically. This identity is
+  taken from the quoted sentence: the replay defense is the payer's nonce. It
+  deliberately does **not** include signature bytes, because ECDSA signatures are
+  malleable and a key that included them could be replayed with a re-signed variant.
+- A second legitimate purchase of the same resource (new nonce) is a new
+  authorization, not a replay.
+
+**Silent / inaccessible.** Any PaySwap-wide "replay-safe across schemes" claim. The
+register makes none. Schemes other than `exact`/EVM are not accepted at all (see
+"Surfaces outside the supported subset" below), so there is no unpinned surface on
+which a replay claim could be made.
+
+**Exact typed refusal.**
+
+| Situation | Code |
+|---|---|
+| `nonce` missing, empty, or not 32-byte hex | `protocol_message_unverifiable` |
+| The same authorization `(network, from, nonce)` is submitted again | `protocol_challenge_consumed` |
+| A scheme/network whose replay semantics are not pinned | `protocol_feature_unsupported` |
+
+**Proving tests.** x402 face battery → "nonce is not 32 bytes refuses …", "nonce is a
+bare word refuses …", "the credential digest keys on the payer nonce, never on
+signature bytes (ECDSA signatures are malleable)". Host battery
+(`packages/services/test/payswap-protocol-host.test.ts`) → "replaying the same
+authorization refuses protocol_challenge_consumed — even with a different
+(malleable) signature"; "a SECOND legitimate purchase of the same resource (new payer
+nonce) is a new authorization, not a replay"; "concurrent duplicate payments consume
+exactly one".
+
+**P3 blocker?** **No.** Single-use of the authorization is enforced at the host with
+the spec's own identity, and no cross-scheme claim is made.
 
 ---
 
 ## Row 3 — Core enforcement-actor assignment
 
-**Official specification**: The core v2 spec defines the facilitator role
-("The server verifies and settles the payment independently, or by leveraging
-an x402 facilitator's /verify and /settle endpoints") and states the
-facilitator "does not hold funds or act as a custodian." However, the spec
-does not explicitly assign WHICH party (server, facilitator, client) MUST
-perform each specific verification step (signature check, nonce consumption,
-window enforcement, etc.).
+**Official specification (verbatim).** The facilitator is defined by its role:
 
-**SDK evidence**: The SDK's facilitator implementation performs signature
-verification, nonce consumption, and window checks. This is implementation,
-not specification.
+> **Resource Server**: A service that requires payment for access to protected resources (APIs, content, data, etc.)
+> **Client**: Any application or agent that requests access to protected resources
+> **Facilitator**: A service that handles payment verification and blockchain settlement
+> — §3 Protocol Components
 
-**Disposition**: The enforcement-actor assignment is deliberately left to
-implementations. PaySwap's adapter does not implement on-chain enforcement
-or act as a facilitator. The adapter validates the STRUCTURE of messages it
-receives and emits, and the host decides which messages to accept based on
-its own verification logic (which lives outside the adapter, per addendum
-§10).
+and the verification steps are the facilitator's:
 
-**P3 blocker**: No. The message face validates structure without claiming to
-be the enforcement actor. The enforcement role is outside PaySwap's
-authority boundary.
+> **Verify** the signature is valid and recovers to the `authorization.from` address.
+> **Verify** the `client` has sufficient balance of the `asset`.
+> — `scheme_exact_evm.md`, Phase 2: Verification Logic, steps 1–2
 
-**Typed refusal**: Not applicable — the adapter doesn't enforce; it validates
-structure. The host's verification logic is outside the adapter boundary.
+> `/verify` is **read-only**: it validates payment state but MUST NOT commit payment state or write onchain state.
+> — §7.1 POST /verify
+
+The core spec does not enumerate which party performs each individual check.
+
+**Supported and implemented.** PaySwap's message face validates **structure**; the
+protocol host performs **challenge correlation and single-use**. Neither is an
+enforcement actor: no signature recovery, no balance check, no on-chain simulation,
+no settling.
+
+**Silent / inaccessible.** Signature verification, balance, and the validity-window
+check against the current time. These are not implemented at P3 (see "Signature
+posture" below) and the adapter is not the party the spec assigns them to.
+
+**Exact typed refusal.** Not applicable as a *refusal*: the adapter does not enforce,
+so there is no behavior it refuses on this row. What the adapter guarantees instead is
+that it never reports enforcement it did not perform — a well-formed forged signature
+yields `validated-untrusted-proposal`, and a consumed challenge yields
+`challenge-consumed` with `credential: "unverified"`.
+
+**Proving tests.** x402 face battery → "a forged-but-well-formed signature is never
+verified: the outcome stays an untrusted proposal with no verification claim". Host
+battery → "issues a challenge and consumes its exact credential echo once — the
+outcome is challenge-consumed with an UNVERIFIED credential".
+
+**P3 blocker?** **No.** The adapter does not claim to be the enforcement actor.
 
 ---
 
-## Row 4 — maxTimeoutSeconds bounds
+## Row 4 — `maxTimeoutSeconds` bounds
 
-**Official specification**: The core v2 spec defines `maxTimeoutSeconds` as a
-REQUIRED field in PaymentRequirements (a number). No bounds (minimum,
-maximum) are documented in the core spec or in any scheme binding (EVM, SVM,
-Starknet, Stellar).
+**Official specification (verbatim).**
 
-**SDK evidence**: The SDK uses the field to set transaction timeouts but
-does not enforce bounds.
+> `maxTimeoutSeconds` | `number` | Required | Maximum time allowed for payment completion
+> — §5.1.2
 
-**Disposition**: Without documented bounds, the adapter cannot validate
-whether a `maxTimeoutSeconds` value is "reasonable." The adapter validates
-that the field is present and is a positive number (structural check). The
-host decides whether a specific timeout value is acceptable for its
-integration.
+No minimum, maximum, or default is documented in the core spec or in any scheme
+binding.
 
-**P3 blocker**: No. The message face validates field presence and type. The
-bounds policy is a host-side integration decision, not a protocol
-specification constraint.
+**SDK evidence (non-normative, not encoded).** The SDK uses the field for transaction
+timeouts and enforces no bounds.
 
-**Typed refusal**: If `maxTimeoutSeconds` is missing, not a number, or ≤ 0,
-the adapter refuses `protocol_message_unverifiable` (REQUIRED positive
-number per the pinned schema).
+**Supported and implemented.** Presence and type: a positive integer. Nothing else.
+
+**Silent / inaccessible.** Bounds. The message face accepts any positive integer,
+including values a human would consider unreasonable; whether a given timeout is
+acceptable is a **host policy** decision, made where the host is the issuer (below)
+and left to P6 eligibility where it is not.
+
+**Host policy that uses the field (labelled as policy, not protocol).** When the
+PaySwap host advertises a 402, the advertised requirements are valid for that entry's
+`maxTimeoutSeconds` from the moment of advertisement. This is PaySwap's own staleness
+rule for a field the spec defines as "maximum time allowed for payment completion"; it
+is not a protocol semantic.
+
+**Exact typed refusal.** `protocol_message_unverifiable` when `maxTimeoutSeconds` is
+missing, not a number, not an integer, or ≤ 0.
+
+**Proving tests.** x402 face battery → "x402 message face — maxTimeoutSeconds presence
+(Row 4 disposition …)": the five malformed rows, plus the pin that 1, 60, 86 400 and
+2 147 483 647 are all structurally valid (no bounds invented).
+
+**P3 blocker?** **No.** Bounds are a host policy and are not encoded.
 
 ---
 
 ## Row 5 — Stale-402 server behavior
 
-**Official specification**: The HTTP transport spec defines the status-code
-mapping table (402 for "Payment Required" and "Payment Failed", 400 for
-"Invalid Payment", 500 for "Server Error", 200 for "Success"). It does not
-document what a server should do when a previously-issued 402 challenge has
-expired and a client retries with a stale challenge.
+**Official specification (verbatim).** The transport spec defines the status mapping
+and nothing about a stale challenge:
 
-**SDK evidence**: The SDK's facilitator returns `payment-expired` as the
-errorReason and the server re-issues a fresh 402 with a new challenge.
+> | x402 Error       | HTTP Status | Description                                     |
+> | Payment Required | 402         | Payment needed to access resource               |
+> | Invalid Payment  | 400         | Malformed payment payload or requirements       |
+> | Payment Failed   | 402         | Payment verification or settlement failed       |
+> | Server Error     | 500         | Internal server error during payment processing |
+> | Success          | 200         | Payment verified and settled successfully       |
+> — `specs/transports-v2/http.md`, Error Handling
 
-**Disposition**: The stale-402 behavior is a server implementation choice,
-not a protocol specification requirement. PaySwap's adapter validates
-STRUCTURE; the host decides whether to re-issue a challenge on stale-402.
+> Response bodies are a server implementation concern.
+> — `specs/transports-v2/http.md`, Response Body
 
-**P3 blocker**: No. The message face validates challenge/receipt structure.
-The server-side challenge lifecycle (issue → expire → re-issue) is outside
-PaySwap's adapter authority boundary.
+The words "expire", "stale" and "replay" do not occur in the transport spec at this
+commit; its only "retry" passages concern browser CORS handling.
 
-**Typed refusal**: If the adapter receives a payment payload whose
-`accepted.x402Version` does not match the pinned version (2), it refuses
-`protocol_message_unverifiable` (fail-closed on unknown versions per doc 12
-§6). Stale-402 handling is a host concern, not an adapter concern.
+**SDK evidence (non-normative, not encoded).** The facilitator SDK returns
+`payment-expired` and the server re-issues a fresh 402.
+
+**Supported and implemented.** A **host policy**, stated as such: requirements
+advertised by the PaySwap host are matchable for `maxTimeoutSeconds` from
+advertisement; after that, a payment for them is refused as stale. Re-advertising the
+same 402 is idempotent and refreshes the window, which is what a server re-issuing a
+402 needs.
+
+**Silent / inaccessible.** What a server *ought* to do. PaySwap's rule is one valid
+choice, not a spec requirement, and the register lists it under
+`unsupportedCapabilities` with `refusal: "protocol_challenge_expired"` so the
+distinction survives in code.
+
+**Exact typed refusal.** `protocol_challenge_expired` when the selected requirements
+were advertised by this host but the host clock is past their validity;
+`protocol_challenge_unknown` when they were never advertised by this host (or the
+host restarted).
+
+**Proving tests.** Host battery → "re-advertising the same 402 is idempotent and
+refreshes the host expiry (a stale 402 becomes payable again)"; "a payment for
+requirements that were never advertised refuses protocol_challenge_unknown". The
+desktop real-runtime battery (`packages/desktop/test/payswap-protocol-runtime-wiring.test.ts`,
+"protocol messages are handled through the real runtime …") proves the same
+host-clock mechanism is wired through the real desktop assembly (its stale arm uses
+MPP, whose challenge carries an explicit `expires`).
+
+**P3 blocker?** **No.** The behavior is a labelled host policy.
+
+---
+
+## Surfaces outside the supported subset (added 2026-11-23)
+
+These are not among the five spec-silent rows — the official documents do describe
+them — but they are not pinned field-by-field in the register, so the message face
+does not accept them. Each is **unavailable, not simulated**
+(doc 12 §6: "Unsupported features are unavailable, not simulated as production
+support").
+
+| Surface | Official status at `b711fa9f` | Typed refusal | Proving test (x402 face battery) |
+|---|---|---|---|
+| `upto`, `batch-settlement`, `auth-capture` and any scheme other than `exact` | Listed in §6 ("including `exact`, `upto`, and `batch-settlement`"); payload wire not pinned | `protocol_feature_unsupported` | "payment payload selecting an unpinned scheme (upto) refuses …", "… (batch-settlement) …" |
+| Non-EVM network families | CAIP-2 networks listed in §11.1; bindings not pinned | `protocol_feature_unsupported` | "payment payload selecting an unpinned network family (solana) refuses …" |
+| EVM transfer methods `permit2` and `erc7710` | Described in `scheme_exact_evm.md` §2–§3; not pinned field-by-field | `protocol_feature_unsupported` | "… the Permit2 transfer method …", "… the ERC-7710 transfer method …" |
+| Payment flows `upfront` and `escrow` | §6.1; PaySwap supports the default `authorization` flow only | `protocol_feature_unsupported` | "… a non-default payment flow (escrow) refuses …" |
+| A wire `x402Version` other than `2` | §5.1.2 field table: "Protocol version identifier (must be 2)" | `protocol_message_unverifiable` (unknown shape; the version-specific code `protocol_version_unsupported` is reserved for an adapter pin that disagrees with the register) | "stale wire x402Version refuses …", "future wire x402Version refuses …" |
+
+A `PaymentRequired` that *advertises* an unsupported entry is still structurally
+valid: eligibility is not the message face's decision (P6), and
+`evaluatePayswapX402RequirementSupport` is exported as the single implementation for
+that later use — "a PaymentRequired advertising an unpinned entry stays structurally
+valid (eligibility is not the message face's call)".
+
+## Signature posture (cross-cutting; the condition on "not a blocker")
+
+The addendum (§10), doc 12 (§6) and doc 05 (§13) require protocol adapters to verify
+signature, identity, replay and expiry "according to that protocol". The x402 face
+does **not** verify signatures at P3, and says so in its header. The requirement is
+not waived:
+
+- What verification would mean here is fixed by the spec — "Verify the signature is
+  valid and recovers to the `authorization.from` address" — and is self-contained (the
+  payer's own address is the key; no external trust anchor is needed).
+- It is not implemented because it requires secp256k1 public-key recovery and
+  keccak-256, and no audited dependency providing them is approved in this repository.
+  Hand-rolled cryptography is not an acceptable substitute.
+- Therefore, per the addendum's own closing sentence — "Integration remains disabled
+  until its evidence and acceptance suite passes" — no x402 message is mapped into a
+  PaySwap intent at P3, and the protocol host marks every consumed credential
+  `"unverified"`. This is the sense in which the rows above are "not P3 blockers":
+  P3 freezes the contract, the conformance suites and the host boundary, and leaves
+  integration disabled.
+
+**Explicitly not claimed at P3**
+
+- That any x402 signature has been verified, or that any payer address is authentic.
+- That any payment has settled. An inbound `SettlementResponse` is an untrusted
+  proposal; a receipt can be emitted only from evidence issued by the host's
+  evidence authority, and at P3 the production host has no issuer.
+- That an authorization is still inside its validity window. The host uses
+  `validBefore` only as the retention bound for the consumed-authorization record.
+- Any capability for PaySwap to *construct* an x402 payment (a client role).
 
 ---
 
 ## Summary
 
-| Row | P3 blocker? | Rationale |
-|---|---|---|
-| EVM window linkage | No | Structural validation sufficient; enforcement is facilitator-side (outside authority) |
-| Cross-scheme replay | No | Structural validation sufficient; no cross-scheme claim needed |
-| Enforcement actor | No | Adapter validates structure, does not enforce |
-| maxTimeoutSeconds bounds | No | Field presence + positive number check sufficient; bounds policy is host-side |
-| Stale-402 behavior | No | Challenge lifecycle is host-side; adapter validates structure |
+| Row | P3 blocker? | Exact typed refusal | Encoded? |
+|---|---|---|---|
+| 1. EVM window ↔ `maxTimeoutSeconds` linkage | No | `protocol_message_unverifiable` (window structure only) | Structural check only; linkage not encoded |
+| 2. Cross-scheme replay statement | No | `protocol_challenge_consumed` / `protocol_message_unverifiable` / `protocol_feature_unsupported` | Single-use on `(network, from, nonce)`; no cross-scheme claim |
+| 3. Enforcement-actor assignment | No | n/a — the adapter does not enforce and never claims to | Not an enforcement actor |
+| 4. `maxTimeoutSeconds` bounds | No | `protocol_message_unverifiable` (presence/type only) | Presence + positive integer; bounds are host policy |
+| 5. Stale-402 server behavior | No | `protocol_challenge_expired` / `protocol_challenge_unknown` | Labelled host policy |
 
-**Conclusion**: The five spec-silent rows do NOT block the x402 message-face
-implementation. The adapter can implement a **supported subset** (structural
-validation of the pinned wire schemas + typed refusals for malformed/unknown
-shapes) without fabricating any of the unverifiable semantics. The x402 face
-can be law-unblocked by explicitly recording these five rows as "unsupported
-capabilities with typed refusals" in the reverify list, changing the list's
-semantic from "implementation blocked" to "explicitly unsupported for this
-MVP."
+**Conclusion.** The five specification-silent rows do not block P3. The x402 message
+face is a supported subset with explicit refusals — `exact` on `eip155:*` via
+`eip3009` under the `authorization` flow — and it satisfies the canonical P3
+acceptance criteria for positive, malformed, replay, stale-version and
+signature-posture/refusal behavior *as a contract and conformance boundary*. It does
+not satisfy them as an integration, because real signature verification does not
+exist yet; integration stays disabled until it does.
