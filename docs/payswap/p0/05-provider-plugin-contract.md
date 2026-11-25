@@ -147,6 +147,8 @@ webhooks.verify         reconciliation.read
 
 `create` = money-affecting write. Write ops are only ever invoked by the **execution authority** (doc 06 §2.8), never by the model, never by the adapter's own initiative.
 
+This operation taxonomy defines the scope of PaySwap's unified PSP interface: it is intended to become the user's primary interface for supported **payment-related** operations on connected PSP accounts, not a generic mirror of every PSP dashboard or an arbitrary endpoint proxy. Expose an operation only when its schema, provider capability, account entitlement, evidence and refusal behavior are established. Provider-native differences remain visible where they affect behavior; unsupported and non-payment operations remain unavailable/out of scope. Read operations may be exposed as evidence-backed projections; every write remains host-authorized and execution-authority-only.
+
 ### 6.2 Typed request/response
 
 ```ts
@@ -245,6 +247,8 @@ Eligibility answers feed route discovery (doc 06 §2.7). An adapter answering fr
 The model gets **zero** direct provider tools. It sees the narrow common-layer MCP toolset exposed by the PaySwap official plugin (namespaced `plugin:payswap:*`, per the `plugin:<name>:<server>` convention):
 
 `payswap_compile_intent` · `payswap_check_eligibility` · `payswap_discover_routes` (always includes direct-route baseline) · `payswap_request_authorization` · `payswap_get_execution_status` · `payswap_get_account_overview` (redacted, evidence-based)
+
+This is the current closed initial toolset, not permission for a generic PSP proxy. As later milestones add the unified PSP operations interface and multi-party route discovery, any additional operation must be a versioned, explicitly enumerated typed tool/dispatch contract with its own authorization and acceptance tests. Never forward arbitrary ServiceChannels, provider URLs, methods or payloads from an agent to a PSP.
 
 Every tool is a thin, typed proxy. The MCP server process (stdio child of the host)
 holds no financial state, no credentials, and no ledger access; tool calls reach the

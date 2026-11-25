@@ -4,19 +4,16 @@
 
 ## 1. Layering principle
 
-PaySwap 4.0 is ZCode (agent harness) + an **additive financial layer**. Two layers, one application:
+PaySwap 4.0 is the existing ZCode application with one **payment-only financial product layer**. PaySwap has two connected user-facing responsibilities: it is the primary interface for payment operations on connected PSP accounts, and it discovers routes for user-submitted money-movement intents.
 
-- **ZCode layer stays semantically untouched.** Model providers (`packages/provider`, `packages/provider-node`, `packages/model-option-map`, `packages/services/src/model-provider/`) are LLM providers and remain exactly that. PaySwap never modifies the model-provider runtime, the agent process model, or the session/protocol semantics.
-- **The model is an orchestrator, never a financial authority.** It proposes, asks, and narrates; deterministic host-side code validates, routes, authorizes, executes, and records.
-- **No duplicate runtimes, no duplicate state owners.** Every new piece of state has exactly one writer; every new service rides the existing service/RPC/plugin surfaces (AGENTS.md: 避免重复状态和多条写入路径).
+- **PSP operations interface:** users connect payment-provider accounts, inspect evidence-backed account and payment data, and perform supported payment-related read/write operations through PaySwap. The common surface normalizes provider differences without becoming an arbitrary API proxy or claiming to expose non-payment features of a PSP dashboard.
+- **Money-movement route discovery:** users specify the desired financial outcome. PaySwap uses verified sender, recipient, provider, rail and participant capabilities to find direct, composed and multi-party routes that may improve cost, speed, reliability or feasibility.
+- **Payment-only boundary:** PaySwap does not integrate general-purpose non-payment service providers or discover products/services. A third party may enter a route only as a financial party contributing a verified payment capability and explicitly accepting its financial role.
+- **ZCode remains the interaction and agent-execution substrate.** Existing agents may assist with payment-specific research, comparison and explanation, but they do not constitute a customer-facing agent marketplace or a new agent runtime.
+- **The model is an orchestrator, never a financial authority.** It proposes, asks and narrates; deterministic host-side code validates payment facts, eligibility, routes, authorization, execution and reconciliation.
+- **No duplicate runtimes or state owners.** Every financial fact has one authoritative owner; all new services use the existing service/RPC/plugin surfaces.
 
-- **Agent-native control plane, not a second financial plane.** P3–P9 add outcome-first
-  agent discovery, financial mission coordination and bounded delegation over the
-  existing ZCode runtime. Agent catalog metadata, PSP capabilities and protocol
-  support are separate concepts. The coordinator cannot authorize or execute.
-  See `docs/payswap/p0/12-agent-payment-harness-architecture.md` and addendum §§8–12.
-
-The thirteen financial domains below remain the single PaySwap financial core and map onto actual upstream package boundaries verified at `a9fe401`. The agent-harness control plane composes these domains; it does not create a fourteenth execution or ledger authority.
+The thirteen financial domains below remain the single PaySwap financial core and map onto actual upstream package boundaries verified at `a9fe401`. The user-facing PSP interface and route-discovery experience compose these domains; they do not create a second provider registry, execution authority or ledger.
 
 ### 1.1 Package boundary map (summary)
 
@@ -51,29 +48,76 @@ Key types (illustrative):
 ```ts
 interface FinancialIntent {
   intentId: string;                     // UUIDv7
+  principal: PrincipalRef;               // the user/business that submitted this intent
   kind: "send" | "collect" | "refund" | "convert" | "sweep" | "review";
-  source: AccountRef;                   // connectionId + providerAccountId
-  recipient: VerifiedRecipientRef;      // provider-verified only (doc 04 §3.3)
+  sender: PaymentPartyRef;               // authenticated financial party
+  recipient: VerifiedRecipientRef;      // provider-verified recipient/payment instructions
   amount: Money;                        // { value: decimal-string, currency: ISO-4217 }
   purpose: PurposeCode;                 // typed + free text
-  constraints: { maxFees?: Money; deadline?: string; fxToleranceBps?: number };
+  sourceConstraints?: { connectionIds?: readonly string[]; acceptableRails?: readonly PaymentRailRef[] };
+  recipientConstraints?: { acceptableRails?: readonly PaymentRailRef[] };
+  constraints: {
+    maxTotalCost?: Money;
+    deadline?: string;
+    fxToleranceBps?: number;
+    privacy?: "standard" | "minimize_disclosure";
+    minimumReliability?: number;
+    allowPartial?: boolean;
+  };
+}
+
+interface RouteParticipant {
+  party: PaymentPartyRef;                // sender, recipient or additional payment participant
+  role: "sender" | "recipient" | "rail_bridge" | "settlement_participant";
+  commitmentRef?: string;                // absent until the participant explicitly commits
+}
+
+interface ParticipantCommitment {
+  commitmentId: string;
+  participant: PaymentPartyRef;
+  routeDigest: string;
+  legIds: readonly string[];
+  role: RouteParticipant["role"];
+  gives: Money;
+  receives?: Money;
+  compensation?: Money;
+  conditions: readonly RoutePrecondition[];
+  expiresAt: string;
+  evidenceRefs: readonly EvidenceRef[];
 }
 
 interface Route {
-  routeId: string; intentId: string;
+  routeId: string;
+  intentIds: readonly string[];          // one intent or a coordinated set of intents
   basis: "existing" | "conditional" | "opportunity";
-  baseline: boolean;                    // the direct route is always present & first
+  baseline: boolean;                     // direct route is computed first for each intent
+  participants: readonly RouteParticipant[];
+  commitments: readonly ParticipantCommitment[];
   legs: readonly Leg[];
-  estimate: { fees: Money; fx: readonly FxQuoteRef[]; eta: string };
-  preconditions: readonly RoutePrecondition[];   // for conditional routes
+  estimate: {
+    fees: Money;
+    fx: readonly FxQuoteRef[];
+    eta: string;
+    reliability?: number;
+    counterpartyRisk?: number;
+    participantBenefits?: readonly ParticipantBenefit[];
+  };
+  preconditions: readonly RoutePrecondition[];
 }
 
 interface Leg {
   legId: string;
-  providerId: string; operation: PayswapOperationId;
-  debit: Money; credit: Money;
-  idempotencyKey: string;               // allocated at validation; immutable
+  fromParty: PaymentPartyRef;
+  toParty: PaymentPartyRef;
+  rail: PaymentRailRef;
+  execution:
+    | { kind: "psp_operation"; providerId: string; connectionId: string; operation: PayswapOperationId }
+    | { kind: "participant_attested"; participantId: string; evidenceRequirement: string };
+  debit: Money;
+  credit: Money;
+  idempotencyKey: string;                // host-allocated at validation; immutable
   maxFee: Money;
+  dependsOn: readonly string[];
   fxCondition?: { quoteId: string; rate: string; maxSlippageBps: number; expiresAt: string };
 }
 ```
@@ -87,6 +131,7 @@ Decimal money is **always a string** in contracts (Paystack subunits, float haza
 - **State:** connection records (non-secret metadata: provider, mode test/live, display name, status, capability-record pointer). **Secrets never live here** — they go to `ICredentialService` under `payswap:psp:<providerId>:<connectionId>:<secretKind>` keys (the only secret store; `packages/services/src/credential/credentialService.ts` — AES-256-GCM, file-locked, corrupt-refuse-overwrite).
 - **Single writer:** the account service. UI reads via hooks; adapters read secrets only inside the host process.
 - **Interfaces:** `connect(operatorSecret | oauthStart)`, `refreshEvidence(connectionId)`, `revoke(connectionId)`, `listConnections()` — exposed over an additive RPC channel.
+- **Unified PSP interface:** the same host-owned account/provider services back the user's primary payment-operations surface. It exposes only typed, provider-supported payment operations (for example balances, payment objects, recipients/beneficiaries, collections, transfers, payouts, refunds, disputes and reconciliation where the provider actually supports them). Reads return evidence-backed, redacted projections. Writes remain unavailable until P7 and always pass the single execution authority and exact grant boundary. No raw arbitrary endpoint forwarding and no non-payment PSP dashboard features.
 - **Known gap filled additively:** plugin `userConfig.sensitive` has no secure store today (doc 05 §1); PaySwap credentials bypass plugin userConfig entirely.
 
 ### 2.3 Evidence-backed capability registry — new pure package `packages/payswap-provider`
@@ -112,19 +157,23 @@ Decimal money is **always a string** in contracts (Paystack subunits, float haza
 
 ### 2.6 FX & liquidity intelligence — `packages/services/src/payswap/fx/`
 
-- Read-only: provider balance queries (`balances.read`), rate quotes, corridor cost estimates. Evidence-stamped snapshots with TTL; every quote carries `{ quoteId, rate, source, fetchedAt, expiresAt }`.
-- **No execution role.** Feeds route discovery and approval display (FX conditions bind into authorization records).
+- Read-only: provider balance queries (`balances.read`), rate quotes, corridor cost estimates, and evidence-backed payment availability relevant to a route. Evidence-stamped snapshots with TTL; every quote carries `{ quoteId, rate, source, fetchedAt, expiresAt }`.
+- **No execution or credit role.** It may identify that an independently authorized participant has funds/payment capability available for a proposed leg; it does not lend, pool, hold or guarantee those funds. It feeds route discovery and approval display (FX and availability conditions bind into authorization records).
 - **State:** in-memory cache + evidence records in ledger; single writer = fx service.
 
-### 2.7 Deterministic route discovery — `packages/services/src/payswap/routing/`
+### 2.7 Deterministic route and opportunity discovery — `packages/services/src/payswap/routing/`
 
-- **Pure function:** `(intent, capabilitySnapshot, fxSnapshot, policy) → readonly Route[]`. Same inputs ⇒ same routes; no LLM in the loop.
+- **Single-intent route function:** `(intent, paymentCapabilitySnapshot, fxSnapshot, participantEvidence, policy) → readonly Route[]`. It computes a direct baseline first, then searches eligible multi-leg alternatives. Same verified inputs and policy version produce the same route candidates; no LLM output is treated as route truth.
+- **Multi-intent opportunity function:** `(intents, paymentCapabilitySnapshot, obligationEvidence, participantEvidence, fxSnapshot, policy) → readonly Route[]`. It searches for compatible obligations, payment-rail bridges and coordinated multi-party arrangements. Every candidate records all affected intent IDs and financial principals; an opportunity never silently rewrites an original intent.
+- **Payment capability graph:** built from connected PSP account evidence, verified recipient/payment instructions, supported rails and participant capability/availability evidence. It contains payment facts only. It is not a general provider/service directory.
 - **Route taxonomy:**
-  - **Direct-route baseline** (always computed, always shown first): single leg, source account → verified recipient, via one provider operation. Alternatives must justify themselves *against the baseline* (fees + FX + ETA + risk).
-  - **Existing routes:** every leg currently executable on evidence.
-  - **Conditional routes:** executable once declared preconditions hold (recipient verification pending, capability pending, funding in flight); preconditions are checkable, typed, and attached to the route.
-  - **Opportunity routes:** cheaper/faster alternatives under current FX/liquidity intelligence; never auto-selected; always presented with baseline comparison.
-- **State:** none; routes are ledger-recorded at proposal time.
+  - **Direct-route baseline:** the straightforward route for each intent, always computed and shown first whenever a direct option exists.
+  - **Existing routes:** every leg can execute now using current capability evidence and accepted commitments.
+  - **Conditional routes:** become executable only after typed preconditions are satisfied (for example recipient verification, provider capability refresh, participant acceptance or funding availability).
+  - **Opportunity routes:** introduce a new rail bridge, additional consenting payment participant or coordinated set of intents to improve feasibility, cost, speed or reliability. They are proposals, not executable routes until every affected principal accepts.
+- **Evaluation:** compare total fees, FX loss, ETA, evidence-backed reliability, route/participant risk, privacy, leg count, dependency depth, reversibility and participant compensation. Show who benefits, who pays, and what additional risks or obligations each party accepts.
+- **Invariants:** the planner uses the same leg-eligibility function as the executor; agents may suggest candidates but cannot mark a route eligible; no participant capability is inferred from a name, listing or model statement; original beneficiary, amount and purpose remain immutable unless a new proposal is explicitly accepted by every affected principal; unsupported or stale facts fail closed.
+- **State:** route and opportunity proposals, their intent links, evidence snapshots and subsequent participant commitments are ledger-recorded. The planner owns no balances and does not hold funds.
 
 ### 2.8 Financial execution authority — `packages/services/src/payswap/execution/`
 
@@ -132,6 +181,7 @@ The **only** component that submits provider write operations.
 
 - **Per-leg idempotency:** keys allocated at route validation, immutable; mapped by adapters onto provider-native mechanisms (doc 05 §6.3).
 - **Multi-leg saga:** a route executes as a saga in dependency order; each leg: prevalidate (`validateLegForSubmission`) → submit → read-back → record provisional outcome → next. The ledger is the saga journal (append-only), so **recovery = replay**: on restart the executor reconstructs in-flight sagas from the ledger, resubmits only legs never submitted (idempotency keys make that safe where providers guarantee it), and parks unknown legs for reconciliation.
+- **Multi-party authority:** each financial principal authorizes only its own accounts and obligations. Multi-party route execution requires a separately authenticated, route-digest-bound commitment/authorization for every affected principal and leg; one principal's grant can never authorize another participant. Commitment, authorization and settlement are separate states.
 - **Partial failure:** no blind auto-rollback. Compensation legs (refund, transfer-back) are themselves money movements — they must be **pre-authorized as part of the route** (visible in the approval record) or explicitly authorized afterwards. Failure of leg N halts dependent legs, surfaces a typed partial-failure state, and requests operator action.
 - **State:** saga/execution state lives in ledger DB records; single writer = executor. **The executor never trusts planner claims** — it revalidates every leg.
 
@@ -157,7 +207,7 @@ First-party in-process adapters implementing the plugin contract (doc 05). P0: `
 **Why this shape:** the repo's established local-persistence pattern is `node:sqlite` `DatabaseSync` with versioned migrations and a schema contract check (`packages/services/src/session/taskIndexRepo.ts`, `tasksDatabase/migrations.ts`, root `db:schema:check` script). PaySwap gets its **own database file** (different owner, different lifecycle than the task index) with the same engineering discipline: versioned schema migrations + root schema-contract test extension.
 
 - **Append-only, hash-chained:** each record carries `seq`, `type`, `payload`, `prevHash`, `recordHash = sha256(seq|type|payload|prevHash)`. No updates, no deletes; corrections are new records referencing the corrected record. (Digest-binding precedent in-repo: MCP trust `declarationDigest`.)
-- **Record types:** evidence (capability read-backs, fx quotes), intent, route proposal, authorization, execution events (submit/accepted/refused/unknown/read-back), normalized provider events, reconciliation records, policy/operator actions (incl. live-gate unlocks).
+- **Record types:** evidence (provider capability/read-backs, recipient/payment instructions, participant capability/commitment evidence, FX quotes), intent, linked-intent opportunity and route proposals, participant offers/commitments/withdrawals, per-principal authorization, execution events (submit/accepted/refused/unknown/read-back), normalized provider events, reconciliation records, policy/operator actions (incl. live-gate unlocks).
 - **Single writer, single process (R4-hardened; fenced in addendum rev 4):** the ledger repository is the only component that writes; every other domain *submits* records to it. Concurrency boundary (addendum §4.6, normative): the SQLite ledger is **never opened for writing by more than one process** — horizontal/multi-instance writes are prohibited; the repository holds a **fenced lease-based authority lock** for the database's lifetime (the bot-runtime-lock precedent — `packages/services/src/bots/channelRuntime.ts:153-238`: lock directory + atomically-renamed `owner.json` + 10 s heartbeat / 30 s TTL lease + dead-pid takeover + explicit release, held for the runtime-loop lifetime in upstream), hardened per addendum §4.6: bounded boot acquisition over the atomic-rename primitive that serializes simultaneous attempts, a **fencing generation** — monotonically increased on every acquisition, persisted in the ledger itself, and validated at the repository write boundary inside every write transaction (a stale holder after takeover refuses typed `ledger_authority_lost`; rows N36–N38) — **owner-checked release** (the upstream lock's release removes the lock directory only on an exact pid + instance id + nonce owner match, `channelRuntime.ts:220-232`, preserved verbatim with the fencing generation added to the authority validation, so a stale holder's release or deletion of a successor's lock is a no-op; row N42) — fail-closed typed `ledger_authority_unavailable`, and chain verification before the first post-takeover write. In the SQLite server topology the authority is never inferred: exactly one instance per logical ledger/workspace must be **explicitly configured** as authoritative, and an instance without explicit configuration refuses financial activation. *Correction (rev 3, retained):* the rev-2 "`withFileLock` held long-lived" wording was not implementable as stated — `withFileLock` is per-operation by contract (`packages/shared/src/node/privateFilePersistence.ts:51-86`); it remains in use only for short file-maintenance operations (export/backup). WAL + `BEGIN IMMEDIATE` (`taskIndexRepo.ts:398-402, 766-767`) serialize within the one process. Single-writer verification is a test, not a claim: N23 (second host refuses within the boot budget; crash arm — no takeover before TTL, chain verification before the first post-takeover write), N24 (replica write rejected at the repository), and N36–N38 + N42 (stale-holder write after takeover, simultaneous acquisition, stale-generation write, and the stale holder's release of the successor's lock refused by the owner/nonce/generation check). Hosted multi-user or horizontally scaled deployments must refuse financial activation until central PostgreSQL + authenticated principals exist (addendum §4.6, with the deployment-scope table).
 - **UI:** reads projections via RPC; the additive `payswapStore` never becomes the source of truth.
 
@@ -314,53 +364,33 @@ AGENTS.md mandates distinguishing desktop `desktop-continuous` from mobile `web-
 
 ---
 
-## 9. Agent-harness control plane and financial boundary
+## 9. Payment-task coordination and external protocol boundary
 
-This is an architectural extension for P3–P9, not a new financial domain or a claim
-that these modules already exist. The detailed normative design is
-`docs/payswap/p0/12-agent-payment-harness-architecture.md`.
+This is an architectural extension for P3–P9, not a new financial domain or a claim that the modules already exist. The detailed product boundary is in `docs/payswap/p0/12-agent-payment-harness-architecture.md`.
 
 ### 9.1 Target service seams
 
-- `packages/services/src/payswap/agent-catalog/`: read-only discovery projection
-  over ZCode agent/plugin/skill/workflow manifests and existing trust state.
-  It cannot install, enable or authorize an agent.
-- `packages/services/src/payswap/orchestration/`: coordinates existing ZCode
-  agent tasks using typed mission/task/artifact contracts. It owns no second
-  runtime, session database or payment state machine.
-- `packages/shared/src/payswap/delegation/` plus the existing host
-  authorization service: pure schema/intersection law and a single host-owned
-  authority-envelope/child-delegation writer.
-- `packages/shared/src/payswap/protocols/` and
-  `packages/services/src/payswap/protocols/<protocolId>/`: versioned external
-  protocol schemas and host adapters, distinct from PSP provider adapters.
+- `packages/services/src/payswap/orchestration/`: coordinates existing ZCode agent tasks for payment-specific intent clarification, provider capability analysis, single-/multi-intent route exploration, participant-commitment checks and reconciliation explanation. It owns no second runtime, general agent catalog, session database or payment state machine.
+- `packages/shared/src/payswap/delegation/` plus the existing host authorization service: pure schema/intersection law and the single host-owned authority-envelope/child-delegation writer. Every envelope remains bound to one financial principal.
+- `packages/shared/src/payswap/protocols/` and `packages/services/src/payswap/protocols/<protocolId>/`: versioned external payment-protocol schemas and host adapters, distinct from PSP provider adapters.
+- PSP payment operations continue through the single account/capability/provider/execution domains described above; do not add a generic provider API proxy or a separate payment runtime.
 
 ### 9.2 State and authority boundaries
 
-The existing ZCode runtime owns agent execution and task/session state. The
-agent catalog is derived/rebuildable; it does not become a second agent
-registry of record. The PaySwap ledger records financial mission references,
-agent identity/version, authority-envelope lineage, exact grants, provider
-events and reconciliation. It does not duplicate transcripts or carry
-credentials.
+The existing ZCode runtime owns agent execution and task/session state. PaySwap does not create an agent catalog or agent marketplace. The PaySwap ledger records financial intent/route references, payment-task provenance needed for audit, principal-bound authority-envelope lineage, participant commitments, exact grants, provider events and reconciliation. It does not duplicate transcripts or carry credentials.
 
-The orchestration service may request reads, prepare typed intents and ask the
-host authority service for a child delegation. It cannot write to PSPs, mint
-grants, approve its own proposals or assert settlement. The only path to a
-provider write remains the single PaySwap execution authority after exact
-grant validation and atomic consumption.
+The orchestration service may request reads, prepare typed intents, enumerate candidate routes and ask the host authority service to evaluate a bounded delegation. It cannot write to PSPs, mint grants, approve its own proposals, commit another principal, alter recipient/provider facts or assert settlement. The only path to a provider write remains the single PaySwap execution authority after exact grant validation and atomic consumption.
+
+For a multi-party route, each financial principal must separately authorize only its own account and obligations. A parent envelope or transaction grant cannot be reused for another principal; one user's authorization never creates authority over a participant's funds.
 
 ### 9.3 Delegation and protocol model
 
-A human-signed, bounded authority envelope may authorize host-only derivation
-of single-use transaction grants in autonomous mode. The child delegation
-chain can only narrow the parent's accounts, beneficiaries, purpose, amount,
-budget, fees, FX, providers, corridors, time and frequency. The human/business
-principal remains the financial principal; agents are recorded as delegated
-actors. Without an active envelope, use the existing direct Class-B approval
-flow.
+A human-signed, bounded authority envelope may authorize host-only derivation of single-use transaction grants in autonomous mode. The child delegation chain can only narrow the parent's accounts, beneficiaries, purpose, amount, budget, fees, FX, providers, corridors, time and frequency. The human/business principal remains the financial principal; agents are recorded as delegated actors. Without an active envelope, use the existing direct Class-B approval flow. A multi-party route requires separate principal-bound authorization for each participating principal's own legs; host coordination does not merge those authorities.
 
-AP2, x402, MPP, Visa Trusted Agent Protocol and Mastercard Agent Pay for
-Machines are protocol/identity integration targets, not new PSP adapters or
-execution authorities. Every adapter maps into the same PaySwap contracts and
-is disabled until its exact version and conformance behavior are verified.
+AP2, x402 and MPP are payment-protocol integration targets, not new PSP adapters or execution authorities. Visa Trusted Agent Protocol is deferred and may be considered only if a specific payment flow requires its agent-identity signal; it does not authorize supplier-portal automation or service discovery. Mastercard Agent Pay for Machines may be evaluated as a payment-specific partner/network integration when authoritative specifications, access and conformance exist. Existing ZCode agent/task interfaces are internal only, not an external discovery or marketplace feature. Every protocol adapter maps into the same PaySwap contracts and is disabled until its exact version and conformance behavior are verified.
+
+
+### 9.4 Additional payment-rail contracts
+
+If a blockchain rail is enabled, keep its integration distinct from PSP adapters and payment-protocol adapters. A `BlockchainRailAdapter` handles chain-specific transaction construction, simulation, fees, submission and finality/reorg observations; a `WalletConnector` connects a user-controlled external wallet, proves address control and requests signatures for exact host-authorized transactions; a `ChainInfrastructureProvider` supplies RPC/indexing/simulation infrastructure. None owns user keys, route choice, authorization, the financial ledger or settlement truth. Wallet proof-of-control is not spending permission; chain writes require the same exact host-minted grant, and finality is reconciled before settlement is declared. This remains an optional payment-rail family selected through a source-backed ADR; no PaySwap-issued or custodied wallet is implied.
+

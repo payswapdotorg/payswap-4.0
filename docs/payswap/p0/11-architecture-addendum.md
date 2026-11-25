@@ -1717,3 +1717,68 @@ The same country-by-country analysis applies to other corridors. A provider's
 licence does not automatically transfer to PaySwap; contract, outsourcing,
 data, AML/CFT, sanctions, disclosure and incident obligations must be
 allocated explicitly.
+
+## §13. Blockchain rail and external-wallet authorization boundary
+
+### 13.1 These are separate capabilities, not one "crypto provider"
+
+Blockchain support is a first-class rail in the existing PaySwap financial core. It is not a conventional PSP adapter and must not create a second payment engine, execution authority, provider registry or ledger.
+
+Keep these contracts separate:
+
+- **BlockchainRailAdapter:** chain-specific construction, simulation, submission lifecycle and observation of transfers or contract calls. It maps into the existing PaySwap intent, route, authorization, execution, evidence and reconciliation domains.
+- **WalletConnector:** connects an externally controlled wallet, proves address control, requests a signature for a host-approved exact transaction and reports wallet/signature/broadcast observations. It does not own policy, eligibility, grants or execution authority.
+- **ChainInfrastructureProvider:** RPC, gas estimation, simulation, indexing, event access and network-health evidence. It does not establish wallet ownership, authorization, route eligibility or settlement truth.
+- **PaymentProtocolAdapter:** remains the separate boundary for AP2, x402, MPP and other external payment protocols. A protocol message is not a wallet permission or a chain transaction.
+
+These interfaces are not interchangeable with a PSP ProviderAdapter. A single vendor may supply more than one service, but each capability must be registered, authenticated, evaluated and tested under its own contract.
+
+### 13.2 External wallet connection is not wallet issuance or custody
+
+PaySwap may connect a wallet that the user already controls, including compatible browser, mobile, hardware and standards-based wallets. It may associate a verified public address with the authenticated PaySwap principal/workspace and read public chain state supported by the selected network.
+
+Address proof-of-control uses a fresh, single-use, expiring, domain/origin/audience-bound challenge containing the intended address and chain/network context. Signature verification must be chain-appropriate, replay-resistant and independent of model/agent output. A successful connection proves only control of the address for the challenge. It does not grant spending permission, approve a token allowance, authorize a contract call or create a financial mandate.
+
+The connector MUST NOT request, import, export, store, transmit or log a seed phrase or private key. It MUST NOT receive an unrestricted signer handle, silently change wallet permissions, or treat wallet connection as consent to future transactions. Hardware-wallet confirmation remains in the wallet's own trusted interface.
+
+PaySwap does not issue or manage customer wallets or keys in this roadmap. An embedded/key-managed wallet, PaySwap-issued smart-account factory, server-held/session signing key or other PaySwap-controlled key path requires a separate product decision, threat model, custody/legal review and explicit roadmap amendment. The P8 "wallet workspace" is a connected-wallet view and signing handoff, not a wallet implementation.
+
+### 13.3 Exact blockchain transaction authorization
+
+Every blockchain write requires the same host-owned, closed, single-use Authorization Grant required by §1.3 and the P7 roadmap gate. The grant must bind the complete transaction semantics, including as applicable:
+
+- authenticated operator and financial principal, workspace, mission/task and delegated actor;
+- connected wallet/address and chain ID plus independently verified network identity;
+- sender, destination, native value, token contract, token amount and decimals;
+- contract method/selector and canonical calldata hash, including all encoded recipients and amounts;
+- spender and exact allowance amount for any token approval;
+- account/transaction nonce and replay domain;
+- gas limit, maximum fee/priority fee or other chain-specific fee ceiling;
+- route, beneficiary, purpose, expiry, evidence references and transaction digest; and
+- for supported smart-account execution, account, entry point, call-data hash, validation policy/key scope, nonce and paymaster/sponsorship terms.
+
+The host derives the transaction digest from validated canonical fields. The trusted approval surface displays the material transaction semantics, not merely opaque calldata or a wallet address. Any change to chain, sender, recipient, token, value, calldata, spender, allowance, nonce, fee ceiling, beneficiary or route requires a new grant and fresh signature. An approval transaction is its own exact grant; unlimited token approvals are prohibited by default.
+
+The initial execution path is human-present and user-wallet-signed. The wallet signs the exact host-approved transaction; the host verifies the signature/transaction binding; and a single designated submission owner (wallet connector or host relayer) submits it. A grant must not be submitted through both paths. The execution authority is the single owner of the submission lifecycle and ledger writes, even when the wallet performs the network broadcast.
+
+An ordinary externally controlled EOA is not eligible for unattended agent execution. Autonomous blockchain execution may be considered only through a separately specified, independently audited user-controlled smart-account or equivalent delegation mechanism that enforces the approved FAE constraints on-chain. A model, agent, plugin, protocol adapter or automation never receives the key, mints the grant or bypasses the host execution authority.
+
+### 13.4 Chain submission, finality and reconciliation
+
+A wallet signature, RPC acceptance, transaction hash, mempool observation or block inclusion is not by itself proof of settlement. The chain-specific reconciliation policy must define evidence sources, canonical network identity, confirmation/finality threshold, event decoding, reorganization handling and the authoritative terminal states.
+
+At minimum, the lifecycle distinguishes proposed, awaiting wallet signature, signed, submitted, included/confirmed, finalized, replaced, dropped, reverted, reorged and unknown. Exact naming may follow the existing state-machine conventions, but ambiguous outcomes must remain unknown until authoritative read-back resolves them. Never blindly resubmit an unknown transaction. Nonce reuse, replacement transactions, duplicate broadcasts, RPC disagreement and reorganizations require deterministic handling and permanent evidence.
+
+RPC/indexer results are observations with provider, network, block, timestamp and freshness provenance. For material operations, use independent read-back or corroboration appropriate to the chain's threat model. A transaction becomes reconciled only after the configured finality and expected-event conditions pass. The financial evidence ledger records the grant, signed transaction identity, submission owner, transaction hash, observations, finality evidence and reconciliation result; it does not become a customer token-balance ledger.
+
+### 13.5 Explicit exclusions and activation gates
+
+No blockchain write tool, wallet transaction-signing request, token approval, relayer submission, contract call or bridge operation is enabled before P7's complete authorization and reconciliation acceptance. P3 is limited to chain/network facts, read-only observations, connector interfaces and address proof-of-control.
+
+Cross-chain bridges, token swaps, wrapped assets, PaySwap-operated validators/sequencers, proprietary chains/rollups, PaySwap-issued wallets, custody, pooled liquidity, escrow, stored value and PaySwap-operated settlement are not implied by adding a blockchain rail. Each needs separate risk, protocol, legal and product approval. Any smart contract deployed or operated by PaySwap requires pinned source/toolchain/address, independent security review, upgrade/admin-key analysis, emergency controls and chain-specific monitoring before production activation.
+
+The general jurisdictional perimeter in §12 applies to blockchain connectivity, routing, transaction initiation, relaying, smart contracts, protocol integrations and node-to-node coordination. Non-custodial design does not itself establish a licensing exemption.
+
+### 13.6 Current platform sequencing
+
+Under the current product-owner direction, native Windows desktop is the active implementation and acceptance leg. The Linux leg remains parked. This addition does not authorize Linux implementation or claim Linux acceptance. Keep interfaces portable where practical, prove the new blockchain/wallet path on Windows first, and preserve a separate future Linux acceptance gate if and when that platform leg is explicitly resumed.

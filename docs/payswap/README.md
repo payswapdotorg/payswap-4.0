@@ -9,7 +9,7 @@ This directory is the repository's PaySwap product documentation. Read the docum
 3. **[Implementation playbook](IMPLEMENTATION-PLAYBOOK.md)** — mandatory TDD process, team operating model, evidence standard, autonomous advancement rules and reserved hard stops. It does not restate or redefine milestone scope.
 4. **[P0 financial architecture](p0/06-financial-architecture.md)** — domain ownership and package boundaries.
 5. **[Provider plugin contract](p0/05-provider-plugin-contract.md)** — provider adapter and integration contract.
-6. **[Agent-native Payment Harness architecture](p0/12-agent-payment-harness-architecture.md)** — the merged agent catalog, multi-agent mission, delegated-authority and protocol-interoperability design for P3–P9.
+6. **[Unified PSP Interface and Money-Movement Discovery architecture](p0/12-agent-payment-harness-architecture.md)** — the payment-only product boundary, connected-PSP operations interface, payment-capability graph, route/opportunity discovery and per-party authorization model for P3–P9.
 7. **[New Task interaction design](p0/07-newtask-interaction-design.md)** — approved financial interaction model.
 
 ## Single-source-of-truth rule
