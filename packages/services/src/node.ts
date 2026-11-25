@@ -3449,3 +3449,14 @@ export async function createServerHostServices(options: {
 
 export { scopeConversationShareServiceForAttachment } from "./conversation-share/conversationShareConnectionScope.js";
 export { localRuntimeNetworkCapture } from "./zcode-agent/localRuntimeNetworkCapture.js";
+// PaySwap P4 wave 1：evidence-backed provider capability registry（shared
+// CONTRACT「P4 provider capability registry」—— 纯推导 + 不可变注册表）。
+export {
+  createPayswapCapabilityRegistry,
+  derivePayswapCapabilityRecord,
+  PAYSWAP_CAPABILITY_OPERATION_VOCABULARY,
+  payswapCapabilityRecordSchema,
+  type PayswapCapabilityDerivationInput,
+  type PayswapCapabilityRecord,
+  type PayswapCapabilityRegistry,
+} from "#src/payswap/index.js";

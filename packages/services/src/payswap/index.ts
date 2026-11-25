@@ -62,6 +62,15 @@ export {
   type PayswapAccountDataReadRouterDependencies,
 } from "./providers/readAccountDataRouter.js";
 export {
+  createPayswapCapabilityRegistry,
+  derivePayswapCapabilityRecord,
+  PAYSWAP_CAPABILITY_OPERATION_VOCABULARY,
+  payswapCapabilityRecordSchema,
+  type PayswapCapabilityDerivationInput,
+  type PayswapCapabilityRecord,
+  type PayswapCapabilityRegistry,
+} from "./capability/capabilityRegistry.js";
+export {
   createPayswapAccountReadBackRouter,
   type PayswapAccountReadBackRouterDependencies,
 } from "./providers/readBackRouter.js";
