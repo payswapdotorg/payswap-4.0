@@ -364,53 +364,27 @@ AGENTS.md mandates distinguishing desktop `desktop-continuous` from mobile `web-
 
 ---
 
-## 9. Agent-harness control plane and financial boundary
+## 9. Payment-task coordination and external protocol boundary
 
-This is an architectural extension for P3–P9, not a new financial domain or a claim
-that these modules already exist. The detailed normative design is
-`docs/payswap/p0/12-agent-payment-harness-architecture.md`.
+This is an architectural extension for P3–P9, not a new financial domain or a claim that the modules already exist. The detailed product boundary is in `docs/payswap/p0/12-agent-payment-harness-architecture.md`.
 
 ### 9.1 Target service seams
 
-- `packages/services/src/payswap/agent-catalog/`: read-only discovery projection
-  over ZCode agent/plugin/skill/workflow manifests and existing trust state.
-  It cannot install, enable or authorize an agent.
-- `packages/services/src/payswap/orchestration/`: coordinates existing ZCode
-  agent tasks using typed mission/task/artifact contracts. It owns no second
-  runtime, session database or payment state machine.
-- `packages/shared/src/payswap/delegation/` plus the existing host
-  authorization service: pure schema/intersection law and a single host-owned
-  authority-envelope/child-delegation writer.
-- `packages/shared/src/payswap/protocols/` and
-  `packages/services/src/payswap/protocols/<protocolId>/`: versioned external
-  protocol schemas and host adapters, distinct from PSP provider adapters.
+- `packages/services/src/payswap/orchestration/`: coordinates existing ZCode agent tasks for payment-specific intent clarification, provider capability analysis, single-/multi-intent route exploration, participant-commitment checks and reconciliation explanation. It owns no second runtime, general agent catalog, session database or payment state machine.
+- `packages/shared/src/payswap/delegation/` plus the existing host authorization service: pure schema/intersection law and the single host-owned authority-envelope/child-delegation writer. Every envelope remains bound to one financial principal.
+- `packages/shared/src/payswap/protocols/` and `packages/services/src/payswap/protocols/<protocolId>/`: versioned external payment-protocol schemas and host adapters, distinct from PSP provider adapters.
+- PSP payment operations continue through the single account/capability/provider/execution domains described above; do not add a generic provider API proxy or a separate payment runtime.
 
 ### 9.2 State and authority boundaries
 
-The existing ZCode runtime owns agent execution and task/session state. The
-agent catalog is derived/rebuildable; it does not become a second agent
-registry of record. The PaySwap ledger records financial mission references,
-agent identity/version, authority-envelope lineage, exact grants, provider
-events and reconciliation. It does not duplicate transcripts or carry
-credentials.
+The existing ZCode runtime owns agent execution and task/session state. PaySwap does not create an agent catalog or agent marketplace. The PaySwap ledger records financial intent/route references, payment-task provenance needed for audit, principal-bound authority-envelope lineage, participant commitments, exact grants, provider events and reconciliation. It does not duplicate transcripts or carry credentials.
 
-The orchestration service may request reads, prepare typed intents and ask the
-host authority service for a child delegation. It cannot write to PSPs, mint
-grants, approve its own proposals or assert settlement. The only path to a
-provider write remains the single PaySwap execution authority after exact
-grant validation and atomic consumption.
+The orchestration service may request reads, prepare typed intents, enumerate candidate routes and ask the host authority service to evaluate a bounded delegation. It cannot write to PSPs, mint grants, approve its own proposals, commit another principal, alter recipient/provider facts or assert settlement. The only path to a provider write remains the single PaySwap execution authority after exact grant validation and atomic consumption.
+
+For a multi-party route, each financial principal must separately authorize only its own account and obligations. A parent envelope or transaction grant cannot be reused for another principal; one user's authorization never creates authority over a participant's funds.
 
 ### 9.3 Delegation and protocol model
 
-A human-signed, bounded authority envelope may authorize host-only derivation
-of single-use transaction grants in autonomous mode. The child delegation
-chain can only narrow the parent's accounts, beneficiaries, purpose, amount,
-budget, fees, FX, providers, corridors, time and frequency. The human/business
-principal remains the financial principal; agents are recorded as delegated
-actors. Without an active envelope, use the existing direct Class-B approval
-flow.
+A human-signed, bounded authority envelope may authorize host-only derivation of single-use transaction grants in autonomous mode. The child delegation chain can only narrow the parent's accounts, beneficiaries, purpose, amount, budget, fees, FX, providers, corridors, time and frequency. The human/business principal remains the financial principal; agents are recorded as delegated actors. Without an active envelope, use the existing direct Class-B approval flow. A multi-party route requires separate principal-bound authorization for each participating principal's own legs; host coordination does not merge those authorities.
 
-AP2, x402, MPP, Visa Trusted Agent Protocol and Mastercard Agent Pay for
-Machines are protocol/identity integration targets, not new PSP adapters or
-execution authorities. Every adapter maps into the same PaySwap contracts and
-is disabled until its exact version and conformance behavior are verified.
+AP2, x402 and MPP are payment-protocol integration targets, not new PSP adapters or execution authorities. Visa Trusted Agent Protocol is deferred and may be considered only if a specific payment flow requires its agent-identity signal; it does not authorize supplier-portal automation or service discovery. Mastercard Agent Pay for Machines may be evaluated as a payment-specific partner/network integration when authoritative specifications, access and conformance exist. Existing ZCode agent/task interfaces are internal only, not an external discovery or marketplace feature. Every protocol adapter maps into the same PaySwap contracts and is disabled until its exact version and conformance behavior are verified.
