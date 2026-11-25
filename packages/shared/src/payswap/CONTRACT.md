@@ -376,3 +376,9 @@ claims」+ doc 12 §3「Keep three catalogs distinct」+ §2.3「exactly one fin
 - **restriction 摘要**：`requirements` 摘要（Stripe 式）按 ADR-P2-1 修订 2026-11-17
   的 null 语义进 `currentlyDue/pastDue` 计数 restriction + `note`（带检索引用）；
   `note` 是唯一允许携带静态知识的位置（doc 05 §4）。
+
+**词汇表修正（2026-11-25，GREEN 首跑暴露）**：一个 provider capability 名可映射到
+**多个**操作 id —— `card_payments` → `{collections.read, payment_objects.read}`
+（Stripe 的 charges 既是收款面也是支付对象面；两个操作都由该旗真实证据支撑）。
+多值映射使「能力旗 × 类别读」对同一操作的真实重叠成为可能 —— 保守序因此有实际
+裁决对象（例如旗 pending × 类别读 ok ⇒ pending）。
