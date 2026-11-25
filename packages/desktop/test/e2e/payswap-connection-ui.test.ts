@@ -14,6 +14,7 @@ import {
   waitForDefaultWorkspaceReady,
 } from "./helpers/desktop-app.js";
 import { sel } from "./helpers/selectors.js";
+import { custodianSlotBlobPath } from "./helpers/payswap-custodian-slots.js";
 import { skipOccupationOnboardingIfPresent } from "./helpers/occupation-onboarding.js";
 import { restartIntoWorkspacePreservingProfile } from "./helpers/model-provider-restart-runtime.js";
 
@@ -77,7 +78,6 @@ const STORAGE_REFUSAL_CODE = "PAYSWAP_PSP_SECURE_STORAGE_UNAVAILABLE";
 const CUSTODIAN_REFUSAL_CODE = "custodian_unavailable";
 /** ADR-P2-3 custodian 架构判定面：win32 + SYSTEM 托管服务端点在场 = 托管保管。 */
 const CUSTODIAN_ENDPOINT_FILE = "C:\\ProgramData\\payswap\\custodian-endpoint.json";
-const CUSTODIAN_KEY_BLOB_FILE = "C:\\ProgramData\\payswap\\custodian-key.bin";
 
 function custodianBackedAtRest(): boolean {
   return process.platform === "win32" && existsSync(CUSTODIAN_ENDPOINT_FILE);
@@ -371,7 +371,10 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
         expect(credentials).not.toContain(connectionId);
         expect(credentials).not.toContain(VALID_FORMAT_TEST_SECRET);
       }
-      expect(existsSync(CUSTODIAN_KEY_BLOB_FILE)).toBe(true);
+      // v1.1+ 命名槽布局：本连接自己的槽位 blob 在场（托管保管本连接的秘密；
+      // 派生见 helpers/payswap-custodian-slots.ts —— 旧断言指 v1.0 单槽路径，
+      // v1.1 起恒假）。
+      expect(existsSync(custodianSlotBlobPath("stripe", connectionId, "api-key"))).toBe(true);
     } else {
       expect(credentials).not.toBeNull();
       expect(credentials).toContain(connectionId);
@@ -437,8 +440,9 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
       expect(credentials).not.toContain(connectionId);
     }
     if (custodianBackedAtRest()) {
-      // ADR-P2-3：托管清除走 drop —— SYSTEM blob 必须证实不在（撤销必证实清除）。
-      expect(existsSync(CUSTODIAN_KEY_BLOB_FILE)).toBe(false);
+      // ADR-P2-3：托管清除走 drop —— 本连接的槽位 blob 必须证实不在（撤销必
+      // 证实清除；v1.1+ 命名槽布局 —— 旧断言指 v1.0 单槽路径 = v1.1 起空洞通过）。
+      expect(existsSync(custodianSlotBlobPath("stripe", connectionId, "api-key"))).toBe(false);
     }
     const connections = await readTextIfExists(CONNECTIONS_STORE_FILE);
     expect(connections).toContain(connectionId);
@@ -456,7 +460,10 @@ describe("P2.2 连接流 desktop Browser E2E 臂（ADR-P2-2 Decision 4 + Gate E2
 
 });
 
-const PAYPAL_CLIENT_ID = "AXe2payswapRealWindowClientId";
+// 56 字符（custodian 推送形状下界 32 —— 服务端纵深防御；真实 client id 80 字符
+// 同规。29 字符的旧合成值在托管路径被 push-shape-invalid 拒绝 —— 2026-11-25
+// 五分类 runner 首跑暴露）。
+const PAYPAL_CLIENT_ID = "AXe2payswapRealWindowClientId" + "0".repeat(27);
 const PAYPAL_CLIENT_SECRET = `EXe2payswapRealWindowSecret${"4".repeat(52)}`;
 
 /** 当前 notice 状态（不存在 = null）—— no-op 提交的「不变」判据面。 */
@@ -654,7 +661,11 @@ describe("P3 连接流 PayPal 臂（client-credentials 形态经真实窗口 IPC
       expect(credentials).not.toContain(PAYPAL_CLIENT_ID);
     }
     if (custodianBackedAtRest()) {
-      expect(existsSync(CUSTODIAN_KEY_BLOB_FILE)).toBe(false);
+      // 双槽清除（v1.1+ 命名槽布局 —— blob 文件名不是 wire；派生见
+      // helpers/payswap-custodian-slots.ts）：本连接的两个槽位 blob 都必须
+      // 证实不在（撤销必证实清除 —— A3.6；旧断言指 v1.0 单槽路径 = 空洞）。
+      expect(existsSync(custodianSlotBlobPath("paypal", connectionId, "client-id"))).toBe(false);
+      expect(existsSync(custodianSlotBlobPath("paypal", connectionId, "client-secret"))).toBe(false);
     }
     const connectionsAfter = await readTextIfExists(CONNECTIONS_STORE_FILE);
     expect(connectionsAfter).toContain(connectionId);
@@ -722,7 +733,15 @@ describe("Gate E2 损坏键臂（存储可用环境）—— 有意置于 PayPal
         if (credentialsCustodian !== null) {
           expect(credentialsCustodian).not.toContain(VALID_FORMAT_TEST_SECRET);
         }
-        expect(existsSync(CUSTODIAN_KEY_BLOB_FILE)).toBe(true);
+        // v1.1+ 命名槽布局：本连接（E2 Stripe Fallback）自己的槽位 blob 在场。
+        const fallbackRecord = (JSON.parse(connectionsCustodian ?? "[]") as Array<{
+          connectionId?: string;
+          displayName?: string;
+        }>).find((record) => record.displayName === "E2 Stripe Fallback");
+        expect(fallbackRecord?.connectionId).toBeDefined();
+        expect(
+          existsSync(custodianSlotBlobPath("stripe", fallbackRecord!.connectionId!, "api-key")),
+        ).toBe(true);
       }
       return;
     }

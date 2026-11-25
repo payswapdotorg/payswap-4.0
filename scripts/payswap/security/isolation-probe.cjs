@@ -75,8 +75,35 @@ const HELPER =
   );
 const CUSTODIAN_DIR = path.join("C:", "ProgramData", "payswap");
 const ENDPOINT_FILE = path.join(CUSTODIAN_DIR, "custodian-endpoint.json");
-const KEY_BLOB_FILE = path.join(CUSTODIAN_DIR, "custodian-key.bin");
 const DIAG_FILE = path.join(CUSTODIAN_DIR, "custodian-diag.log");
+
+/**
+ * Custody material on disk (custodian v1.1+ named-slot layout): the legacy
+ * single-slot blob (if present) plus every `custodian-key-slot-<hex>.bin`
+ * named-slot blob. Blob FILENAMES are not the wire (the legacy no-slot wire
+ * stays byte-for-byte unchanged); a probe that only knows the legacy path
+ * goes vacuously red once named slots exist (found 2026-11-25: the first
+ * five-stage runner re-run after v1.1 landed reported "key blob absent" while
+ * two named-slot blobs held real custody material). Non-matching files
+ * (endpoint/config/diag, the service dir, junk .bin) are never listed.
+ */
+function listCustodianKeyBlobs(dir) {
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir);
+  } catch {
+    return [];
+  }
+  const blobs = entries.includes("custodian-key.bin")
+    ? [path.join(dir, "custodian-key.bin")]
+    : [];
+  for (const name of entries
+    .filter((entry) => /^custodian-key-slot-[0-9a-f]+\.bin$/i.test(entry))
+    .sort()) {
+    blobs.push(path.join(dir, name));
+  }
+  return blobs;
+}
 const HOST_NODE = process.execPath;
 
 /** sha256 of the fresh credential — the only form in which the key is handled here. */
@@ -100,7 +127,7 @@ const { execSync, spawnSync } = require("node:child_process");
 const [dataV2, localState, helperPath] = process.argv.slice(2);
 const out = {
   masterKey: false, fileKey: false, slotDigests: [], slotCount: 0,
-  blobEperm: false, blobRead: false,
+  blobEperm: false, blobRead: false, blobAttempts: 0,
   pipeReplyBytes: 0, pipeReplyDigest: "", pipeGetRefused: true,
   copiedHelperRegisterExit: -1,
   errors: []
@@ -145,15 +172,33 @@ try {
 } catch (e) {
   out.errors.push("recovery-chain:" + String(e).slice(0, 120));
 }
-// (1b) custodian blob — plain read attempt (expected EPERM under SYSTEM-only ACL)
+// (1b) custodian blobs — plain read attempts over the v1.1+ named-slot layout
+// (legacy single blob if present, then every named-slot blob). Expected: every
+// attempt blocked (EPERM/EACCES under the SYSTEM-only ACL) or absent; ANY
+// readable byte stream is a boundary failure. Blob filenames are not the wire.
+let blobNames = [];
 try {
-  const blob = fs.readFileSync("C:\\\\ProgramData\\\\payswap\\\\custodian-key.bin");
-  out.blobRead = true;
-  out.blobDigest = digest(blob);
+  const entries = fs.readdirSync("C:\\\\ProgramData\\\\payswap");
+  if (entries.includes("custodian-key.bin")) blobNames.push("custodian-key.bin");
+  blobNames = blobNames.concat(
+    entries.filter((n) => /^custodian-key-slot-[0-9a-f]+\\.bin$/i.test(n)).sort()
+  );
 } catch (e) {
-  out.blobEperm = e.code === "EPERM" || e.code === "EACCES";
-  if (!out.blobEperm) out.errors.push("blob:" + String(e).slice(0, 80));
+  out.errors.push("blob-list:" + String(e).slice(0, 80));
 }
+for (const blobName of blobNames) {
+  out.blobAttempts += 1;
+  try {
+    const blob = fs.readFileSync("C:\\\\ProgramData\\\\payswap\\\\" + blobName);
+    out.blobRead = true;
+    out.blobDigest = digest(blob);
+  } catch (e) {
+    if (e.code !== "EPERM" && e.code !== "EACCES") {
+      out.errors.push("blob:" + blobName + ":" + String(e).slice(0, 60));
+    }
+  }
+}
+out.blobEperm = out.blobAttempts > 0 && !out.blobRead;
 // (2) custodian RPC boundary — real token, non-electron parent
 function rawPipeAttempt(cb) {
   let endpoint = null;
@@ -210,15 +255,21 @@ async function main() {
   // ------------------------------------------------------------------
   console.log("Preconditions (meaningful-green):");
   const endpointExists = fs.existsSync(ENDPOINT_FILE);
-  const blobExists = fs.existsSync(KEY_BLOB_FILE);
+  const blobFiles = listCustodianKeyBlobs(CUSTODIAN_DIR);
+  const blobExists = blobFiles.length > 0;
+  const legacyCount = blobFiles.filter((p) => path.basename(p) === "custodian-key.bin").length;
   const diagText = fs.existsSync(DIAG_FILE) ? fs.readFileSync(DIAG_FILE, "utf8") : "";
   const freshInstalled =
     diagText.includes("custodian:push-ok") || diagText.includes("custodian:bootstrap-key-restored");
   console.log("  custodian endpoint file :", endpointExists);
-  console.log("  key blob present        :", blobExists);
+  console.log(
+    "  key blob present        :",
+    blobExists,
+    `(legacy: ${legacyCount}, named slots: ${blobFiles.length - legacyCount})`,
+  );
   console.log("  fresh credential in custody (diag):", freshInstalled);
   if (!endpointExists) fail("custodian endpoint file absent — service not active");
-  if (!blobExists) fail("key blob absent — no fresh credential in custody to defend");
+  if (!blobExists) fail("key blob absent — no custody material on disk to defend (legacy or named-slot blob)");
   if (!freshInstalled) fail("diag shows no push-ok/bootstrap-key-restored — no fresh credential installed");
 
   let freshDigest = null;
@@ -253,12 +304,19 @@ async function main() {
       console.log("  master key recovered    :", out.masterKey);
       console.log("  file key unwrapped      :", out.fileKey);
       console.log("  enc:v1 PSP slots found  :", out.slotCount, "(digests only)");
-      console.log("  custodian blob          :", out.blobRead ? "READ (boundary FAIL)" : out.blobEperm ? "EPERM (blocked)" : "unexpected error");
+      console.log(
+        "  custodian blobs         :",
+        `${out.blobAttempts || 0} attempted ->`,
+        out.blobRead ? "READ (boundary FAIL)" : "all blocked (EPERM/EACCES)",
+      );
       console.log("  pipe get reply          :", out.pipeReplyBytes === 0 ? "no reply (refused)" : `REPLY ${out.pipeReplyBytes} bytes (boundary FAIL)`);
       console.log("  copied-helper register  : exit", out.copiedHelperRegisterExit, out.copiedHelperRegisterExit === 0 ? "(boundary FAIL)" : "(refused)");
 
       // (1) fresh credential must not be recoverable from user files
       if (out.blobRead) fail("same-user process READ the custodian key blob");
+      if ((out.blobAttempts || 0) === 0) {
+        fail("no custodian blob attempted — the at-rest blob boundary went unexercised");
+      }
       const freshRecovered = (out.slotDigests || []).some((d) => d === freshDigest);
       if (freshRecovered) fail("FRESH credential recovered from a user-readable enc:v1 slot (legacy fallback)");
       if ((out.slotCount || 0) > 0) {
@@ -314,7 +372,12 @@ async function main() {
   console.log("verdict:", verdict);
 }
 
-main().catch((e) => {
-  console.error("isolation-probe crashed:", e.message);
-  process.exit(1);
-});
+// 直接执行才跑验收探针；require（回归矩阵）只取导出的纯助手。
+if (require.main === module) {
+  main().catch((e) => {
+    console.error("isolation-probe crashed:", e.message);
+    process.exit(1);
+  });
+}
+
+module.exports = { listCustodianKeyBlobs };

@@ -18,11 +18,12 @@
  * 3. **读回 wire 形状**：GET https://api.paystack.co/balance + Bearer 秘密头 +
  *    timeoutMs 随 init。
  * 4. **auth-failed 行（唯一 expiry 证据）**：401 → `auth-failed`；detail 零秘密。
- * 5. **身份缺口行（P3 的诚实纪律）**：200 + 官方封套（status:true + data 数组）
- *    = 凭据被 provider 认证，但 verified 的 providerAccountId 无官方来源 ——
- *    显式 typed `unavailable`（状态不变；绝不伪造身份摘要；401 的 expiry 证据
- *    不受影响）。status 非 true / 非 JSON / data 非数组 / 非 200/401 / 传输异常
- *    一律 `unavailable`。
+ * 5. **身份/能力缺口行（ADR-P2-1 修订 2026-11-24）**：200 + 官方封套（status:true
+ *    + data 数组）= 凭据被 provider 认证 → `verified`，携 `providerAccountId:
+ *    null` + `identityGap`（官方无 self-identity 端点）+ `capabilityGap`（官方无
+ *    能力读回面）—— 绝不伪造身份摘要、绝不伪造能力证据；401 的 expiry 证据不受
+ *    影响。status 非 true / 非 JSON / data 非数组 / 非 200/401 / 传输异常一律
+ *    `unavailable`。
  * 6. **装配防线（先于网络）**：providerId/secretKind 错配 → 抛出（零触达）；
  *    **ADR-P2-3 custodian 标记凭据 → typed `unavailable` 零触达**（托管通道是
  *    Stripe 限定的 P2 已验收边界 —— Paystack 绝不借道）；前缀/记录模式不一致 →
@@ -30,9 +31,9 @@
  * 7. **路由器**：按 providerId 分发；未注册 provider → 抛出（服务映射
  *    read_back_unavailable）。
  * 8. **法则集成行**：真实 accountService + 真实 store —— connect Paystack →
- *    401 读回翻 expired（安全行）→ 200 读回 = typed 拒绝、状态不变（身份缺口
- *    在连接面的呈现）；custodian 桥在位时 connect push 照常入托管、refresh 的
- *    标记凭据被零触达拒绝。
+ *    401 读回翻 expired（安全行）→ 200 读回 = `verified` 携 typed 身份缺口、
+ *    expired 翻回 connected（恢复行）；custodian 桥在位时 connect push 照常入
+ *    托管、refresh 的标记凭据被零触达拒绝。
  */
 
 import { createServer, type Server } from "node:http";
@@ -145,6 +146,12 @@ describe("PAYSWAP_PAYSTACK_AUTH_SPEC + evidence pin (P3 provider half — dated-
     const reverify = PAYSWAP_PAYSTACK_EVIDENCE_PIN.reverifyBeforeAdapterUse.join("\n");
     // 身份缺口必须显式在案 —— verified 的 providerAccountId 对 Paystack 无官方来源。
     expect(reverify).toMatch(/self-identity/i);
+    // 能力面缺席是已钉住的官方事实（官方 API reference 索引 2026-11-24 复核）——
+    // adapter 的 capabilityGap 声明只允许编码这里列出的事实。
+    const verified = PAYSWAP_PAYSTACK_EVIDENCE_PIN.verifiedBoundaryFacts.join("\n");
+    expect(verified).toMatch(/self-identity/i);
+    expect(verified).toMatch(/capabilit/i);
+    expect(verified).toMatch(/2026-11-24/);
   });
 });
 
@@ -171,15 +178,23 @@ describe("payswap paystack read-back adapter (P3 provider half) — outcome mapp
     expect(call?.init?.timeoutMs).toBe(4321);
   });
 
-  it("a successful balance read is NOT fabricated into a verified outcome: the official-API identity gap surfaces as typed unavailable (state unchanged, no invented account id)", async () => {
+  it("a successful balance read is verified by the provider and carries typed gaps: a null account id + identityGap + capabilityGap (no invented identity, no invented capability evidence)", async () => {
     const client = recordingApiClient(() => jsonResponse(200, VALID_BALANCE_ENVELOPE));
     const port = createPaystackAccountReadBackPort({ apiClient: client });
     const outcome = await port(baseInput());
-    expect(outcome.kind).toBe("unavailable");
-    if (outcome.kind === "unavailable") {
+    expect(outcome.kind).toBe("verified");
+    if (outcome.kind === "verified") {
+      // 凭据被 provider 认证（200 + 官方封套）= verified；身份缺席只是「provider
+      // 未签发标识」，读回并没有失败。
+      expect(outcome.providerAccountId).toBe(null);
+      expect(outcome.identityGap?.code).toBe("provider_identity_not_exposed");
+      expect(outcome.identityGap?.message).toMatch(/self-identity|identity/i);
+      expect(outcome.capabilityGap?.code).toBe("capability_evidence_not_exposed");
+      expect(outcome.capabilityGap?.message).toMatch(/capabilit/i);
+      // 绝不伪造能力证据。
+      expect("evidence" in outcome).toBe(false);
       // 缺口必须可操作、诚实且零秘密材料。
-      expect(outcome.detail).toMatch(/self-identity|identity/i);
-      expect(outcome.detail.includes(TEST_SECRET)).toBe(false);
+      expect(JSON.stringify(outcome).includes(TEST_SECRET)).toBe(false);
     }
     expect(payswapAccountReadBackOutcomeSchema.safeParse(outcome).success).toBe(true);
     expect(client.calls.length).toBe(1);
@@ -221,7 +236,12 @@ describe("payswap paystack read-back adapter (P3 provider half) — outcome mapp
     const client = recordingApiClient(() => jsonResponse(200, VALID_BALANCE_ENVELOPE));
     const port = createPaystackAccountReadBackPort({ apiClient: client });
     const outcome = await port(baseInput({ mode: "live", secret: LIVE_SECRET }));
-    expect(outcome.kind).toBe("unavailable"); // 身份缺口同样适用于 live —— 不伪造身份。
+    // 缺口同样适用于 live —— 凭据被认证，但不伪造身份、不伪造能力证据。
+    expect(outcome.kind).toBe("verified");
+    if (outcome.kind === "verified") {
+      expect(outcome.providerAccountId).toBe(null);
+      expect(outcome.identityGap?.code).toBe("provider_identity_not_exposed");
+    }
     expect(client.calls[0]?.input).toBe(PAYSTACK_BALANCE_URL);
     const auth = (client.calls[0]?.init?.headers as Record<string, string>)?.Authorization;
     expect(auth).toBe(`Bearer ${LIVE_SECRET}`);
@@ -251,7 +271,7 @@ describe("payswap paystack read-back adapter (P3 provider half) — assembly gua
     expect(client.calls.length).toBe(0);
   });
 
-  it("v1.2: the custodian-managed marker credential rides the injected transport (the wrapper forwards it to the custodian GET proxy with the per-host closed set) — the identity-gap outcome applies as usual", async () => {
+  it("v1.2: the custodian-managed marker credential rides the injected transport (the wrapper forwards it to the custodian GET proxy with the per-host closed set) — the verified + typed-gap outcome applies as usual", async () => {
     const client = recordingApiClient(() => jsonResponse(200, VALID_BALANCE_ENVELOPE));
     const port = createPaystackAccountReadBackPort({ apiClient: client });
     const markerSecret = "sk_test_custodian-managed:payswap:psp:paystack:c1:api-key";
@@ -263,7 +283,16 @@ describe("payswap paystack read-back adapter (P3 provider half) — assembly gua
     // the per-host closed set — the adapter no longer pre-refuses).
     expect((client.calls[0]?.init?.headers as Record<string, string>)?.Authorization).toBe("Bearer " + markerSecret);
     expect(client.calls[0]?.input).toBe("https://api.paystack.co/balance");
-    expect(outcome.kind).toBe("unavailable");
+    // 托管路径与直连路径同一结局：凭据被认证 → verified 携 typed 缺口（缺口消息
+    // 绝不携带标记凭据材料）。
+    expect(outcome.kind).toBe("verified");
+    if (outcome.kind === "verified") {
+      expect(outcome.providerAccountId).toBe(null);
+      expect(outcome.identityGap?.code).toBe("provider_identity_not_exposed");
+      expect(outcome.capabilityGap?.code).toBe("capability_evidence_not_exposed");
+      expect(JSON.stringify(outcome).includes(CUSTODIAN_SECRET_MARKER)).toBe(false);
+    }
+    expect(payswapAccountReadBackOutcomeSchema.safeParse(outcome).success).toBe(true);
   });
 
   it("without an injected apiClient the port uses globalThis.fetch with AbortController timeout enforcement — a hanging endpoint answers unavailable, never hangs", async () => {
@@ -316,7 +345,7 @@ describe("payswap read-back router (P3 provider half) — per-provider dispatch"
 });
 
 describe("payswap paystack provider contract (P3 provider half) — law integration through the real account service", () => {
-  it("connect Paystack (test mode) → 401 refresh flips connected→expired (the security row) → 200 refresh refuses typed and leaves the state unchanged (the identity gap)", async () => {
+  it("connect Paystack (test mode) → 401 refresh flips connected→expired (the security row) → 200 refresh is verified with the typed identity gap and recovers the record to connected (no invented account id)", async () => {
     const dir = await mkdtemp(join(tmpdir(), "payswap-p3-paystack-"));
     createdDirs.push(dir);
     setDataBaseDir(dir);
@@ -346,13 +375,19 @@ describe("payswap paystack provider contract (P3 provider half) — law integrat
     const expired = await service.refreshEvidence({ connectionId });
     expect(expired.kind).toBe("expired");
 
-    // 身份缺口行：200 读回（凭据有效）= typed 拒绝，状态不变 —— 绝不伪造身份。
+    // 身份/能力缺口行：200 读回 = 凭据被 provider 认证 → verified 携 typed 缺口；
+    // 恢复行成立（provider 接受凭据就是恢复证据）—— 绝不伪造身份。
     balanceStatus = 200;
-    const refused = await service.refreshEvidence({ connectionId });
-    expect(refused.kind).toBe("refused");
-    if (refused.kind === "refused") {
-      expect(refused.refusal.code).toBe("read_back_unavailable");
+    const verified = await service.refreshEvidence({ connectionId });
+    expect(verified.kind).toBe("verified");
+    if (verified.kind === "verified") {
+      expect(verified.providerAccountId).toBe(null);
+      expect(verified.identityGap?.code).toBe("provider_identity_not_exposed");
+      expect(verified.connection.status).toBe("connected");
     }
+    expect((await service.listConnections()).find((c) => c.connectionId === connectionId)?.status).toBe(
+      "connected",
+    );
 
     // at-rest 回归：记录 store 永不携带秘密材料；读回各恰一次网络触达。
     const rawConnections = await readFile(connectionsPath, "utf-8");

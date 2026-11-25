@@ -4,32 +4,31 @@
  * CI / 电池保持零网络；live 腿只在操作者经 env 供给 test 秘钥时运行（键绝不
  * 入库、绝不入日志、绝不入证据 —— 证据只落结局状态形状）。
  *
- * 被钉住的验收行（每行都是 P3 只读契约的真实 API 证明）：
+ * 被钉住的验收行（每行都是 P3 只读契约的真实 API 证明；ADR-P2-1 修订 2026-11-24）：
  * 1. **connect**：真实 sk_test 秘钥 → connected（mode test）—— connect 零网络
  *    触达（与单元电池同一装配行为）。
- * 2. **身份缺口行**：真实键 refreshEvidence → 真实 200 + status:true 封套 →
- *    typed `refused`（read_back_unavailable），状态保持 connected —— Paystack
- *    无官方自身份端点，凭据有效也绝不伪造身份（诚实纪律的真实 API 行）。
- * 3. **概览门（fail-closed）**：getOverviewData 的验证读同款身份缺口 → refused，
- *    四类别永不回答 —— 概览 detail 面在身份缺口 provider 上诚实拒绝。
- * 4. **数据面真实读**：数据端口持真实秘钥直读真实 API —— balance /
- *    payment_objects（GET /transaction）/ customers（GET /customer）= ok 投影
- *    （PII redaction-by-construction：customers 只落 customer_code + created）；
+ * 2. **身份/能力缺口行**：真实键 refreshEvidence → 真实 200 + status:true 封套 →
+ *    凭据被 provider 认证 → `verified`，携 `providerAccountId: null` + typed
+ *    身份缺口 + typed 能力缺口 —— Paystack 无官方自身份端点、无官方能力面，
+ *    凭据有效也绝不伪造身份、绝不伪造能力证据（状态保持 connected）。
+ * 3. **概览 = 生产路径上的四类别对话读**：getOverviewData（真实 runtime 的读回
+ *    路由 + 数据路由）→ detail 携 typed 能力缺口，四类别照读、各自 typed 作答 ——
+ *    balance / payment_objects（GET /transaction）/ customers（GET /customer）= ok
+ *    投影（PII redaction-by-construction：customers 只落 customer_code + created）；
  *    disputes = pinned typed unavailable（官方条目无顶层 amount/currency/reason）。
- * 5. **安全行**：伪造 test 秘钥 refresh → 真实 401 → expired（唯一 expiry 证据
+ * 4. **安全行**：伪造 test 秘钥 refresh → 真实 401 → expired（唯一 expiry 证据
  *    —— 吊销/轮换的键被检出）。
- * 6. **at-rest**：连接记录 store 永不携带秘钥材料。
+ * 5. **at-rest**：连接记录 store 永不携带秘钥材料。
  */
 
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createPayswapAccountRuntime, setDataBaseDir } from "@zcode/services/node";
 import {
-  createPaystackAccountDataReadPort,
-  createPayswapAccountRuntime,
-  setDataBaseDir,
-} from "@zcode/services/node";
-import { PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY } from "@zcode/shared/payswap";
+  PAYSWAP_PSP_CREDENTIAL_SECRET_ENV_KEY,
+  payswapAccountOverviewDetailSchema,
+} from "@zcode/shared/payswap";
 import { afterAll, describe, expect, it } from "vitest";
 
 const LIVE_KEY = (process.env.ZCODE_PAYSWAP_PAYSTACK_TEST_KEY ?? "").trim();
@@ -71,65 +70,49 @@ afterAll(async () => {
       expect(connected.connection.mode).toBe("test");
       const connectionId = connected.connection.connectionId;
 
-      // ---- 行 2：身份缺口（真实 200 = typed refused；状态不变）----
+      // ---- 行 2：身份/能力缺口行（真实 200 = 凭据被 provider 认证 → verified 携 typed 缺口）----
       const gapRow = await runtime.accountService.refreshEvidence({ connectionId });
-      expect(gapRow.kind).toBe("refused");
-      if (gapRow.kind === "refused") {
-        expect(gapRow.refusal.code).toBe("read_back_unavailable");
+      expect(gapRow.kind).toBe("verified");
+      if (gapRow.kind === "verified") {
+        // 绝不伪造身份：providerAccountId 是 null + typed 身份缺口。
+        expect(gapRow.providerAccountId).toBe(null);
+        expect(gapRow.identityGap?.code).toBe("provider_identity_not_exposed");
+        expect(JSON.stringify(gapRow).includes(LIVE_KEY)).toBe(false);
       }
       const afterGap = await runtime.accountService.listConnections();
-      const gapConnection = afterGap.find((c) => c.connectionId === connectionId);
-      expect(gapConnection?.status).toBe("connected");
+      expect(afterGap.find((c) => c.connectionId === connectionId)?.status).toBe("connected");
 
-      // ---- 行 3：概览门 fail-closed（四类别在身份缺口 provider 上不回答）----
+      // ---- 行 3：概览 = 生产路径上的四类别对话读（typed 能力缺口在场 → 类别照读）----
       const overviewRow = await runtime.accountService.getOverviewData({ connectionId });
-      expect(overviewRow.kind).toBe("refused");
-      if (overviewRow.kind === "refused") {
-        expect(overviewRow.refusal.code).toBe("read_back_unavailable");
-      }
+      expect(overviewRow.kind).toBe("detail");
+      if (overviewRow.kind === "detail") {
+        expect(overviewRow.capabilityRefusal?.code).toBe("capability_evidence_not_exposed");
+        expect("evidence" in overviewRow).toBe(false);
+        // 跨进程值：桥两端同一份 strict 法则（含 JSON 往返）。
+        expect(payswapAccountOverviewDetailSchema.safeParse(overviewRow).success).toBe(true);
+        expect(
+          payswapAccountOverviewDetailSchema.safeParse(JSON.parse(JSON.stringify(overviewRow))).success,
+        ).toBe(true);
 
-      // ---- 行 4：数据面真实读（端口直读真实 API；PII redaction-by-construction）----
-      const dataPort = createPaystackAccountDataReadPort({});
-      const baseInput = {
-        providerId: "paystack",
-        mode: "test",
-        secretKind: "api-key",
-      } as const;
-
-      const balanceRow = await dataPort({ ...baseInput, secret: LIVE_KEY, category: "balance" });
-      expect(balanceRow.status).toBe("ok");
-      if (balanceRow.status === "ok") {
-        const balance = balanceRow.data as { available: unknown[]; pending: unknown[] };
-        expect(Array.isArray(balance.available)).toBe(true);
-        expect(Array.isArray(balance.pending)).toBe(true);
-      }
-
-      const transactionsRow = await dataPort({
-        ...baseInput,
-        secret: LIVE_KEY,
-        category: "payment_objects",
-      });
-      expect(transactionsRow.status).toBe("ok");
-      if (transactionsRow.status === "ok") {
-        expect(Array.isArray(transactionsRow.data)).toBe(true);
-      }
-
-      // customers：真实数据行只落 customer_code + created（email/name/phone
-      // 绝不读取 —— 即便 provider 返回了它们）。
-      const customersRow = await dataPort({ ...baseInput, secret: LIVE_KEY, category: "customers" });
-      expect(customersRow.status).toBe("ok");
-      if (customersRow.status === "ok") {
-        for (const row of customersRow.data) {
-          expect(Object.keys(row).sort()).toEqual(["created", "description", "id"]);
+        // balance / payment_objects（GET /transaction）/ customers（GET /customer）
+        // = ok 投影 —— 真实数据经真实 runtime 的数据路由。
+        expect(overviewRow.data.balance.status).toBe("ok");
+        expect(overviewRow.data.payment_objects.status).toBe("ok");
+        expect(overviewRow.data.customers.status).toBe("ok");
+        if (overviewRow.data.customers.status === "ok") {
+          // PII redaction-by-construction：真实数据行只落 customer_code + created
+          // （email/name/phone 绝不读取 —— 即便 provider 返回了它们）。
+          for (const row of overviewRow.data.customers.data) {
+            expect(Object.keys(row).sort()).toEqual(["created", "description", "id"]);
+          }
         }
+        // disputes：pinned typed unavailable（官方条目无顶层 amount/currency/reason
+        // —— redacted dispute schema 不容伪造；官方检索日期在案）。
+        expect(overviewRow.data.disputes.status).toBe("unavailable");
+        expect(JSON.stringify(overviewRow).includes(LIVE_KEY)).toBe(false);
       }
 
-      // disputes：pinned typed unavailable（官方条目无顶层 amount/currency/reason
-      // —— redacted dispute schema 不容伪造；官方检索日期在案）。
-      const disputesRow = await dataPort({ ...baseInput, secret: LIVE_KEY, category: "disputes" });
-      expect(disputesRow.status).toBe("unavailable");
-
-      // ---- 行 5：安全行（伪造键 → 真实 401 → expired）----
+      // ---- 行 4：安全行（伪造键 → 真实 401 → expired）----
       const bogus = await runtime.accountService.connect({
         providerId: "paystack",
         operatorSecret: BOGUS_KEY,
@@ -142,7 +125,7 @@ afterAll(async () => {
       const afterExpiry = await runtime.accountService.listConnections();
       expect(afterExpiry.find((c) => c.connectionId === bogusId)?.status).toBe("expired");
 
-      // ---- 行 6：at-rest（记录 store 永不携带秘钥材料）----
+      // ---- 行 5：at-rest（记录 store 永不携带秘钥材料）----
       const rawConnections = await readFile(connectionsPath, "utf-8");
       expect(rawConnections.includes(LIVE_KEY)).toBe(false);
       expect(rawConnections.includes(BOGUS_KEY)).toBe(false);

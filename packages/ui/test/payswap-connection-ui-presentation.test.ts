@@ -187,6 +187,36 @@ describe("P2.2 连接 UI 呈现法则 —— 响应闭集直消费（法则 2/7�
     expect(notice.detail).toBe("acct_e2e");
   });
 
+  // P3（ADR-P2-1 修订 2026-11-24）：身份缺口 provider（如 Paystack —— 官方 API 不暴露
+  // 账户标识）的 verified 携 providerAccountId: null + identityGap。凭据确已被 provider
+  // 认证 → 仍是 positive；但没有可展示的标识 → detail 不出现（绝不渲染 "null"、绝不
+  // 渲染缺口 message 当作标识）。
+  it("refresh：verified with a null providerAccountId (identity-gap provider) → positive with NO detail; the literal null is never rendered", () => {
+    const notice = presentPayswapRefreshResponse({
+      ok: true,
+      op: "refresh",
+      result: {
+        kind: "verified",
+        connection: {
+          connectionId: "conn-1",
+          providerId: "paystack",
+          mode: "test",
+          displayName: "Paystack",
+          status: "connected",
+        },
+        providerAccountId: null,
+        identityGap: {
+          code: "provider_identity_not_exposed",
+          message: "The provider exposes no account identifier.",
+        },
+      },
+    });
+    expect(notice.tone).toBe("positive");
+    expect(notice.i18nKey).toBe("payswap.connections.result.verified");
+    expect(notice.detail).toBeUndefined();
+    expect(JSON.stringify(notice)).not.toMatch(/null/);
+  });
+
   it("refresh：expired → warning；refused 逐码 → refusal 呈现", () => {
     const expired = presentPayswapRefreshResponse({
       ok: true,

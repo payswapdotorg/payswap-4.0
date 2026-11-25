@@ -41,6 +41,28 @@ describe("tool registration (S1 upstream default shape)", () => {
       expect(tool.annotations?.readOnlyHint, `${tool.name} should be readOnlyHint`).toBe(true);
     }
   });
+
+  // P3（ADR-P2-1 修订 2026-11-24）：detail 原样透传给模型 —— 能力缺口的语义只能在
+  // 工具描述里讲清。描述必须明示：capabilityRefusal = 能力未知，不得推断、不得当作
+  // 操作可用的证据；refused/unavailable 的类别不是零。
+  it("the account overview description tells the model how to read capabilityRefusal and unread categories", async () => {
+    const { client, server } = await connectClient({ [FINANCIAL_WORKSPACE_ENV]: "false" });
+    closer = async () => {
+      await client.close();
+      await server.close();
+    };
+    const tool = (await client.listTools()).tools.find((entry) => entry.name === "payswap_get_account_overview");
+    expect(tool?.description).toBeDefined();
+    const description = tool?.description ?? "";
+    expect(description).toMatch(/`capabilityRefusal`/);
+    expect(description).toMatch(/UNKNOWN|unknown/);
+    expect(description).toMatch(/never\s+infer them from balances, payment objects, customers or disputes/);
+    expect(description).toMatch(/never\s+treat them as evidence that any operation is available/);
+    expect(description).toMatch(/`refused` or `unavailable` was not read — never report it as zero or empty/);
+    // 仍然只读、仍然经 broker（描述不承诺任何写面）。
+    expect(tool?.annotations?.readOnlyHint).toBe(true);
+    expect(description).toMatch(/Read-only\./);
+  });
 });
 
 describe("typed refusals (P0 addendum §2.1 taxonomy)", () => {

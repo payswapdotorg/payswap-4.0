@@ -174,7 +174,13 @@ export function createPayswapServer(options: PayswapServerOptions = {}): McpServ
         "(balance, payment objects, customers, disputes — each with its own status) " +
         "is returned in the same answer; with several connected accounts only the " +
         "sanitized connection list is returned — ask the user to pick one and pass " +
-        "its connectionId for the detail. Read-only. " + REFUSAL_NOTE,
+        "its connectionId for the detail. The detail carries either `evidence` " +
+        "(capabilities read back from the provider) or `capabilityRefusal` (the " +
+        "provider exposes no capability surface: capabilities are UNKNOWN — never " +
+        "infer them from balances, payment objects, customers or disputes, and never " +
+        "treat them as evidence that any operation is available). A category that is " +
+        "`refused` or `unavailable` was not read — never report it as zero or empty. " +
+        "Read-only. " + REFUSAL_NOTE,
       inputSchema: {
         connectionId: z
           .string()

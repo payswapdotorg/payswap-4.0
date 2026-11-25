@@ -102,3 +102,34 @@ surface yet」。工具面已有两条硬法则：
 - **Battery:** payswap-account-data.test.ts 新增 standard-account wire 形态用例
   （requirements 缺席 → evidence 携带 `requirements: null`，schema parse 通过）；
   既有正例（requirements 在场）与畸形例（present-but-malformed → 无证据）原样钉死。
+
+## Amendment 2026-11-24 — provider 缺席面是 typed 答案，不是 detail 拒绝（P3）
+
+- **Trigger:** P3 的 source-first 对账（register P3 行）发现：Decision 5 的「能力证据
+  在场才读四类别」对 Paystack 与 PayPal 让四类别对话读**永不可达** —— Paystack
+  读回因无官方自身份端点一律答 `unavailable`，PayPal 的 `verified` 不带能力证据，
+  于是 `getOverviewData` 对两个 P3 provider 恒答 `read_back_unavailable`。这与
+  register 的 P2/P3 验收条款直接冲突：「the four read-only categories … return real
+  data conversationally through the production path」+「capabilities are answered from
+  provider read-back evidence **with typed refusals where unconfigured**」。原门把三件事
+  并成了一件：凭据是否有效、provider 是否签发账户标识、provider 是否暴露能力证据。
+- **Decision:** 三者分开作答（法则全文见 shared CONTRACT「P3 provider 缺席面」）。
+  - 读回 `verified` 的 `providerAccountId` 可为 `null`，当且仅当 `identityGap` 在场
+    （码 `provider_identity_not_exposed`）——「provider 认证了凭据」是 `verified` 的
+    事实来源，身份缺席不再是 `unavailable`。
+  - 读回 `verified` 可携带 `capabilityGap`（码 `capability_evidence_not_exposed`，
+    与 `evidence` 互斥）—— adapter 对已钉住官方事实的显式声明。
+  - 概览 detail 的能力面答案恰一：`evidence` 或 `capabilityRefusal`。两者皆缺席仍
+    fail-closed 拒绝 —— Decision 5 对 Stripe 逐字不变；放行只发生在 adapter **显式
+    声明**缺口时，服务永不因 `evidence` 恰好缺席而放行。
+  - 类别读法则（Decision 2–4、6）不变：类别各自 typed 作答，官方无面的类别照旧
+    `refused{unsupported_operation}` / `unavailable`；redaction-by-construction 不变。
+- **Unchanged:** no-write 结构断言；拒绝词汇闭集（新增两枚 typed 码均有 law
+  battery）；六操作闭集；验证读先于数据读；401 唯一 expiry 证据。
+- **Downstream:** `capabilityRefusal` 对 P4 eligibility 的语义是 unknown =
+  unavailable（doc 05 §4「Unknown = `unavailable`, not optimistic defaults」）。
+- **Battery:** payswap-account-data.test.ts（detail 携 `capabilityRefusal` + 四类别
+  照读；二者皆缺席仍拒；schema 不变量 null⇔identityGap、gap⇔¬evidence）；
+  payswap-paystack-provider / payswap-paypal-provider（adapter 缺口声明、无捏造
+  身份）；reader-bridge 与 broker dispatch（detail 携 `capabilityRefusal` 原样过桥）；
+  两个 live conformance 套件的真实 API 行改钉新法则。

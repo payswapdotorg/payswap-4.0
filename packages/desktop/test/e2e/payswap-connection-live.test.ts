@@ -12,6 +12,7 @@ import {
   waitForDefaultWorkspaceReady,
 } from "./helpers/desktop-app.js";
 import { sel } from "./helpers/selectors.js";
+import { custodianSlotBlobPath } from "./helpers/payswap-custodian-slots.js";
 import { skipOccupationOnboardingIfPresent } from "./helpers/occupation-onboarding.js";
 
 /**
@@ -66,7 +67,6 @@ const CREDENTIALS_STORE_FILE = join(paths.appDataDir, "credentials.json");
 // ADR-P2-3 custodian 架构判定面：win32 + SYSTEM 托管服务端点在场 = 托管保管
 //（本地凭据 store 恰无本连接槽位；密钥在 SYSTEM blob + 服务内存）。
 const CUSTODIAN_ENDPOINT_FILE = "C:\\ProgramData\\payswap\\custodian-endpoint.json";
-const CUSTODIAN_KEY_BLOB_FILE = "C:\\ProgramData\\payswap\\custodian-key.bin";
 
 function custodianBackedAtRest(): boolean {
   return process.platform === "win32" && existsSync(CUSTODIAN_ENDPOINT_FILE);
@@ -281,9 +281,10 @@ describe("P2 live E2E 验收臂（真实受限只读键 × 真实连接 UI × �
         expect(credentials).not.toContain(connectionId);
         assertNoLiveSecret(credentials, "credentials store (custodian path: no slot)");
       }
-      expect(
-        existsSync(CUSTODIAN_KEY_BLOB_FILE),
-      ).toBe(true);
+      // v1.1+ 命名槽布局：本连接自己的槽位 blob 在场（真实键入托管保管；
+      // 派生见 helpers/payswap-custodian-slots.ts —— 旧断言指 v1.0 单槽路径，
+      // v1.1 起恒假）。
+      expect(existsSync(custodianSlotBlobPath("stripe", connectionId, "api-key"))).toBe(true);
     } else {
       expect(credentials).not.toBeNull();
       expect(credentials).toContain(connectionId);
@@ -342,9 +343,9 @@ describe("P2 live E2E 验收臂（真实受限只读键 × 真实连接 UI × �
     expect(connections).toContain(connectionId);
     expect(connections).toContain('"revoked"');
     if (custodianBackedAtRest()) {
-      expect(
-        existsSync(CUSTODIAN_KEY_BLOB_FILE),
-      ).toBe(false);
+      // v1.1+ 命名槽布局：本连接的槽位 blob 证实不在（drop 必证实清除 —— A3.6；
+      // 旧断言指 v1.0 单槽路径 = v1.1 起空洞通过）。
+      expect(existsSync(custodianSlotBlobPath("stripe", connectionId, "api-key"))).toBe(false);
     }
     assertNoLiveSecret(connections, "connections store (post-revoke)");
   });

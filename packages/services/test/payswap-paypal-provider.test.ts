@@ -18,7 +18,8 @@
  *    base64(clientId:clientSecret) + form body grant_type=client_credentials。
  * 4. **verified 行（PayPal 有官方身份面）**：200 + 官方 token 形状
  *    {access_token, app_id, …} → verified{providerAccountId: app_id}（官方
- *    记载的非秘密 app 标识）；access_token 绝不出端口。
+ *    记载的非秘密 app 标识）+ `capabilityGap`（ADR-P2-1 修订 2026-11-24：官方无
+ *    能力读回面 —— 能力未知，绝不伪造能力证据）；access_token 绝不出端口。
  * 5. **auth-failed 行**：401 → auth-failed（唯一 expiry 证据）；detail 零秘密。
  * 6. **unavailable 行**：非 200/401、非 JSON、access_token/app_id 缺失、传输
  *    异常 → unavailable（unknown ≠ expired）。
@@ -149,6 +150,10 @@ describe("PAYSWAP_PAYPAL_AUTH_SPEC + evidence pin (P3 provider half — dated-ev
     const reverify = PAYSWAP_PAYPAL_EVIDENCE_PIN.reverifyBeforeAdapterUse.join("\n");
     expect(reverify).not.toMatch(/live server/i);
     expect(reverify).toMatch(/userinfo|client_credentials/i);
+    // 能力面缺席是已钉住的官方事实（官方 REST API 文档 2026-11-24 复核）——
+    // adapter 的 capabilityGap 声明只允许编码这里列出的事实。
+    expect(verified).toMatch(/capabilit/i);
+    expect(verified).toMatch(/2026-11-24/);
   });
 });
 
@@ -177,11 +182,21 @@ describe("payswap paypal read-back adapter (P3 provider half) — outcome mappin
     expect(client.calls[0]?.input).toBe(LIVE_TOKEN_URL);
   });
 
-  it("verified carries ONLY the official app identity — the access token never leaves the port", async () => {
+  it("verified carries the official app identity and a typed capability gap — no invented capability evidence; the access token never leaves the port", async () => {
     const client = recordingApiClient(() => jsonResponse(200, VALID_TOKEN_RESPONSE));
     const port = createPaypalAccountReadBackPort({ apiClient: client });
     const outcome = await port(baseInput());
-    expect(outcome).toEqual({ kind: "verified", providerAccountId: APP_ID });
+    expect(outcome.kind).toBe("verified");
+    if (outcome.kind === "verified") {
+      expect(outcome.providerAccountId).toBe(APP_ID);
+      // PayPal 有官方身份面（app_id）—— 绝不声明身份缺口。
+      expect("identityGap" in outcome).toBe(false);
+      expect(outcome.capabilityGap?.code).toBe("capability_evidence_not_exposed");
+      expect(outcome.capabilityGap?.message).toMatch(/capabilit/i);
+      // token scope → PaySwap 操作能力的映射没有官方事实源 —— 绝不伪造能力证据。
+      expect("evidence" in outcome).toBe(false);
+      expect(outcome.capabilityGap?.message.includes(VALID_TOKEN_RESPONSE.access_token)).toBe(false);
+    }
     expect(JSON.stringify(outcome).includes(VALID_TOKEN_RESPONSE.access_token)).toBe(false);
     expect(payswapAccountReadBackOutcomeSchema.safeParse(outcome).success).toBe(true);
   });
