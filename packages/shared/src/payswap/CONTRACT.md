@@ -353,3 +353,26 @@ claims」+ doc 12 §3「Keep three catalogs distinct」+ §2.3「exactly one fin
 - **无权威外溢**：本模块不铸造 grant、不路由、不触 provider、不写 ledger —— 它是
   P4/P6 eligibility/routing 的**只读证据面**。catalog/agent 记录在 schema 层不可
   变换为 capability 记录（分离法则的机制化；battery 断言）。
+
+**证据推导法则（wave 1 的操作状态判定；全部确定性纯函数）**：注册表从「读回结局 +
+概览类别结果」推导操作状态 —— 两半都是 provider 证据（读回面 = 账户能力面；类别
+读 = 该操作真实执行过一次的证据）：
+
+- **类别读证据**（四闭集类别 → 只读操作）：`balance`→`balances.read`；
+  `payment_objects`→`payment_objects.read`；`customers`→`customers.read`；
+  `disputes`→`disputes.read`。类别 `ok` → `available`（证据 = 该读真实成功）；
+  `refused{insufficient_permission}` → `restricted`（provider 权限边界证据）；
+  `refused{unsupported_operation}` → `unavailable`（provider 缺席事实进 reason）；
+  `auth-failed`/`unavailable` → `unavailable`（unknown ≠ failed —— 未知不写状态）。
+- **Stripe 式能力旗证据**（verified + evidence.capabilities）：固定词汇表映射
+  provider 读回的 capability 名 → 操作 id：`card_payments`→`collections.read`；
+  `transfers`→`transfers.read`；`payouts`→`payouts.read`（读半 —— 写半随 P7）。
+  active→`enabled`；pending→`pending`；inactive→`unavailable`。该词汇表映射的是
+  provider 自己读回的名字，是唯一允许的固定表。能力旗与类别读对同一操作都给出
+  证据时取**较保守**者（unavailable > restricted > pending > available > enabled
+  的保守序 —— 证据冲突时低值胜，optimistic defaults 禁令）。
+- **typed 缺口连接**（capabilityGap / identityGap 在场）：全部操作 `unavailable`，
+  reason = 该 typed 缺口 message（不是猜测、不是空串）。
+- **restriction 摘要**：`requirements` 摘要（Stripe 式）按 ADR-P2-1 修订 2026-11-17
+  的 null 语义进 `currentlyDue/pastDue` 计数 restriction + `note`（带检索引用）；
+  `note` 是唯一允许携带静态知识的位置（doc 05 §4）。
