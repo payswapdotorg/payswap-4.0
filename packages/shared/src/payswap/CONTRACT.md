@@ -382,3 +382,37 @@ claims」+ doc 12 §3「Keep three catalogs distinct」+ §2.3「exactly one fin
 （Stripe 的 charges 既是收款面也是支付对象面；两个操作都由该旗真实证据支撑）。
 多值映射使「能力旗 × 类别读」对同一操作的真实重叠成为可能 —— 保守序因此有实际
 裁决对象（例如旗 pending × 类别读 ok ⇒ pending）。
+
+**P4 确定性 eligibility 引擎（doc 05 §7「Eligibility surface」+ doc 12 §3 + P4 验收
+「purpose/country/currency/method/amount/product/entitlement/beneficiary and provider
+restrictions return typed refusals」；`eligibility/`—— 纯确定性求值，无 IO、无凭据、
+无 provider 触达）：
+
+- **输入 = 证据 + 事实**：`evaluatePayswapEligibility({ query, record, now })` ——
+  query = doc 05 §7 的 `PayswapEligibilityQuery`（closed §6.1 操作 id + connectionId +
+  constraints）；record = wave 1 注册表的**能力记录**（唯一证据来源）。引擎不持
+  connectionId → provider 的解析（那是宿主装配的事），不触 provider，不看 agent/模型
+  输入 —— agent 提案不是证据。
+- **basis 恒为 "evidence"**：wave 2 只实现证据半；live-check 是 doc 05 §7 的可选
+  增强，缺席时引擎对 `basis: "live-check"` 请求 typed 拒绝（不假装、不实现半个）。
+- **unknown ≠ ineligible（fail-closed 语义）**：查询无记录 / 记录 stale → **typed
+  拒绝**（`eligibility_evidence_unavailable` / `eligibility_evidence_stale`），绝不
+  答 `eligible: false + blockers: []`（那是一个「未连接 = 不可路由」式假话 —— 无证据
+  是 unknown，不是 no）。
+- **状态语义**：`enabled`/`available` → eligible（无状态 blocker）；`pending` →
+  ineligible + blocker（capability pending）；`restricted`/`unavailable` →
+  ineligible + 该操作记录的全部 restrictions（reasons 原样携带 —— P3 的 typed 缺口
+  message 流入 blockers）。
+- **约束求值 = 逐类 typed**：restriction schema additively 扩展 doc 05 §4 的结构化
+  形（`allow?/deny?/min?/max?`）。约束维度（country/currency/amount/method/
+  recipientKind + purpose/product/entitlement/beneficiary 语义随 P4 后续波次补
+  schema）的裁决：记录有该类结构化 restriction → 按其裁决（deny 命中 / allow 未
+  命中 / min-max 越界 → ineligible + **该类 blocker**，code 携带类名）；记录无该
+  类结构化数据而 query 携带该约束 → **typed `eligibility_constraint_unevidenced`**
+  （Unknown = unavailable，不乐观默认 —— doc 05 §4）；query 未携带的维度不裁决。
+- **answer 形状**（doc 05 §7）：`eligible + basis + evidenceRef + checkedAt +
+  blockers`，与 typed 拒绝并成 strict union（拒绝臂 = `{eligible: false,
+  refused: {code, message}}` —— doc 05 §7 的 answer 是成功形状；typed 拒绝是
+  PaySwap 词汇的失败形状，二者不能混）。
+- **无权威外溢**：引擎不路由、不铸造、不写账 —— P6 routing 消费它的 answer；
+  答案本身不是授权（doc 12 §2.2）。
