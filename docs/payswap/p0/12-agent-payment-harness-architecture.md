@@ -1,4 +1,4 @@
-# PaySwap 4.0 — Agent-native Payment Harness Architecture
+# PaySwap 4.0 — Unified PSP Interface and Money-Movement Discovery Architecture
 
 **Decision date:** 2026-11-15  
 **Decision state:** approved P3–P9 product architecture; this is a design baseline, not evidence that implementation is complete.  
@@ -6,97 +6,93 @@
 
 ## 1. Product decision
 
-PaySwap 4.0 becomes one **payment-centric, multi-agent ZCode harness backed by the existing PaySwap financial core**. It combines outcome-oriented agent discovery, delegated specialist workflows, provider-neutral payment orchestration and payment-protocol interoperability with the accounts, capabilities, eligibility, FX, routing, authorization, execution, evidence and reconciliation architecture already defined in PaySwap 4.0.
+PaySwap 4.0 is a **payment-only product** built on the existing ZCode application and PaySwap financial core. It has two complementary user-facing capabilities:
 
-There are not two products joined by a bridge. There is one application, one agent runtime, one financial control plane, one execution authority and one financial evidence ledger.
+1. **The unified PSP operations interface.** A user connects payment-service-provider accounts and uses PaySwap as the primary day-to-day interface to inspect account/payment data and perform supported payment-related read and write operations across those PSPs. The interface presents common concepts while preserving provider-specific capabilities, restrictions and evidence.
+2. **Intent-driven money-movement discovery.** A user states the financial outcome they want. PaySwap evaluates the sender's and recipient's verified payment capabilities, then discovers the best feasible route—direct, composed or multi-party—against the user's cost, speed, reliability, feasibility, privacy and deadline constraints.
 
-PaySwap orchestrates payments; it does not take custody of customer funds.
+PaySwap only knows about payment operations, payment rails, financial parties and payment protocols. It does not integrate general-purpose non-payment service providers, search for non-payment products/services, or become a general-purpose agent marketplace. A third party can participate only as a financial party contributing a verified payment capability to a proposed money route and explicitly accepting its financial role.
+
+There is one application, one ZCode runtime, one provider capability authority, one financial authorization authority, one execution authority and one append-only financial evidence ledger. PaySwap does not take custody of participant funds or acquire authority over another party's account.
 
 ### Explicit non-goals
 
 - Do not fork or replace ZCode's agent runtime, model-provider stack, task/session semantics, MCP, plugins, skills, workflows, automations, permission system or New Task shell.
-- Do not add a second agent runtime, payment broker, account registry, provider-capability registry, authorization authority, execution engine, ledger or reconciliation system.
-- Do not vendor/copy TReg source. Its product concepts may inform an independent implementation; source reuse requires separate licence and legal review.
-- Do not add wallets, deposits, stored value, escrow, credit/lending, custody, pooling/float, merchant-of-record or PaySwap-operated settlement.
-- Do not let a model, agent, plugin, protocol adapter, webhook or automation mint financial authority.
-- No provider writes before P7 acceptance; no live-money operation before the separate operator-controlled live gate.
+- Do not add a second agent runtime, customer-facing agent catalog/marketplace, general-purpose mission marketplace, non-payment provider registry, duplicate PSP capability registry, authorization authority, execution engine, ledger or reconciliation system.
+- Do not turn PaySwap into procurement, supplier sourcing, product discovery, invoice/workflow management or general business operations. Documents such as invoices may be used only as evidence/input to a payment intent.
+- Do not expose arbitrary PSP API passthrough or claim parity with every feature of every provider dashboard. Expose typed payment-related operations supported by verified provider evidence; unsupported or non-payment features stay outside PaySwap.
+- Do not add PaySwap-issued or PaySwap-custodied wallets, deposits, stored value, escrow, custody, pooled float, merchant-of-record, PaySwap lending/credit or PaySwap-operated settlement. A separately specified externally controlled payment rail may be considered only through its own payment boundary and authorization rules.
+- Do not let a model, agent, plugin, protocol adapter, participant, webhook or automation mint financial authority.
+- No provider write before P7 acceptance; no live-money operation before the separate operator-controlled live gate.
 
-## 2. One product, three layers
+## 2. One payment product, three layers
 
 ```text
-PAYMENT-CENTRIC ZCODE HARNESS
-  Existing ZCode application, runtime, model selection, tasks, MCP, agents,
-  plugins, skills, workflows and automations
-  + outcome-oriented discovery and financial task interaction
-  + mission coordination using existing ZCode agents
+EXISTING ZCODE APPLICATION
+  Existing chat, tasks, agents, tools, permissions, plugins and workflows
+  Preserved as the interaction/runtime substrate
                          |
                          v
-PAYSWAP AGENTIC CONTROL PLANE
-  Agent Catalog (derived from existing manifests and trust state)
-  Mission Planner / Coordinator (no second runtime)
-  Host-owned Delegation and Authority Envelope policy
-  Protocol Adapters (AP2 / x402 / MPP / agent identity)
+PAYSWAP USER INTERFACE
+  Unified connected-PSP payment operations
+  Money-movement intent submission and clarification
+  Route/participant comparison, approvals, status and evidence
                          |
                          v
 ONE PAYSWAP FINANCIAL CORE
-  Accounts and Credentials
-  Provider Capability + Evidence Registry
-  Intent Compiler -> Eligibility / Policy -> FX / Liquidity
-  Deterministic Routing -> Transaction Authorization
-  ONE Execution Authority -> Provider Events -> Reconciliation
-  ONE Append-only Financial Evidence Ledger
+  PSP accounts and credentials
+  Evidence-backed provider/rail/recipient capabilities
+  Intent compiler -> eligibility and policy
+  Single-intent route discovery
+  Multi-intent / multi-party opportunity discovery
+  FX and route evaluation
+  Host-owned authorization -> ONE execution authority
+  Provider events -> reconciliation -> ONE append-only ledger
                          |
                          v
-EXTERNAL FINANCIAL PARTIES
-  Banks, licensed PSPs, mobile-money/e-money providers, card networks,
-  cross-border providers, merchants and suppliers
+PAYMENT PARTIES AND PAYMENT NETWORKS
+  Senders, recipients/merchants, consenting payment participants
+  Banks, licensed PSPs, mobile-money/e-money providers, card rails,
+  cash-assisted or other payment rails only through verified boundaries
 ```
 
-### 2.1 ZCode remains the agent execution substrate
+### 2.1 ZCode remains the interaction and agent-execution substrate
 
-The mission coordinator schedules work using existing ZCode agent/task/session/workflow machinery. It does not supervise a separate agent fleet or copy conversation histories into another database. Existing general-purpose ZCode behavior remains available outside the explicitly enabled financial workspace.
+PaySwap appears inside the existing ZCode New Task experience. Existing conversations, model selection, tools, agents, tasks, sessions, plugins, workflows and automation semantics remain upstream-owned. The user should not have to learn a separate agent framework to use PaySwap.
 
-### 2.2 Agent control plane is not financial authority
+### 2.2 Agents assist payment work; they are not the product's marketplace
 
-Agents may propose supplier matches, invoice facts, policy findings, capability lookups, route comparisons and explanations. Outputs are untrusted until validated by the owning deterministic PaySwap service. An agent's publisher, skill name, reputation or marketplace listing does not confer permission.
+Existing ZCode agents may help with payment-specific tasks such as interpreting an intent draft, retrieving provider facts, comparing candidate routes, identifying missing evidence, exploring combinations of submitted payment intents and explaining trade-offs. Their output is untrusted proposal material. Deterministic PaySwap services validate provider capabilities, participant evidence, eligibility, route structure and authorization. Agents cannot access raw PSP credentials, invoke provider writes directly, commit another party, alter a principal/beneficiary or mint a grant.
 
-### 2.3 Exactly one financial core
+There is no need for a PaySwap-owned agent directory. Users may continue to use ZCode's ordinary agent features, but PaySwap's domain and customer-facing discovery remain payment-only.
 
-The existing PaySwap domains remain authoritative for connected accounts, provider capabilities, eligibility, purpose classification, FX, routing, transaction grants, provider writes, provider events, evidence and settlement reconciliation. The agent harness composes these domains; it does not replicate them.
+### 2.3 Exactly one payment capability and execution authority
 
-There is exactly one owner for each of: credentials, account connections, provider capability evidence, policy eligibility, authorization grants, provider submission, financial ledger and reconciliation. External protocols are boundary adapters, not new payment engines.
+The existing PaySwap domains remain authoritative for connected PSP accounts, provider operations, payment capabilities, verified recipients, eligibility, purpose classification, FX, route discovery, transaction grants, provider writes, provider events, evidence and settlement reconciliation. The unified PSP interface and route-discovery engine compose these domains; they do not replicate them.
 
-## 3. Keep three catalogs distinct
+The PSP provider capability registry is the authority for what a connected provider account can do. Payment-participant evidence records describe a financial party's verified ability and willingness to contribute a particular payment leg. Protocol facts describe message interoperability. These are distinct records with distinct authority; none can grant consent or execution rights by being listed.
 
-| Catalog | What it describes | Authority |
+## 3. Payment capability graph and participant commitments
+
+| Record | What it describes | Authority |
 |---|---|---|
-| Agent catalog | Installed/discoverable agent, skill or workflow; publisher/version; outcomes; task types; typed I/O; required tools/scopes; data classes; credential posture; platform requirements; cost terms and trust evidence | Derived/read-only view of existing ZCode manifests and host trust state. It cannot grant install, tool, hook, network or financial permission. |
-| Provider capability registry | Verified operations and restrictions for an actual connected provider account: country, currency, rail, amount, product, method, purpose, recipient and entitlement | Existing PaySwap evidence-backed capability registry remains sole authority for route eligibility. |
-| Protocol registry | Exact external protocol/version, enabled features, evidence freshness and conformance state | Host protocol adapters only; protocol presence does not prove provider capability or user consent. |
+| PSP account capability | Evidence-backed operations, countries, currencies, rails, methods, amounts, recipient types, entitlements and restrictions for an actual connected PSP account | Existing PaySwap provider capability registry; immutable, versioned and evidence-referenced |
+| Recipient/payment instructions | Verified identity and payment methods a recipient can accept, with freshness and source evidence | Verified-recipient and provider evidence boundaries; user/model claims alone are insufficient |
+| Payment participant capability | A financial party's verified payment rail/account capability and availability relevant to a proposed route | Evidence tied to that participant and its own authorized account; no general service listing |
+| Participant offer/commitment | Proposed or accepted route role, exact legs, give/receive amounts, compensation, conditions, expiry and route digest | Offer is only a proposal; commitment requires explicit authenticated acceptance by that participant |
+| Protocol capability | Exact external payment protocol/version, supported features, evidence freshness and conformance | Host protocol adapter; protocol presence does not prove provider capability, user consent or route eligibility |
 
-An untrusted descriptor may be searchable but cannot execute. Installation/trust stays with existing ZCode lifecycle. The agent catalog is a rebuildable discovery projection, not an alternative source of identity or executable code.
+The payment capability graph is assembled from these records. It must not become a generic provider marketplace or infer that a party can execute a payment from a name, reputation, listing or model-generated description.
 
-## 4. Multi-agent financial missions
+## 4. Payment-task coordination
 
-A financial mission is a typed task graph running through existing ZCode agents. Every task carries a mission/task ID, principal and workspace scope, assigned agent identity/version, parent task, typed input/output schema, allowed tools/scopes, deadline, cancellation state and evidence references. Cross-agent artifacts are proposals, not trusted authorization or provider facts.
+A financial task graph may use existing ZCode agents for bounded payment work. Tasks carry a mission/intent reference, principal and workspace scope, agent identity/version, parent task, typed inputs/outputs, allowed tools/scopes, deadline, cancellation state and evidence references.
 
-Illustrative B2B supplier-payables mission:
+Permitted examples include intent clarification, connected-PSP data retrieval, provider-capability analysis, route enumeration, multi-intent opportunity analysis, payment-specific risk/policy review, participant commitment verification, execution-status explanation and reconciliation review. Extracting an invoice or reading a payment notice is allowed only as a means of formulating or substantiating a money-movement intent—not as a general procurement or document-management product.
 
-| Specialist | Allowed work | Must never do |
-|---|---|---|
-| Procurement | Compare requisition, quotes, purchase order and delivery evidence | Approve payment or change budget |
-| Invoice | Extract invoice fields and match line items | Treat OCR/model output as verified invoice truth |
-| Supplier verification | Match legal supplier and beneficiary to provider-backed evidence | Guess recipient from a name or email |
-| Budget/policy | Check project, cost centre, limits and business policy | Widen policy or mint authority |
-| Compliance | Collect purpose/jurisdiction/sanctions/KYC evidence and flag gaps | Waive a legal/provider refusal |
-| Payment discovery | Query connected accounts, provider capabilities and available protocols | Call provider write endpoints |
-| Route analyst | Compare only eligible routes, fees, timing and FX evidence | Make conditional routes executable |
-| Reconciliation | Compare events/read-back and surface unknown/mismatch states | Declare settlement without required read-back |
-| Audit | Assemble provenance and explain the decision chain | Alter the append-only ledger |
+Every task output is an untrusted proposal. Cross-agent artifacts cannot change the financial principal, recipient, payment purpose, verified provider facts, participant consent or authorization state. There is deliberately no autonomous execution agent; the executor is the deterministic host-side PaySwap service.
 
-There is deliberately no autonomous “execution agent”. The executor is a deterministic host-side PaySwap service. Any agent that invokes it remains an untrusted caller subject to broker, session, principal, role, eligibility, grant and live-gate enforcement.
-
-ZCode owns conversation/task execution state. PaySwap records only financial mission references, agent provenance, mandate/delegation events, exact grants, provider events and reconciliation in its existing ledger; it does not duplicate full prompts or conversation transcripts.
+ZCode owns conversation/task execution state. PaySwap records only the financial intent/mission references, task provenance needed for payment audit, mandate/delegation events, participant commitments, exact grants, provider events and reconciliation in its existing ledger; it does not duplicate full prompts or conversation transcripts.
 
 ## 5. Delegated authority: human-signed envelope, host-derived grants
 
@@ -126,6 +122,8 @@ Every FAE is structured and binds, at minimum:
 - explicit permission for child delegation (off by default).
 
 Unknown/missing/unverifiable constraints fail closed. Free-text explanations are not executable policy. An envelope must have bounded lifetime and explicit revocation.
+
+**One envelope, one financial principal.** An FAE may bind only accounts and obligations controlled by its named financial principal. A route involving multiple independent principals requires each principal to make their own authenticated commitment and, where autonomous execution is permitted, approve their own separate FAE or exact transaction grant. The host may coordinate those proofs but cannot derive, borrow or widen one principal's authority for another. A participant offer or route acceptance is not a grant to debit that participant's account.
 
 ### 5.3 Parent-child delegation is monotonic narrowing
 
@@ -171,9 +169,9 @@ External protocols exchange mandates, challenges, agent identities, payment requ
 | AP2 v0.2 | Human-present and human-not-present mandate/receipt interoperability | Trusted Surface is non-agentic. Agent-to-agent mandate delegation is outside AP2 v0.2 scope; PaySwap child delegation is its own extension. |
 | x402 | HTTP payment request/challenge and response interoperability | A 402/payment challenge is untrusted input, not consent. Compile to a typed intent and evaluate host authority/eligibility. |
 | Stripe/Tempo MPP | Machine-payment sessions, programmatic/recurring/micropayment interoperability | Session is protocol data, not a PaySwap grant. Metered/repeated charges require envelope bounds; every closed transaction still passes host policy. |
-| Visa Trusted Agent Protocol | Verified agent identity/portal access in participating business/supplier systems | Agent identity and portal access are not payment authorization. |
+| Visa Trusted Agent Protocol | Deferred, optional payment-identity boundary only | Consider only if a specific payment flow requires it to verify an agent's payment request; no supplier-portal automation, service discovery or general business workflow. |
 | Mastercard Agent Pay for Machines | Scheme/network integration target | Requires actual partner specifications, access and conformance; not assumed to be a universal public provider API. |
-| MCP / future A2A | Agent/tool discovery and task invocation | Identity and task messages confer neither PSP credentials nor financial authority. |
+| Existing ZCode agent/task interfaces | Internal invocation of bounded payment-analysis tasks | No external agent marketplace or general-purpose agent discovery; task identity confers neither PSP credentials nor financial authority. |
 
 Every protocol adapter pins an exact version and official evidence URL/retrieval date, verifies signatures/issuer/audience/replay/expiry/nonce as applicable, validates feature support, tests malformed/stale/forged messages and fails closed on unknown versions. Receipts are emitted only from verified execution/reconciliation state; a protocol "accepted" event is not settlement. Unsupported features are unavailable, not simulated as production support.
 
@@ -185,19 +183,37 @@ Official references checked 2026-11-15 (they establish initiative scope, not Pay
 - Visa/BILL/Billtrust invoice-payment pilot, 2026-10-20: https://corporate.visa.com/en/sites/visa-perspectives/press-releases/visa-bill-billtrust-launch-pilot.html
 - Mastercard Agent Pay for Machines, 2026-06-10: https://www.mastercard.com/global/en/news-and-trends/press/2026/june/mastercard-launches-agent-pay-for-machines.html
 
-## 7. Non-custodial product boundary
+## 7. Additional payment-rail boundary: blockchain and external wallets
 
-Funds remain with the user's bank, licensed PSP, e-money issuer, card issuer/network or other authorized provider. PaySwap submits an instruction only after the host execution authority consumes a valid grant.
+Blockchain is a payment rail in the same money-movement product, not a new product category or another PSP. Keep three technical boundaries distinct:
 
-PaySwap does not accept deposits, maintain customer stored-value balances, hold float, pool/safeguard funds, issue wallets/stored value, perform its own settlement, become merchant of record, lend, extend credit or custody funds. The append-only ledger is an operational/evidence journal for mandates, instructions, provider events and reconciliation—not a customer balance ledger, general ledger, balance sheet or proof that PaySwap holds money. Provider API acceptance is not settlement; provider/bank read-back and reconciliation remain required.
+| Contract | Responsibility | Must not own |
+|---|---|---|
+| `BlockchainRailAdapter` | Chain-specific transaction construction, simulation, fees, submission outcome and chain finality/reorg evidence, normalized into PaySwap intents, routes, execution and reconciliation | PSP accounts, user keys, route choice, authorization grants or a separate ledger |
+| `WalletConnector` | Connects a user-controlled external wallet, proves address control with a one-time origin/network-bound challenge, and requests a signature for the exact host-authorized transaction | Seed phrases, private-key export/storage, ambient signing permission or a PaySwap-issued wallet |
+| `ChainInfrastructureProvider` | Supplies RPC, indexing, simulation, gas estimation and event access | Account ownership, user consent, financial authority, route eligibility or settlement truth by itself |
 
-Provider API keys/tokens are sensitive credentials, not funds. They remain in the secure host credential store or server secret manager. Agents receive scoped host-mediated tool capabilities and never raw provider credentials.
+A connected wallet is a user-controlled payment account/rail endpoint. Proof of address control is not permission to spend. A wallet signature must bind the exact chain/network, account, recipient, token/contract, value/calldata, fee bounds and nonce from the host-authorized route; any material change requires fresh authorization. Chain broadcasts are provisional; settlement requires the required confirmation/finality policy and reorg-aware reconciliation. Bridges remain conditional until the bridge, counterparties, asset path, liquidity and legal treatment are independently evidenced. This boundary does not authorize PaySwap custody, seed-phrase collection, private-key management, a proprietary wallet, smart-account service or relayer business.
 
-## 8. Initial market focus and Ghana perimeter
+## 8. Non-custodial product boundary
 
-The first commercial wedge is **B2B accounts payable, procurement and supplier payments**, followed by cross-border business payments and agent purchases of digital services. That gives a workflow advantage over a generic multi-PSP API: invoice and purchase-order matching, supplier verification, project budgets, bounded mandates, route discovery, payment initiation through an authorized provider and reconciliation in one mission.
+Funds remain with the user's bank, licensed PSP, e-money issuer, card issuer/network, external wallet or other independently controlled payment account. PaySwap submits an instruction only after the host execution authority consumes the exact grant applicable to that operation and financial principal. A third-party participant controls its own account and separately authorizes its own route legs.
 
-An initial workflow can reconcile a requisition, quote, purchase order, delivery record, supplier invoice and verified beneficiary before proposing a GHS supplier payment. GHS, local bank and mobile-money rail support must be established from actual connected-provider capability evidence; a provider's presence in Ghana does not prove a particular product/corridor is available.
+PaySwap does not accept deposits, maintain customer stored-value balances, hold float, pool/safeguard funds, issue or custody wallets/stored value, perform its own settlement, become merchant of record, lend, extend credit or take custody of participant funds. The append-only ledger is an operational/evidence journal for intents, offers, commitments, instructions, provider events and reconciliation—not a customer balance ledger, general ledger, balance sheet or proof that PaySwap holds money. Provider API acceptance is not settlement; provider/bank/rail read-back and reconciliation remain required.
+
+The unified PSP interface exposes supported payment-related operations only. It does not proxy arbitrary provider APIs or imply PaySwap can replace provider dashboards for non-payment administration, legal onboarding or unsupported features.
+
+Provider API keys/tokens are sensitive credentials, not funds. They remain in the secure host credential store or server secret manager. Agents receive scoped host-mediated tool capabilities and never raw provider credentials. A participant's credentials and financial authority are never shared with another participant or agent.
+
+## 9. Initial payment use cases and Ghana perimeter
+
+The initial product wedge is a unified interface for connected PSP accounts plus money-movement discovery across fragmented payment rails. Priority use cases include domestic and cross-border transfers, merchant payments, collections, payouts, refunds, payment-status and beneficiary operations, reconciliation, and routes that bridge sender/recipient payment-method incompatibility.
+
+An illustrative use case is a customer who has mobile money but needs to pay a merchant that accepts only cards. PaySwap can discover whether an independently controlled participant has a verified, eligible card-payment capability and is willing to pay the merchant in exchange for an agreed mobile-money leg. A similar cash-assisted route is considered only when a legally appropriate participant, verifiable handoff/evidence and explicit commitments exist. This is payment-route discovery, not discovery of a general-purpose intermediary service.
+
+Multi-intent opportunities may identify independently evidenced obligations that can be offset or coordinated. They must preserve each original intent until all affected financial principals explicitly accept a new route; no party's grant can authorize another party's account or obligation.
+
+GHS, local bank and mobile-money rail support must be established from actual connected-provider capability evidence; a provider's presence in Ghana does not prove a particular product/corridor is available. Cash-assisted and other offline routes require a documented participant-evidence, dispute and legal model before being treated as executable.
 
 Non-custodial design does not itself establish a licensing exemption. Ghana launch requires counsel to assess the deployed functions under the Payment Systems and Services Act, 2019 (Act 987), current Bank of Ghana categories/notices, and the specific operating model. Act 987 includes technological services facilitating switching, routing, clearing and data management among regulated activities; BoG publishes PFTSP and PSP categories. This is a perimeter-review trigger, not a conclusion that a specific licence is required or not required. Obtain a written assessment, identify any required BoG engagement and determine the need for licensed PSP/bank partners before Ghana-facing commercial launch.
 
@@ -206,35 +222,3 @@ Official BoG references checked 2026-11-15:
 - Licence categories: https://www.bog.gov.gh/fintech-innovation/licence-categories/
 - Licensing application pack notice, 2026-11-09: https://www.bog.gov.gh/notice/licensing-application-pack-for-payment-service-providers/
 - Licensed PSP list: https://www.bog.gov.gh/supervision-regulation/registered-institutions/list-of-licensed-psps/
-
-No statement here is legal advice or a definitive licence determination. Apply the same jurisdiction-specific analysis to other corridors.
-
-## 9. Proposed package seams (not implemented yet)
-
-These are target boundaries for P3 onward, not claims about existing source files:
-
-| Responsibility | Target seam | Owner rule |
-|---|---|---|
-| Agent catalog | `packages/services/src/payswap/agent-catalog/` | Read-only projection of existing ZCode manifests/trust state |
-| Mission orchestration | `packages/services/src/payswap/orchestration/` | Schedules existing ZCode tasks; no new runtime or conversation store |
-| Delegation law | `packages/shared/src/payswap/delegation/` plus existing host authorization service | Pure schema/intersection rules and one host-owned writer |
-| Protocol schemas | `packages/shared/src/payswap/protocols/` | Versioned typed contracts; no I/O or credentials |
-| Protocol adapters | `packages/services/src/payswap/protocols/<protocolId>/` | Boundary translation to common financial contracts |
-| UI | Existing New Task, plugin and approved host surfaces | Additive projections; Class-B approval remains host-rendered |
-
-Before adding any store, identify the existing authoritative owner, migration, lock/fencing rule and read model. Protocol transport state may be bounded adapter state; financial facts and mandate/transaction history remain in the one PaySwap ledger.
-
-## 10. Invariants
-
-1. One ZCode runtime; no parallel agent harness.
-2. One PaySwap core, authorization authority, execution authority and ledger.
-3. Agent, provider and protocol catalogs are distinct.
-4. Model/agent/protocol outputs are untrusted until deterministic verification.
-5. Agent tasks are principal/workspace/tool scoped and traceable to a mission.
-6. Delegation is human-signed (challenge- and digest-bound — addendum §9.5), host-issued, bounded, expiring, revocable and monotonic-narrowing; the signing operator and the financial principal are distinct (§9.6), and the budget reserve/consume/release lifecycle is atomic and ledger-authoritative (§9.7).
-7. Both approval modes lead to exact closed transaction grants; agents never mint them.
-8. Trusted authorization surfaces are deterministic and non-agentic.
-9. No provider write before P7; no live mode before the separate operator gate.
-10. No custody; provider/bank evidence is the settlement truth.
-11. External provider/protocol facts are versioned, dated and re-verified.
-12. All non-financial ZCode behavior remains preserved.
