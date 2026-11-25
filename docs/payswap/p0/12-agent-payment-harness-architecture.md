@@ -123,6 +123,8 @@ Every FAE is structured and binds, at minimum:
 
 Unknown/missing/unverifiable constraints fail closed. Free-text explanations are not executable policy. An envelope must have bounded lifetime and explicit revocation.
 
+**One envelope, one financial principal.** An FAE may bind only accounts and obligations controlled by its named financial principal. A route involving multiple independent principals requires each principal to make their own authenticated commitment and, where autonomous execution is permitted, approve their own separate FAE or exact transaction grant. The host may coordinate those proofs but cannot derive, borrow or widen one principal's authority for another. A participant offer or route acceptance is not a grant to debit that participant's account.
+
 ### 5.3 Parent-child delegation is monotonic narrowing
 
 A host-owned delegation service may derive a child envelope for one agent and one task. It intersects the parent envelope with workspace policy, agent scope, principal/role and current PaySwap eligibility. Every child must be equal to or narrower than its parent across accounts, recipients, purpose, geography, currency, provider, rail, amount, fees, FX, aggregate budget, count, rate, time and delegation depth.
@@ -167,9 +169,9 @@ External protocols exchange mandates, challenges, agent identities, payment requ
 | AP2 v0.2 | Human-present and human-not-present mandate/receipt interoperability | Trusted Surface is non-agentic. Agent-to-agent mandate delegation is outside AP2 v0.2 scope; PaySwap child delegation is its own extension. |
 | x402 | HTTP payment request/challenge and response interoperability | A 402/payment challenge is untrusted input, not consent. Compile to a typed intent and evaluate host authority/eligibility. |
 | Stripe/Tempo MPP | Machine-payment sessions, programmatic/recurring/micropayment interoperability | Session is protocol data, not a PaySwap grant. Metered/repeated charges require envelope bounds; every closed transaction still passes host policy. |
-| Visa Trusted Agent Protocol | Verified agent identity/portal access in participating business/supplier systems | Agent identity and portal access are not payment authorization. |
+| Visa Trusted Agent Protocol | Deferred, optional payment-identity boundary only | Consider only if a specific payment flow requires it to verify an agent's payment request; no supplier-portal automation, service discovery or general business workflow. |
 | Mastercard Agent Pay for Machines | Scheme/network integration target | Requires actual partner specifications, access and conformance; not assumed to be a universal public provider API. |
-| MCP / future A2A | Agent/tool discovery and task invocation | Identity and task messages confer neither PSP credentials nor financial authority. |
+| Existing ZCode agent/task interfaces | Internal invocation of bounded payment-analysis tasks | No external agent marketplace or general-purpose agent discovery; task identity confers neither PSP credentials nor financial authority. |
 
 Every protocol adapter pins an exact version and official evidence URL/retrieval date, verifies signatures/issuer/audience/replay/expiry/nonce as applicable, validates feature support, tests malformed/stale/forged messages and fails closed on unknown versions. Receipts are emitted only from verified execution/reconciliation state; a protocol "accepted" event is not settlement. Unsupported features are unavailable, not simulated as production support.
 
