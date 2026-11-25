@@ -3460,3 +3460,15 @@ export {
   type PayswapCapabilityRecord,
   type PayswapCapabilityRegistry,
 } from "#src/payswap/index.js";
+// PaySwap P4 wave 2：确定性 eligibility 引擎（shared CONTRACT「P4 确定性
+// eligibility 引擎」—— 纯求值，证据 = wave 1 能力记录）。
+export {
+  evaluatePayswapEligibility,
+  payswapEligibilityAnswerSchema,
+  payswapEligibilityQuerySchema,
+  PAYSWAP_ELIGIBILITY_REFUSAL_CODES,
+  type PayswapEligibilityAnswer,
+  type PayswapEligibilityEvaluationInput,
+  type PayswapEligibilityQuery,
+  type PayswapEligibilityRefusalCode,
+} from "#src/payswap/index.js";
