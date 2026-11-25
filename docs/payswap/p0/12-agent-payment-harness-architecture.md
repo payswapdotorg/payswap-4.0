@@ -183,7 +183,19 @@ Official references checked 2026-11-15 (they establish initiative scope, not Pay
 - Visa/BILL/Billtrust invoice-payment pilot, 2026-10-20: https://corporate.visa.com/en/sites/visa-perspectives/press-releases/visa-bill-billtrust-launch-pilot.html
 - Mastercard Agent Pay for Machines, 2026-06-10: https://www.mastercard.com/global/en/news-and-trends/press/2026/june/mastercard-launches-agent-pay-for-machines.html
 
-## 7. Non-custodial product boundary
+## 7. Additional payment-rail boundary: blockchain and external wallets
+
+Blockchain is a payment rail in the same money-movement product, not a new product category or another PSP. Keep three technical boundaries distinct:
+
+| Contract | Responsibility | Must not own |
+|---|---|---|
+| `BlockchainRailAdapter` | Chain-specific transaction construction, simulation, fees, submission outcome and chain finality/reorg evidence, normalized into PaySwap intents, routes, execution and reconciliation | PSP accounts, user keys, route choice, authorization grants or a separate ledger |
+| `WalletConnector` | Connects a user-controlled external wallet, proves address control with a one-time origin/network-bound challenge, and requests a signature for the exact host-authorized transaction | Seed phrases, private-key export/storage, ambient signing permission or a PaySwap-issued wallet |
+| `ChainInfrastructureProvider` | Supplies RPC, indexing, simulation, gas estimation and event access | Account ownership, user consent, financial authority, route eligibility or settlement truth by itself |
+
+A connected wallet is a user-controlled payment account/rail endpoint. Proof of address control is not permission to spend. A wallet signature must bind the exact chain/network, account, recipient, token/contract, value/calldata, fee bounds and nonce from the host-authorized route; any material change requires fresh authorization. Chain broadcasts are provisional; settlement requires the required confirmation/finality policy and reorg-aware reconciliation. Bridges remain conditional until the bridge, counterparties, asset path, liquidity and legal treatment are independently evidenced. This boundary does not authorize PaySwap custody, seed-phrase collection, private-key management, a proprietary wallet, smart-account service or relayer business.
+
+## 8. Non-custodial product boundary
 
 Funds remain with the user's bank, licensed PSP, e-money issuer, card issuer/network, external wallet or other independently controlled payment account. PaySwap submits an instruction only after the host execution authority consumes the exact grant applicable to that operation and financial principal. A third-party participant controls its own account and separately authorizes its own route legs.
 
@@ -193,7 +205,7 @@ The unified PSP interface exposes supported payment-related operations only. It 
 
 Provider API keys/tokens are sensitive credentials, not funds. They remain in the secure host credential store or server secret manager. Agents receive scoped host-mediated tool capabilities and never raw provider credentials. A participant's credentials and financial authority are never shared with another participant or agent.
 
-## 8. Initial payment use cases and Ghana perimeter
+## 9. Initial payment use cases and Ghana perimeter
 
 The initial product wedge is a unified interface for connected PSP accounts plus money-movement discovery across fragmented payment rails. Priority use cases include domestic and cross-border transfers, merchant payments, collections, payouts, refunds, payment-status and beneficiary operations, reconciliation, and routes that bridge sender/recipient payment-method incompatibility.
 
