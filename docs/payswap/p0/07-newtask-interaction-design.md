@@ -9,55 +9,14 @@ remote behaviour. PaySwap appears **inside** that experience, additively.
 
 Nothing about New Task changes until the user opts in. With PaySwap active:
 
-1. **Conversation-first.** Financial discovery and operation happen as model answers
-   in the normal message stream — the model is an orchestrator over PaySwap's
-   `payswap_*` MCP tools (deliverable 05). No new chat application, no replacement
-   composer, no hardcoded model list.
-2. **Approval rides two independent layers** (addendum §1, normative). Layer 1:
-   `payswap_*` tools are ordinary MCP tools — `needsApproval: true` at registration
-   (`core/src/mcp/index.ts:148`) — so they prompt like every MCP tool in
-   build/edit mode. **That registration alone is not a security boundary:** the
-   permission service's decision order lets yolo/guarded modes, session allow
-   rules, `allowedTools` config, owned workflow amendments, and subagent/automation
-   contexts reach `allow` without a prompt (`core/src/permission/service.ts:148`,
-   `:399-456` — verified in addendum §1.1). Layer 2 is therefore where money is
-   actually controlled: the host execution authority refuses every money-affecting
-   operation without a valid, single-use, expiry-bound, tuple-bound Authorization
-   Grant that only a host-verified human approval event can create. Yolo mode can
-   silence prompts; it cannot mint grants. The approval origin itself is
-   specified in addendum §1.6: host-controlled approval surface, one-time
-   host-generated challenge, transaction-digest binding, renderer/window
-   ownership verification, and structural exclusion of plugin-webview and
-   model-originated approvals. Negative E2E rows N1–N42 (addendum §1.7)
-   are the proof.
-3. **Additive cards in two trust classes (addendum §1.6.0, normative).**
-   Financial context renders through two distinct surfaces:
-   - **Class A — informational cards** through the existing generative-UI/plugin
-     surface contract (`ui.surfaces[]` + `ui://` resources in the hardened
-     plugin sandbox webview, mounted via `pluginUiBridgeService` — deliverable
-     03 §6): account-connection cards, route-plan cards (existing /
-     conditional / opportunity clearly labelled, never "executable" until
-     requirements are satisfied), and reconciliation/ledger evidence cards.
-   - **Class B — the authorization card is not one of them.** It is
-     **host-rendered in the trusted application renderer**, following the
-     permission-prompt projection pattern (host-computed payload → rendered as
-     data → interaction-resolution return path; addendum §1.6), binding
-     principal, account, recipient, amount, currency, purpose, full route+legs,
-     fees, FX conditions, expiry. It is never declared in `ui.surfaces[]`, never
-     a `ui://` resource, never resolvable via `mcp/uiCallTool` — upstream's
-     plugin-UI contract validates `ui://` content structurally only and trusts
-     the plugin's declaration
-     (`packages/services/src/plugin-ui-bridge/contract.ts:27-31`), which is
-     exactly why a plugin surface can never host a money authorization. The
-     manifest validator rejects authorization-styled declarations (N25).
-4. **An optional financial workspace toggle** — added through the same extension
-   surface as existing workspace panels, never by editing the New Task layout.
-   Off by default; invisible when no account is connected.
-5. **Connection onboarding** happens in a plugin-sandboxed UI surface
-   (`payment=()` permissions policy already excludes payment handlers — provider
-   flows open through the platform shell, per the platform-service abstraction),
-   with credentials going directly to the PaySwap account service →
-   `ICredentialService` — never through chat, logs, or model context.
+1. **PaySwap is the primary payment interface.** From the existing New Task conversation and additive financial workspace, the user can connect PSP accounts, inspect evidence-backed balances/payment activity and other supported payment data, use provider-supported payment operations, submit money-movement intents, compare routes and track execution/reconciliation. The interface is payment-only; it does not expose arbitrary PSP endpoints or non-payment provider/service discovery.
+2. **Conversation-first.** Financial discovery and operation happen as model answers in the normal message stream — the model is an orchestrator over PaySwap's typed payswap tools (deliverable 05). No new chat application, no replacement composer, no hardcoded model list. The financial workspace presents persistent payment-account and route/evidence views without replacing the ZCode shell.
+3. **Approval rides two independent layers** (addendum §1, normative). Layer 1: payswap tools are ordinary MCP tools — needsApproval is true at registration — so they prompt like every MCP tool in build/edit mode. That registration alone is not a security boundary. Layer 2: the host execution authority refuses every money-affecting/provider-write operation without a valid, single-use, expiry-bound, tuple-bound Authorization Grant created only by a host-verified authorization event. Yolo mode can silence prompts; it cannot mint grants. The approval origin is host-controlled, challenge-bound, digest-bound and structurally excludes plugin-webview and model-originated approvals. Negative E2E rows N1–N42 (addendum §1.7) remain the proof for existing transaction approval.
+4. **Additive cards in two trust classes** (addendum §1.6.0, normative):
+   - **Class A — informational cards** through the existing generative-UI/plugin surface: connected PSP accounts and connection health; evidence-backed balances, payment objects, recipients/beneficiaries, transfers, payouts, refunds, disputes and reconciliation where supported; money-movement intents; direct/composed/opportunity route plans; participant offers/commitments; and execution/evidence status. Unsupported provider operations are shown as typed unavailable/refused, never fabricated.
+   - **Class B — authorization cards are host-rendered in the trusted application renderer.** They bind the exact provider operation or complete route graph: financial principal, operator, source account, recipient, affected intents, each participant's role/commitment, amount/currency, purpose, all legs, fees, FX conditions, expiry and failure/compensation conditions. One party's approval cannot authorize another participant's leg. Class B is never a plugin-webview surface or model-generated approval.
+5. **An optional financial workspace toggle** — added through the existing extension surface; it enables the PaySwap payment interface without editing the New Task layout or replacing ordinary ZCode behaviour.
+6. **Connection onboarding** happens in a plugin-sandboxed UI surface with credentials going directly to the PaySwap account service and ICredentialService — never through chat, logs or model context. Provider-specific onboarding and capability gaps remain explicit.
 
 ## 2. What never happens
 
@@ -153,12 +112,14 @@ instances.
 
 ## 4. The acceptance look
 
-A user with a connected Stripe account asks, in the existing New Task box, "what
-can I use to pay a supplier in Kenya?" — the model answers from the evidence-backed
-capability registry via `payswap_*` tools; a route card renders inline listing the
-direct baseline first, then conditional/opportunity routes clearly marked; any
-money movement surfaces the **host-rendered authorization card** binding the full
-grant tuple (addendum §1.3/§1.6.0 — Class B, never a plugin webview surface);
-execution outcomes come from provider read-back and appear as
-evidence cards. Every step of that sentence maps to an existing ZCode surface named
-in deliverables 03 and 06 — that mapping is the design.
+A user with connected Stripe and mobile-money-capable accounts asks, in the existing
+New Task box, "I need to pay this card-only merchant; I only have mobile money. Find
+the best way to make the payment." PaySwap first shows the available direct route
+or a typed reason that none exists, then evaluates composed routes involving
+verified, consenting payment participants. The user can also ask to inspect a
+connected PSP balance, payment, beneficiary, payout or refund and perform the
+provider-supported operation through the same interface. Any write displays a
+**host-rendered authorization card** binding the exact provider operation or full
+multi-party route; each independent participant must authorize their own leg.
+Execution outcomes come from provider/rail read-back and appear as evidence cards.
+No route is treated as settled because a provider API merely accepted a request.
