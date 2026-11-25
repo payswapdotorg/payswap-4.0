@@ -71,6 +71,16 @@ export {
   type PayswapCapabilityRegistry,
 } from "./capability/capabilityRegistry.js";
 export {
+  evaluatePayswapEligibility,
+  payswapEligibilityAnswerSchema,
+  payswapEligibilityQuerySchema,
+  PAYSWAP_ELIGIBILITY_REFUSAL_CODES,
+  type PayswapEligibilityAnswer,
+  type PayswapEligibilityEvaluationInput,
+  type PayswapEligibilityQuery,
+  type PayswapEligibilityRefusalCode,
+} from "./eligibility/eligibilityEngine.js";
+export {
   createPayswapAccountReadBackRouter,
   type PayswapAccountReadBackRouterDependencies,
 } from "./providers/readBackRouter.js";
