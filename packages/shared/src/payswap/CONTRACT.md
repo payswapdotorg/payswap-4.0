@@ -319,3 +319,37 @@ executors」+ doc 12 §6「Protocol interoperability at the boundary」+ doc 05 
   `protocol_evidence_untrusted`；状态非 `settled-verified` =
   `protocol_receipt_unavailable`。适配器只持有 `verify` 端口，结构上无法铸造
   自己的结算证据。
+
+**P4 provider capability registry（doc 05 §4「Capability declaration — evidence, never
+claims」+ doc 12 §3「Keep three catalogs distinct」+ §2.3「exactly one financial core」；
+`capability/`—— 纯类型 + zod schema + 确定性纯函数，无 IO、无凭据、无 runtime）：
+
+- **三目录分立**（doc 12 §3）：agent catalog、provider capability registry、protocol
+  registry 是三个 schema、来源与读模型 —— 互不使对方记录成为权威。本模块只承载
+  provider capability 半：它的唯一事实来源是** provider 读回证据**（P3 读回结局），
+  绝不是 agent/模型/目录成员资格或任何声明。catalog 描述符可搜索但永不可执行；
+  安装/信任留在既有 ZCode 生命周期。
+- **能力记录 `PayswapCapabilityRecord`**（doc 05 §4 形状）：providerId + connectionId +
+  schemaVersion + declaredAt + `evidence`（产出的原始读回引用 —— P4 波次 1 用读回
+  结局的进程内引用；ledger seq 落账随 P7 证据账本切片）+ `operations[]`（每操作
+  `OperationCapability`：closed §6.1 taxonomy 子集内的 operation id + 五值 status
+  `enabled | available | pending | restricted | unavailable` + `restrictions[]`）。
+  记录**不可变且按 revision 递增** —— 新证据 ⇒ 新记录；注册表保留历史（frozen
+  views 纪律，镜像 packages/provider/src/registry.ts 的形状而非依赖它）。
+- **证据映射法则（evidence, never claims 的机制化）**：读回 `verified` 携
+  `evidence`（Stripe 式 capabilities+requirements 摘要）→ 逐操作映射：provider 读回
+  的 capability 名按固定词汇表映射到 §6.1 操作 id，active/inactive/pending ⇒
+  enabled/unavailable/pending，读回未提及的操作一律 `unavailable`（Unknown =
+  unavailable，not optimistic defaults）；`requirements` 摘要进 restrictions 的
+  `note`（带官方引用）。读回 `verified` 携 typed `capabilityGap`（P3 缺席面 ——
+  Paystack/PayPal）或 `identityGap`：**全部操作 `unavailable`，每项 reason = 该
+  typed 缺口**（doc 05 §4「must declare it unavailable with a reason」的注册表面）。
+  读回 `auth-failed`/`unavailable`/缺口连接：无新记录（证据缺席不产生记录，也
+  永不吊销既有记录 —— 记录由证据时间戳界定新旧）。
+- **硬编码能力表禁止**（doc 05 §4）：静态 provider 知识只能进 restrictions 的
+  `note`（带 fact-sheet 引用）；任何「Stripe 有 transfers 所以一定有」式声明 =
+  实现缺陷。capability 名 → 操作 id 的词汇映射是唯一允许的固定表（它映射的是
+  provider 自己读回的名字，不是猜测的能力）。
+- **无权威外溢**：本模块不铸造 grant、不路由、不触 provider、不写 ledger —— 它是
+  P4/P6 eligibility/routing 的**只读证据面**。catalog/agent 记录在 schema 层不可
+  变换为 capability 记录（分离法则的机制化；battery 断言）。
