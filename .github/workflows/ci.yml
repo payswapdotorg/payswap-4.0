@@ -144,6 +144,19 @@ jobs:
           packages/services/test/payswap-mpp-message-face.test.ts
           packages/desktop/test/payswap-protocol-runtime-wiring.test.ts
 
+      # PaySwap P4（wave 1-4）：能力注册表 + eligibility 引擎 + 支付参与方证据 +
+      # intent 编译器的法则电池 PR CI 注册（同 P2/P3 模式 —— exact PR head 上可
+      # 复现的绿；清单本身不是执行证据）。2026-11-26：无 payswap-roadmap.yml
+      #（W12 按实际仓库形态解析为 ci.yml 电池步 —— roadmap register 本身只在
+      # milestone gate 时改动，本步不触）。
+      - name: Payswap P4 law battery (root engineering project)
+        run: >
+          pnpm exec vitest run --project engineering
+          packages/services/test/payswap-capability-registry.test.ts
+          packages/services/test/payswap-eligibility-engine.test.ts
+          packages/services/test/payswap-payment-parties.test.ts
+          packages/services/test/payswap-intent-compiler.test.ts
+
       # PaySwap P1.6：server 侧 operator-principal 生产边界套件（真实 createHttpServer +
       # 真实 HTTP/WS 升级握手 + 0600 原子持久化；packages/server/vitest.config.ts 装配
       # 包内入口 —— 根配置的 projects 相对路径从包目录启动会错位）。

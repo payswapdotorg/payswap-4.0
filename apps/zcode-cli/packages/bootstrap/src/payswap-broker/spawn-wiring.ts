@@ -45,6 +45,7 @@ import {
 import type {
   PayswapAccountDetailReader,
   PayswapAccountOverviewReader,
+  PayswapIntentEligibilityReader,
   PayswapLiveStateReader,
 } from "./dispatch.js";
 import type {
@@ -93,6 +94,7 @@ export interface PayswapBrokerCoordinatorOptions {
    * 生产装配经账户运行时绑定（createPayswapAccountRuntime.accountDetailReader）。
    */
   accountDetailReader?: PayswapAccountDetailReader;
+  intentEligibilityReader?: PayswapIntentEligibilityReader;
   /**
    * §8.1 会话 resolver（Step 5，ADR-8 D8.6）：构造时初值（app 面在此一次性绑定）；
    * 协议宿主面用 bindSessionScopeResolver 延迟绑定（server 构造晚于协调器）。未绑定
@@ -198,6 +200,9 @@ export function createPayswapBrokerCoordinator(
           : {}),
         ...(options.accountDetailReader !== undefined
           ? { accountDetailReader: options.accountDetailReader }
+          : {}),
+        ...(options.intentEligibilityReader !== undefined
+          ? { intentEligibilityReader: options.intentEligibilityReader }
           : {}),
         sessionScopeResolver: sessionScopeFacade,
         ...(options.entityWorkspaceResolver !== undefined
