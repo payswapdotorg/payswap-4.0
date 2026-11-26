@@ -57,3 +57,4 @@ export * from "./protocols/x402-message-face.js";
 export * from "./protocols/protocol-faces.js";
 export * from "./surface-revocation.js";
 export * from "./approval-desktop.js";
+export * from "./parties.js";
