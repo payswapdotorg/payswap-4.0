@@ -45,6 +45,7 @@ export const PAYSWAP_CAPABILITY_RESTRICTION_KINDS = [
   "country",
   "currency",
   "method",
+  "chain",
   "amount",
   "product",
   "entitlement",

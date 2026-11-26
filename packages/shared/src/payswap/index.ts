@@ -59,3 +59,4 @@ export * from "./protocols/protocol-faces.js";
 export * from "./surface-revocation.js";
 export * from "./approval-desktop.js";
 export * from "./parties.js";
+export * from "./chain.js";
