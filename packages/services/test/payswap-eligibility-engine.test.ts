@@ -32,6 +32,13 @@ import {
   type PayswapEligibilityQuery,
 } from "@zcode/services/node";
 
+// PaySwap P4 wave 4：约束维度 purpose/product/entitlement + 结构化 restriction
+// （allow/deny/min/max）的 schema 层证明 —— PR #98 记录在案的另一半。
+import {
+  payswapCapabilityRestrictionSchema,
+  payswapEligibilityConstraintsSchema,
+} from "@zcode/services/node";
+
 const NOW = "2026-11-25T18:00:00.000Z";
 
 function categoryResult(status: PayswapReadonlyCategoryResult["status"]): PayswapReadonlyCategoryResult {
@@ -244,5 +251,63 @@ describe("payswap eligibility engine (P4 wave 2) — the evidence law", () => {
     for (const forbidden of ["route", "mint", "submit", "ledger", "connect", "readBack"]) {
       expect(evaluatePayswapEligibility).not.toHaveProperty(forbidden);
     }
+  });
+});
+
+describe("payswap eligibility constraint dimensions (P4 wave 4) — purpose/product/entitlement + structured restrictions", () => {
+  it("W10a: the query constraints schema accepts the purpose/product/entitlement dimensions (beneficiary rides the existing recipientKind dimension)", () => {
+    expect(payswapEligibilityConstraintsSchema.safeParse({ purpose: "tax" }).success).toBe(true);
+    expect(payswapEligibilityConstraintsSchema.safeParse({ product: "payout_card" }).success).toBe(true);
+    expect(payswapEligibilityConstraintsSchema.safeParse({ entitlement: "payouts_std" }).success).toBe(true);
+    expect(payswapEligibilityConstraintsSchema.safeParse({ recipientKind: "verified-recipient" }).success).toBe(true);
+    // 未知维度照旧 strict 拒绝（闭集不扩）。
+    expect(payswapEligibilityConstraintsSchema.safeParse({ loyaltyTier: "gold" }).success).toBe(false);
+  });
+
+  it("W10b: the capability restriction schema accepts the structured allow/deny/min/max form (amount bounds are BigInt-safe integer decimal strings)", () => {
+    expect(payswapCapabilityRestrictionSchema.safeParse({ kind: "purpose", deny: ["loan_repayment"], note: "provider purpose perimeter" }).success).toBe(true);
+    expect(payswapCapabilityRestrictionSchema.safeParse({ kind: "product", allow: ["payout_card"] }).success).toBe(true);
+    expect(payswapCapabilityRestrictionSchema.safeParse({ kind: "entitlement", allow: ["payouts_std", "payouts_pro"] }).success).toBe(true);
+    expect(payswapCapabilityRestrictionSchema.safeParse({ kind: "amount", min: "100", max: "500000", note: "provider per-transaction bounds" }).success).toBe(true);
+    // 非整数 decimal min/max 会撞引擎的 BigInt 比较 —— schema 层即拒（不发明）。
+    expect(payswapCapabilityRestrictionSchema.safeParse({ kind: "amount", min: "12.50" }).success).toBe(false);
+    // 非结构化 note-only 形状照旧合法（additive，不改写 wave 1 数据）。
+    expect(payswapCapabilityRestrictionSchema.safeParse({ kind: "other", note: "provider absence: transport failed" }).success).toBe(true);
+    // 未知键照旧 strict 拒绝。
+    expect(payswapCapabilityRestrictionSchema.safeParse({ kind: "country", rogue: true }).success).toBe(false);
+  });
+
+  it("W10c (runtime regression guard): a structured purpose deny adjudicates end to end through the unchanged engine", () => {
+    const base = stripeRecord();
+    const withPurpose = {
+      ...base,
+      operations: base.operations.map((op) =>
+        op.operation === "balances.read"
+          ? {
+              ...op,
+              restrictions: [
+                { kind: "purpose" as const, deny: ["loan_repayment"], note: "provider purpose perimeter" },
+              ],
+            }
+          : op,
+      ),
+    };
+    const denied = evaluatePayswapEligibility({
+      query: query({ constraints: { purpose: "loan_repayment" } }),
+      record: withPurpose,
+      now: NOW,
+    });
+    expect(denied.kind).toBe("answer");
+    if (denied.kind === "answer") {
+      expect(denied.eligible).toBe(false);
+      expect(denied.blockers.some((b) => b.kind === "purpose" && (b.note ?? "").includes("purpose perimeter"))).toBe(true);
+    }
+    const permitted = evaluatePayswapEligibility({
+      query: query({ constraints: { purpose: "payroll" } }),
+      record: withPurpose,
+      now: NOW,
+    });
+    expect(permitted.kind).toBe("answer");
+    if (permitted.kind === "answer") expect(permitted.eligible).toBe(true);
   });
 });

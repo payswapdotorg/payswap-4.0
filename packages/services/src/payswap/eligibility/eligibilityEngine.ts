@@ -36,6 +36,9 @@ export const payswapEligibilityConstraintsSchema = z
     amount: z.string().regex(/^-?\d+$/).optional(),
     method: z.string().min(1).optional(),
     recipientKind: z.string().min(1).optional(),
+    purpose: z.string().min(1).optional(),
+    product: z.string().min(1).optional(),
+    entitlement: z.string().min(1).optional(),
   })
   .strict();
 export type PayswapEligibilityConstraints = z.infer<typeof payswapEligibilityConstraintsSchema>;

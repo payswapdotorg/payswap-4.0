@@ -178,6 +178,7 @@
   "packages/services/test/payswap-credential-security.test.ts",
   "packages/services/test/payswap-custodian-fail-closed.test.ts",
   "packages/services/test/payswap-eligibility-engine.test.ts",
+  "packages/services/test/payswap-intent-compiler.test.ts",
   "packages/services/test/payswap-payment-parties.test.ts",
   "packages/services/test/payswap-mpp-message-face.test.ts",
   "packages/services/test/payswap-paypal-data.test.ts",

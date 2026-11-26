@@ -58,6 +58,10 @@ export const payswapCapabilityRestrictionSchema = z
   .object({
     kind: z.enum(PAYSWAP_CAPABILITY_RESTRICTION_KINDS),
     note: z.string().min(1).optional(),
+    allow: z.array(z.string().min(1)).optional(),
+    deny: z.array(z.string().min(1)).optional(),
+    min: z.string().regex(/^-?\d+$/).optional(),
+    max: z.string().regex(/^-?\d+$/).optional(),
   })
   .strict();
 export type PayswapCapabilityRestriction = z.infer<typeof payswapCapabilityRestrictionSchema>;

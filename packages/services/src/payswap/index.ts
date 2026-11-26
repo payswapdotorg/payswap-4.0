@@ -65,6 +65,7 @@ export {
   createPayswapCapabilityRegistry,
   derivePayswapCapabilityRecord,
   PAYSWAP_CAPABILITY_OPERATION_VOCABULARY,
+  payswapCapabilityRestrictionSchema,
   payswapCapabilityRecordSchema,
   type PayswapCapabilityDerivationInput,
   type PayswapCapabilityRecord,
@@ -73,6 +74,7 @@ export {
 export {
   evaluatePayswapEligibility,
   payswapEligibilityAnswerSchema,
+  payswapEligibilityConstraintsSchema,
   payswapEligibilityQuerySchema,
   PAYSWAP_ELIGIBILITY_REFUSAL_CODES,
   type PayswapEligibilityAnswer,
@@ -80,6 +82,28 @@ export {
   type PayswapEligibilityQuery,
   type PayswapEligibilityRefusalCode,
 } from "./eligibility/eligibilityEngine.js";
+// PaySwap P4 wave 4：money-movement intent 编译器 + 进程内不可变 intent 注册表
+// （shared CONTRACT「P4 wave 4」—— 纯确定性编译，draft-vs-evidence 分离；
+// broker check_eligibility 接线随 wave-4 PR(b)）。
+export {
+  compilePayswapIntent,
+  PAYSWAP_INTENT_KINDS,
+  PAYSWAP_INTENT_OPERATION_MAP,
+  PAYSWAP_INTENT_REFUSAL_CODES,
+  payswapFinancialIntentSchema,
+  payswapIntentDraftSchema,
+  type PayswapClarificationRequest,
+  type PayswapFinancialIntent,
+  type PayswapIntentCompileInput,
+  type PayswapIntentCompileOutcome,
+  type PayswapIntentDraft,
+  type PayswapIntentKind,
+  type PayswapIntentRefusalCode,
+} from "./intent/intentCompiler.js";
+export {
+  createPayswapIntentRegistry,
+  type PayswapIntentRegistry,
+} from "./intent/intentRegistry.js";
 export {
   createPayswapAccountReadBackRouter,
   type PayswapAccountReadBackRouterDependencies,
