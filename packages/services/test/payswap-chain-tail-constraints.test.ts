@@ -156,6 +156,34 @@ describe("payswap chain-tail constraints (P4 wave 6)", () => {
     }
   });
 
+  it("T4b: lets an allow hit pass on every dimension and keeps a wrong-chain answer scoped to the chain", () => {
+    for (const dimension of DIMENSIONS) {
+      const value = dimension === "feeCap" ? "15" : `${dimension}-value`;
+      const allowed = evaluatePayswapEligibility({
+        query: eligibilityQuery({ [dimension]: value }),
+        record: withRestrictions(baseRecord(), [{ kind: dimension, allow: [value] }]),
+        now: NOW,
+      });
+      expect(allowed.kind, `${dimension} allow hit`).toBe("answer");
+      if (allowed.kind === "answer") expect(allowed.eligible, `${dimension} allow hit`).toBe(true);
+    }
+
+    const wrongChain = evaluatePayswapEligibility({
+      query: eligibilityQuery({ chain: "eip155:137", wallet: "0x1111111111111111111111111111111111111111" }),
+      record: withRestrictions(baseRecord(), [
+        { kind: "chain", deny: ["eip155:137"] },
+        { kind: "wallet", allow: ["0x1111111111111111111111111111111111111111"] },
+      ]),
+      now: NOW,
+    });
+    expect(wrongChain.kind).toBe("answer");
+    if (wrongChain.kind === "answer") {
+      expect(wrongChain.eligible).toBe(false);
+      expect(wrongChain.blockers.some((blocker) => blocker.kind === "chain")).toBe(true);
+      expect(wrongChain.blockers.some((blocker) => blocker.kind === "wallet")).toBe(false);
+    }
+  });
+
   it("T5: adjudicates feeCap bounds with BigInt while preserving amount messages", () => {
     const boundedRecord = withRestrictions(baseRecord(), [{ kind: "feeCap", min: "10", max: "20" }]);
     const below = evaluatePayswapEligibility({
@@ -213,6 +241,30 @@ describe("payswap chain-tail constraints (P4 wave 6)", () => {
     ).toBe(false);
     expect(payswapWalletAssociationSchema.safeParse({ ...walletAssociation(), principalId: "" }).success).toBe(false);
     expect(payswapWalletAssociationSchema.safeParse({ ...walletAssociation(), workspaceId: "" }).success).toBe(false);
+  });
+
+  it("T6b: requires proof, challenge, freshness bound, and wallet address on the association", () => {
+    expect(
+      payswapWalletAssociationSchema.safeParse({ ...walletAssociation(), proof: undefined }).success,
+    ).toBe(false);
+    expect(
+      payswapWalletAssociationSchema.safeParse({
+        ...walletAssociation(),
+        proof: { ...walletAssociation().proof, challengeId: undefined },
+      }).success,
+    ).toBe(false);
+    expect(
+      payswapWalletAssociationSchema.safeParse({
+        ...walletAssociation(),
+        freshnessBoundMs: undefined,
+      }).success,
+    ).toBe(false);
+    expect(
+      payswapWalletAssociationSchema.safeParse({
+        ...walletAssociation(),
+        wallet: { chainId: "eip155:1" },
+      }).success,
+    ).toBe(false);
   });
 
   it("T7: rejects permission, allowance, mandate, and key-material fields at every strict boundary", () => {
