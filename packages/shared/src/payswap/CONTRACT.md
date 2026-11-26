@@ -464,3 +464,62 @@ zod schema，无 IO、无凭据、无 runtime）：**
   组装随 wave 4/compiler 所需证据 join；路由消费随 P5。
 
 TL decisions 2026-11-26: PurposeCode v1 uses the eight-code set (family_support, business_payment, payroll, tax, education, medical, supplier_payment, other); availability has two evidence facts (available, unavailable); freshnessBoundMs is explicit and schema-required per record, with no module default.
+
+**P4 wave 4 —— money-movement intent 编译器 + check_eligibility 接线（doc 06 §2.4
+「NL financial intent compiler」+ doc 05 §9 版本化工具面演化 + PR #98 记录在案的
+缺口；`packages/services/src/payswap/intent/`—— 纯确定性编译 + 进程内不可变
+intent 注册表；无 IO、无凭据、无 provider 触达）：**
+
+- **边界（doc 06 §2.4 逐字落地）**：自然语言理解是模型的活；金融语义是确定性
+  代码。模型经 `compile_intent` 提交 **draft**（v1 params 不变；v2 additive 可选
+  结构字段：kind / senderConnectionId / recipientId / rail / purpose / deadline /
+  maxTotalCost / privacy / allowPartial / fxToleranceBps / minimumReliability）；
+  编译器把 draft 与证据（sender = wave 1 能力记录；recipient = wave 3
+  verified-recipient 证据）对齐，产出三值 union：`{kind:"intent", intent,
+  eligibilityQuery}` | `{kind:"clarification", requests[]}` | typed 拒绝。
+  **物质字段缺失（kind/amount/currency/recipientId/senderConnectionId/purpose）
+  = clarification 请求，不是 refusal；证据缺席 = typed 拒绝，不是 clarification**
+  —— 二者永不混用（材料缺口可由操作者补，证据缺口只能由 provider 证据补）。
+- **typed 拒绝闭集**：`intent_recipient_unverified`（recipientId 无 verified
+  证据 —— doc 12 §3「user/model claims alone are insufficient」）、
+  `intent_sender_evidence_unavailable`（sender 连接无能力记录，与
+  eligibility_evidence_unavailable 同构）、`intent_amount_invalid` /
+  `intent_currency_invalid`（Money 字形违规 —— decimal string，永不 float）、
+  `intent_kind_unknown`（闭集外 kind）、`intent_rail_unsupported`（draft 声明的
+  rail 不在 sender 能力记录的证据内 —— **用户 rail 偏好永不压过 provider 证据**，
+  P4 验收逐字）、`intent_operation_unsupported`（draft 显式提名的 operation 不在
+  sender 能力记录的证据内）。拒绝消息零凭据材料。
+- **intent 形状**：doc 06 §2.1 `FinancialIntent` 的 P4 子集 —— intentId 由 host
+  分配（UUIDv7；编译器不产 id 就不产 intent）；principal 来自 broker 已解析的
+  会话（模型陈述永不是 principal）；sender 只携带 connected-account 引用 +
+  capability revision；recipient 只携带 verified-recipient 引用；Money/purpose/
+  sourceConstraints/constraints 按 wave 3 parties.ts 字形。intent **不可变**；
+  注册表 revision 递增、历史保留、frozen views、stale 声明拒绝（wave 1 同款）。
+- **eligibilityQuery 派生**：编译时从证据确定性地派生 `{ operation, connectionId,
+  constraints }`。kind→§6.1 操作 id 的**版本化映射表 v1（TL 决定 2026-11-26）**：
+  `send → collections.read`；`collect → collections.read`；`sweep → payouts.read`；
+  `refund → payment_objects.read`；`convert`/`review` 无已证 read-half 操作 →
+  clarification（除非 v2 的可选 `operation` 字段显式提名，提名值必须在 sender
+  能力记录内有证据，否则 typed `intent_operation_unsupported`）。rail 偏好只在
+  sender 能力记录支持时生效。`check_eligibility` 的
+  `{ intentId }` 解析到这份已派生的 query —— PR #98 记录的「intentId 解析到
+  typed intent facts」缺口在此闭合。
+- **broker 接线**（`bootstrap payswap-broker/dispatch.ts`）：新注入面
+  `intentEligibilityReader(intentId)`（与 accountOverviewReader/accountDetailReader
+  同门装配）；三码法则照旧最先行；intent 未知 → typed `intent_unknown`
+  **（TL 决定 2026-11-26：intent 解析失败是新 typed 码 —— 三码法则只描述连接/模式
+  状态，不复用）**；命中 →
+  `evaluatePayswapEligibility` 的 answer union 原样作业务 data
+  `{kind:"eligibility", answer}`；clarification 作 `{kind:"clarification", requests}`
+  业务 data **（TL 决定 2026-11-26：wire 面先行，elicitation UI 随后续切片）**。wire 形状单一事实源进
+  `operations.ts`（broker 与插件共用，永不漂移）。六操作闭集不扩。
+- **约束 schema 补全（PR #98 记录的另一半）**：wave 1 的
+  `payswapCapabilityRestrictionSchema` 增加可选结构化形
+  `allow?/deny?/min?/max?`（doc 05 §4 形状；decimal string）；query 侧约束维度
+  增加 purpose/product/entitlement（beneficiary = 既有 recipientKind 维度）；
+  裁决法则不变（记录无该类结构化数据而 query 携带 → 逐类 typed
+  `eligibility_constraint_unevidenced`）。
+- **无权威外溢**：编译器不铸造 grant、不路由（P5）、不提交（P7）、不写 ledger
+  （P7 证据账本切片接手持久化 —— 进程内注册表是 P4 的 wire 面，边界如实记录）；
+  intent/clarification/eligibility 任何答案都不是授权（doc 12 §2.2）。结构断言
+  与 wave 1/2/3 同款。
