@@ -523,3 +523,33 @@ intent 注册表；无 IO、无凭据、无 provider 触达）：**
   （P7 证据账本切片接手持久化 —— 进程内注册表是 P4 的 wire 面，边界如实记录）；
   intent/clarification/eligibility 任何答案都不是授权（doc 12 §2.2）。结构断言
   与 wave 1/2/3 同款。
+
+**P4 wave 5 —— blockchain/wallet 约束证据（addendum §13 边界的 schema 层投影；
+`packages/shared/src/payswap/chain.ts` —— 纯 schema + 纯函数；无 IO、无密钥材料、
+无链上写面、无链表发明）：**
+- **四族证据分立（§13.1「separate capabilities, not one crypto provider」的家族
+  层投影）**：wallet address-control 证据是**第四族**，住独立模块、携带独立
+  source 闭集（`address-proof-of-control`），与 wave 3 三族（sender 能力记录 /
+  verified-recipient / participant）互不充当对方证据、互不可变换 —— 结构断言
+  与 wave 3 同款延伸到四族。
+- **canonical network identity（§13.3/§13.4）**：`{namespace, reference}` 形状
+  （CAIP-2 对齐、namespace 无关 —— 不钉任何链表，链专属词汇随 adapter 切片且
+  只从 provider 证据来）；canonical 字符串形 `namespace:reference`。
+- **address proof-of-control（§13.2 逐字落地）**：记录必须携带 challenge 绑定
+  证据（challengeId + evidenceRef + source + verifiedAt）、address、canonical
+  chain id、freshnessBoundMs。成功连接**只证明挑战期内对该地址的控制** —— schema
+  层不含也永不添加任何 spending/allowance/mandate 字段；seed phrase /
+  private key / mnemonic 类字段 strict 拒绝（结构性禁令 —— §13.2 MUST NOT 的
+  schema 投影）；拒绝与消息零密钥材料。
+- **chain 约束维度**：eligibility query constraints 增加 `chain` 维度（值面与
+  其他维度同纪律 —— 自由字符串；canonical 字形由本 wave 的
+  `payswapCanonicalChainIdSchema` 承载，供 wallet 证据与未来 rail-detail 校验
+  消费）；capability restriction kinds 闭集增加 `"chain"`（结构化 allow/deny
+  照旧裁决 —— 通用逐维法则不变：记录无该类结构化数据而 query 携带 → typed
+  `eligibility_constraint_unevidenced`，unknown ≠ optimistic）。
+- **rail detail 联动（wave 3 已有的 schema 投影收紧点，本 wave 只记录法则）**：
+  `class:"blockchain"` 的 rail detail 应为 canonical chain id 字符串 —— 校验
+  随 compile-face 切片（wave 3 的 superRefine 保持原样，不在本 wave 收紧）。
+- **无权威外溢（§13.3/§13.5）**：本 wave 不产 adapter 面、不产签名/广播/提交
+  面、不产链表、不产 connector 实现 —— 它们各自随 §13.1 契约切片落地；P7
+  authorization/reconciliation 门原样有效。结构断言与 wave 1–4 同款。
