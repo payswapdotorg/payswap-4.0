@@ -3472,3 +3472,24 @@ export {
   type PayswapEligibilityQuery,
   type PayswapEligibilityRefusalCode,
 } from "#src/payswap/index.js";
+// PaySwap P4 wave 4：money-movement intent 编译器 + intent 注册表 + 约束 schema
+// 补全（shared CONTRACT「P4 wave 4」—— 编译器/注册表纯确定性；broker 接线随 PR(b)）。
+export {
+  compilePayswapIntent,
+  createPayswapIntentRegistry,
+  PAYSWAP_INTENT_KINDS,
+  PAYSWAP_INTENT_OPERATION_MAP,
+  PAYSWAP_INTENT_REFUSAL_CODES,
+  payswapCapabilityRestrictionSchema,
+  payswapEligibilityConstraintsSchema,
+  payswapFinancialIntentSchema,
+  payswapIntentDraftSchema,
+  type PayswapClarificationRequest,
+  type PayswapFinancialIntent,
+  type PayswapIntentCompileInput,
+  type PayswapIntentCompileOutcome,
+  type PayswapIntentDraft,
+  type PayswapIntentKind,
+  type PayswapIntentRefusalCode,
+  type PayswapIntentRegistry,
+} from "#src/payswap/index.js";
