@@ -24,7 +24,6 @@ import {
 
 const NOW = "2026-11-26T12:00:00.000Z";
 const DIMENSIONS = ["token", "wallet", "destination", "contractOperation", "feeCap", "finality"] as const;
-type Dimension = (typeof DIMENSIONS)[number];
 type Restriction = PayswapCapabilityRecord["operations"][number]["restrictions"][number];
 
 function baseRecord(): PayswapCapabilityRecord {
@@ -225,9 +224,21 @@ describe("payswap chain-tail constraints (P4 wave 6)", () => {
           wallet: { ...walletAssociation().wallet, [field]: true },
         }).success,
       ).toBe(false);
+      expect(
+        payswapWalletAssociationSchema.safeParse({
+          ...walletAssociation(),
+          proof: { ...walletAssociation().proof, [field]: true },
+        }).success,
+      ).toBe(false);
     }
     for (const field of ["privateKey", "seedPhrase", "mnemonic"]) {
       expect(payswapWalletAssociationSchema.safeParse({ ...walletAssociation(), [field]: "secret" }).success).toBe(false);
+      expect(
+        payswapWalletAssociationSchema.safeParse({
+          ...walletAssociation(),
+          wallet: { ...walletAssociation().wallet, [field]: "secret" },
+        }).success,
+      ).toBe(false);
       expect(
         payswapWalletAssociationSchema.safeParse({
           ...walletAssociation(),

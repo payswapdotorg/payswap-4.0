@@ -44,6 +44,12 @@ export const payswapEligibilityConstraintsSchema = z
     product: z.string().min(1).optional(),
     entitlement: z.string().min(1).optional(),
     chain: z.string().min(1).optional(),
+    token: z.string().min(1).optional(),
+    wallet: z.string().min(1).optional(),
+    destination: z.string().min(1).optional(),
+    contractOperation: z.string().min(1).optional(),
+    feeCap: z.string().regex(/^\d+$/).optional(),
+    finality: z.string().min(1).optional(),
   })
   .strict();
 export type PayswapEligibilityConstraints = z.infer<typeof payswapEligibilityConstraintsSchema>;
@@ -98,12 +104,22 @@ function adjudicateConstraint(
     if (r.allow && !r.allow.includes(value)) {
       return { blocked: true, blocker: { kind: r.kind, note: r.note ?? `constraint '${dimension}=${value}' not in the provider-evidenced allowlist` } };
     }
-    if (dimension === "amount") {
+    if (dimension === "amount" || dimension === "feeCap") {
       if (r.min !== undefined && BigInt(value) < BigInt(r.min)) {
-        return { blocked: true, blocker: { kind: r.kind, note: r.note ?? `amount ${value} below the evidenced minimum ${r.min}` } };
+        const note =
+          r.note ??
+          (dimension === "amount"
+            ? `amount ${value} below the evidenced minimum ${r.min}`
+            : `constraint 'feeCap=${value}' below the evidenced minimum ${r.min}`);
+        return { blocked: true, blocker: { kind: r.kind, note } };
       }
       if (r.max !== undefined && BigInt(value) > BigInt(r.max)) {
-        return { blocked: true, blocker: { kind: r.kind, note: r.note ?? `amount ${value} above the evidenced maximum ${r.max}` } };
+        const note =
+          r.note ??
+          (dimension === "amount"
+            ? `amount ${value} above the evidenced maximum ${r.max}`
+            : `constraint 'feeCap=${value}' above the evidenced maximum ${r.max}`);
+        return { blocked: true, blocker: { kind: r.kind, note } };
       }
     }
   }

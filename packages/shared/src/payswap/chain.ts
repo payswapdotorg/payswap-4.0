@@ -82,3 +82,32 @@ export const payswapWalletAddressControlEvidenceSchema = z
   })
   .strict();
 export type PayswapWalletAddressControlEvidence = z.infer<typeof payswapWalletAddressControlEvidenceSchema>;
+
+// ---------------------------------------------------------------------------
+// wallet association（§13.2：address + canonical chain identity bound to the
+// authenticated principal/workspace; proof-of-control is not spending authority）
+// ---------------------------------------------------------------------------
+
+export const payswapWalletAssociationSchema = z
+  .object({
+    kind: z.literal("wallet-association"),
+    wallet: z
+      .object({
+        address: z.string().min(1),
+        chainId: payswapCanonicalChainIdSchema,
+      })
+      .strict(),
+    principalId: z.string().min(1),
+    workspaceId: z.string().min(1),
+    proof: z
+      .object({
+        evidenceRef: z.string().min(1),
+        source: z.enum(PAYSWAP_WALLET_EVIDENCE_SOURCES),
+        verifiedAt: payswapIsoDateTimeSchema,
+        challengeId: z.string().min(1),
+      })
+      .strict(),
+    freshnessBoundMs: z.number().int().positive(),
+  })
+  .strict();
+export type PayswapWalletAssociation = z.infer<typeof payswapWalletAssociationSchema>;
