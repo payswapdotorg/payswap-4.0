@@ -416,3 +416,51 @@ restrictions return typed refusals」；`eligibility/`—— 纯确定性求值�
   PaySwap 词汇的失败形状，二者不能混）。
 - **无权威外溢**：引擎不路由、不铸造、不写账 —— P6 routing 消费它的 answer；
   答案本身不是授权（doc 12 §2.2）。
+
+**P4 支付参与方能力证据（doc 12 §3「payment capability graph」+ doc 06 §2.1 合同形状 +
+P4 验收「sender and recipient identities and payment capabilities are evidence-backed
+and separately scoped」/「participant descriptors are limited to financial role,
+verified payment capability, authority and availability」；`parties.ts`—— 纯类型 +
+zod schema，无 IO、无凭据、无 runtime）：**
+
+- **三族证据分立（separately scoped 的机制化）**：发送方能力 = wave 1 能力记录的
+  只读引用（`providerId + connectionId + revision`，本模块**不重建**该记录）；接收方
+  能力 = `PayswapVerifiedRecipientEvidence`（本模块）；参与方能力 =
+  `PayswapParticipantCapabilityEvidence`（本模块）。三族是三个 schema、三个来源、
+  三个 authority —— 任何一族都不得充当另一族的证据；结构断言（电池持有）：wave 1
+  记录不可变换/收编为任一参与方记录（doc 12 §3「must not become a generic provider
+  marketplace」的 schema 层投影）。
+- **verified-recipient 法则**（doc 12 §3 接收方行）：记录必须携带证据三元组
+  `evidenceRef + source + verifiedAt` —— identity 与可接受的支付指令（acceptance
+  条目）都从 provider/verified-recipient 边界产出；**用户/模型声明单独在场即
+  unrepresentable**（superRefine：无证据三元组的记录拒绝）。acceptance 条目按
+  rail 类别闭集结构化（class + 可选 provider 命名空间 detail + 可选
+  currency/amount 边界），未知 rail 类不可表达。新鲜度：`verifiedAt +
+  freshnessBoundMs ≥ now` 才是可用证据 —— 过期证据是 unknown（与 eligibility 的
+  stale 纪律同构；本模块只判新鲜度，不产生裁决）。
+- **participant 法则**（P4 验收措辞的逐字落地）：描述符恰含四类字段 ——
+  `financialRole`（闭集：`rail_bridge | settlement_participant`；发送方/接收方是
+  intent 的当事人而非参与者，schema 层排除）、`verifiedCapability`（证据引用，
+  指向该参与方自己的授权账户证据 —— 「no general service listing」）、`authority`
+  （该参与方显式授予本路由的权限范围，结构化闭集）、`availability`（证据盖章的
+  可用性事实 + 新鲜度；可用性不是资金托管、不是承诺）。name/reputation/rating/
+  listing/描述性自由文本等「marketplace 字段」一律 strict 拒绝；能力永不从名字/
+  列表/模型陈述推断（doc 12 §3 不变量）。
+- **Money / rail / purpose 字形**：Money = `{ value: decimal-string, currency:
+  ISO-4217 ^[A-Z]{3}$ }` —— decimal string，永不 float（doc 04 §2.5 / doc 06
+  §2.1）；intent 金额与 `maxTotalCost` 非负（refund/convert 的符号语义在 intent
+  kind，不在 Money）。rail 引用 = 类别闭集（`card | bank | mobile_money | wallet
+  | cash | psp_internal | blockchain`）+ 可选 provider 命名空间 detail；`blockchain`
+  类受 addendum §13 约束（钱包连接 ≠ 签名/花费权限，本 schema 不携带任何权限位）。
+  PurposeCode = 闭集 code + 可选 free text —— **裁决只看 code，free text 永不参与
+  裁决**（wave 4 的 purpose 约束裁决消费 code）。
+- **无权威外溢**（P4 验收「no agent, model, plugin or participant listing grants
+  financial authority」）：本模块 schema 无 grant/mint/submit/route/ledger 面，无
+  凭据字段（秘密键形态在 schema 层不可表达）；结构性电池断言与 wave 1/2 同款。
+  参与方记录被列出/被引用都不产生任何权限 —— 权限只在 P7 的 host 授权与执行权威。
+- **波次边界**：本切片只落 contract 层（schema + 法则 + 电池）。intent 编译器、
+  purpose/product/entitlement/beneficiary 约束裁决、broker `check_eligibility`
+  接线、P4 套件的 CI yml 注册随 wave 4（PR #98 证据记录在案的缺口）；参与方图
+  组装随 wave 4/compiler 所需证据 join；路由消费随 P5。
+
+TL decisions 2026-11-26: PurposeCode v1 uses the eight-code set (family_support, business_payment, payroll, tax, education, medical, supplier_payment, other); availability has two evidence facts (available, unavailable); freshnessBoundMs is explicit and schema-required per record, with no module default.
