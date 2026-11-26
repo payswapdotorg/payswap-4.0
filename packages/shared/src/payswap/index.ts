@@ -46,6 +46,7 @@ export * from "./credential-security.js";
 export * from "./account-connection.js";
 export * from "./account-connection-rpc.js";
 export * from "./account-data.js";
+export * from "./eligibility-answer.js";
 export * from "./account-reader-bridge.js";
 export * from "./protocols/protocol-facts.js";
 export * from "./protocols/protocol-contract.js";

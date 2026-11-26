@@ -41,8 +41,12 @@ import {
   payswapPaymentRailRefSchema,
   payswapPurposeCodeSchema,
   payswapSenderAccountRefSchema,
+  type PayswapClarificationRequest,
   type PayswapVerifiedRecipientEvidence,
 } from "@zcode/shared/payswap";
+// P4 wave 4 PR(b)：clarification 行类型迁住 shared（operations.ts wire 单一事实源）——
+// 本模块 re-export 保持 PR(a) 导出面不变。
+export type { PayswapClarificationRequest } from "@zcode/shared/payswap";
 import type { PayswapCapabilityRecord } from "../capability/capabilityRegistry.js";
 import {
   payswapEligibilityQuerySchema,
@@ -154,11 +158,6 @@ export const payswapFinancialIntentSchema = z
   })
   .strict();
 export type PayswapFinancialIntent = z.infer<typeof payswapFinancialIntentSchema>;
-
-export interface PayswapClarificationRequest {
-  readonly field: string;
-  readonly reason: string;
-}
 
 export type PayswapIntentCompileOutcome =
   | {

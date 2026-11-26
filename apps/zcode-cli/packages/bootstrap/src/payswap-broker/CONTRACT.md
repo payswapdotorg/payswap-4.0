@@ -34,6 +34,17 @@ Step 6 落地（§9，ADR-9）：seen-record 引擎（连续水标 W + 保留集
 `seenRecords` boot 选项注入（缺省内部新建；测试内省用，同 liveStateReader/
 sessionScopeResolver 注入面纪律）。
 
+P4 wave 4 PR(b) 落地（shared CONTRACT「P4 wave 4」）：`dispatch.ts` 的
+`check_eligibility` intentId 解析半 —— 新注入面 `intentEligibilityReader`（与
+overview/detail reader 同门：仅当三码法则已判定 enabled + opted-in 且状态实读时
+被咨询；抛错 internal_error）；reader null → typed `intent_unknown` 业务拒绝
+（shared `operations.ts` 单一事实源 —— intent 解析失败是新 typed 码，不复用三码
+法则）；命中 → `{kind:"eligibility", answer}` / `{kind:"clarification", requests}`
+wire 联合原样（answer 形状法则已迁住 shared `eligibility-answer.ts`）。
+`compile_intent` params v2（additive optional）随本 PR 进 wire schema —— compile
+的 dispatch 数据半随 compile-face 切片（诚实边界：本 PR 不接编译器调用，六操作
+闭集不扩）。
+
 ## 不变量
 
 - §5.5 检查序不可重排：未知 pid 在任何载荷字节被解析之前丢弃（§5.1/§5.2）；§8 在步

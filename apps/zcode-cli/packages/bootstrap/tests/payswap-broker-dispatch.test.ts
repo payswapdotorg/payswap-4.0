@@ -5,6 +5,8 @@ import {
   exportPublicKeyBase64,
   mintBrokerBootState,
   PAYSWAP_BROKER_OPS,
+  PAYSWAP_OPERATION_PARAMS_SCHEMAS,
+  payswapIntentUnknown,
   verifyResponseEnvelope,
   type PayswapAccountOverviewData,
   type PayswapAccountOverviewDetail,
@@ -1317,5 +1319,148 @@ describe("payswap broker dispatch (ADR-P2-1) — the account-detail reader path"
       const data = result.body.data as PayswapAccountOverviewData;
       expect(data.account).toEqual(variant);
     }
+  });
+});
+
+describe("P4 wave 4 — check_eligibility intent-resolution wire law (W11)", () => {
+  const ENABLED_OPTED_IN: PayswapBrokerLiveState = { pluginEnabled: true, financialWorkspace: true };
+
+  it("W11-1: three-code precedence calls no intent reader for disabled or not-opted-in live states", async () => {
+    for (const [state, expectedCode] of [
+      [{ pluginEnabled: false, financialWorkspace: true }, "financial_mode_disabled"],
+      [{ pluginEnabled: true, financialWorkspace: false }, "not_opted_in"],
+    ] as const) {
+      let readerCalls = 0;
+      const dispatch = createPayswapBrokerDispatch({
+        liveStateReader: () => state,
+        intentEligibilityReader: () => { readerCalls += 1; return null; },
+      });
+      const result = await dispatch.resolveRequest({
+        instanceId: randomUUID(), seq: 1, op: "check_eligibility", params: { intentId: "intent-1" },
+      });
+      expect(result.kind).toBe("dispatched");
+      if (result.kind === "dispatched") {
+        const data = result.body.data as { refusal?: { code: string } };
+        expect(data.refusal?.code).toBe(expectedCode);
+      }
+      expect(readerCalls).toBe(0);
+    }
+  });
+
+  it("W11-2: default assembly without a live read calls no intent reader and answers not_connected", async () => {
+    let readerCalls = 0;
+    const dispatch = createPayswapBrokerDispatch({
+      intentEligibilityReader: () => { readerCalls += 1; return null; },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(), seq: 1, op: "check_eligibility", params: { intentId: "intent-1" },
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind === "dispatched") {
+      const data = result.body.data as { refusal?: { code: string } };
+      expect(data.refusal?.code).toBe("not_connected");
+    }
+    expect(readerCalls).toBe(0);
+  });
+
+  it("W11-3: unknown intent resolves to dispatched typed intent_unknown business data", async () => {
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      intentEligibilityReader: () => null,
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(), seq: 1, op: "check_eligibility", params: { intentId: "intent-missing" },
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind === "dispatched") {
+      expect(result.body.data).toEqual(payswapIntentUnknown());
+      const data = result.body.data as { kind: string; refusal: { code: string; message: string } };
+      expect(data.kind).toBe("refused");
+      expect(data.refusal.code).toBe("intent_unknown");
+      expect(data.refusal.message).toContain("intent resolution");
+    }
+  });
+
+  it("W11-4: eligibility data passes through verbatim", async () => {
+    const answer = {
+      kind: "answer",
+      eligible: true,
+      basis: "evidence",
+      evidenceRef: {
+        kind: "capability-record",
+        providerId: "stripe",
+        connectionId: "conn-1",
+        revision: 1,
+        declaredAt: "2026-11-26T00:00:00.000Z",
+      },
+      checkedAt: "2026-11-26T00:00:00.000Z",
+      blockers: [],
+    } as const;
+    const data = { kind: "eligibility", answer };
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      intentEligibilityReader: () => data,
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(), seq: 1, op: "check_eligibility", params: { intentId: "intent-1" },
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind === "dispatched") expect(result.body.data).toEqual(data);
+  });
+
+  it("W11-5: clarification data passes through verbatim", async () => {
+    const data = {
+      kind: "clarification",
+      requests: [{ field: "operation", reason: "nominated operation is required" }],
+    } as const;
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      intentEligibilityReader: () => data,
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(), seq: 1, op: "check_eligibility", params: { intentId: "intent-1" },
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind === "dispatched") expect(result.body.data).toEqual(data);
+  });
+
+  it("W11-6: reader failure is internal_error without detail leakage", async () => {
+    const dispatch = createPayswapBrokerDispatch({
+      liveStateReader: () => ENABLED_OPTED_IN,
+      intentEligibilityReader: () => { throw new Error("intent registry secret detail"); },
+    });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(), seq: 1, op: "check_eligibility", params: { intentId: "intent-1" },
+    });
+    expect(result).toEqual({ kind: "refused", code: "internal_error", retryable: false });
+  });
+
+  it("W11-7: check_eligibility params remain strict for empty intentId and unknown keys", async () => {
+    const dispatch = createPayswapBrokerDispatch();
+    for (const params of [{ intentId: "" }, { intentId: "intent-1", rogue: true }]) {
+      const result = await dispatch.resolveRequest({
+        instanceId: randomUUID(), seq: 1, op: "check_eligibility", params,
+      });
+      expect(result).toEqual({ kind: "refused", code: "request_invalid", retryable: false });
+    }
+  });
+
+  it("W11-8: compile_intent v2 params pass strict schema and remain three-code-only", async () => {
+    const dispatch = createPayswapBrokerDispatch({ liveStateReader: () => ENABLED_OPTED_IN });
+    const result = await dispatch.resolveRequest({
+      instanceId: randomUUID(),
+      seq: 1,
+      op: "compile_intent",
+      params: { description: "pay", kind: "send", rail: { class: "card" } },
+    });
+    expect(result.kind).toBe("dispatched");
+    if (result.kind === "dispatched") {
+      const data = result.body.data as { refusal?: { code: string } };
+      expect(data.refusal?.code).toBe("not_connected");
+    }
+    expect(PAYSWAP_OPERATION_PARAMS_SCHEMAS.compile_intent.safeParse({
+      description: "pay",
+      rogue: true,
+    }).success).toBe(false);
   });
 });

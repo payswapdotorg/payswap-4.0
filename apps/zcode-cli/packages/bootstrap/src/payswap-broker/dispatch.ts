@@ -41,11 +41,13 @@
 import {
   PAYSWAP_OPERATION_PARAMS_SCHEMAS,
   payswapBusinessRefusal,
+  payswapIntentUnknown,
   type PayswapAccountOverviewData,
   type PayswapAccountOverviewDetail,
   type PayswapBrokerOp,
   type PayswapBrokerResponseBody,
   type PayswapConnectionStatusProjection,
+  type PayswapIntentCheckData,
 } from "@zcode/shared/payswap";
 
 /** broker 观察到的 live 金融模式状态（§7.3 live 读，非子进程 env 快照）。 */
@@ -79,6 +81,9 @@ export type PayswapAccountOverviewReader =
 export type PayswapAccountDetailReader =
   (connectionId: string) => PayswapAccountOverviewDetail | Promise<PayswapAccountOverviewDetail>;
 
+export type PayswapIntentEligibilityReader =
+  (intentId: string) => PayswapIntentCheckData | null | Promise<PayswapIntentCheckData | null>;
+
 /** §5.5 步 (4) 之后的实例绑定状态：live，或 disable 撤销（D5.6 流通到三码法则）。 */
 export type PayswapInstanceBinding = "live" | "disabled_revocation";
 
@@ -109,6 +114,7 @@ export interface PayswapBrokerDispatchOptions {
    * 时被咨询（与 overview reader 同门）。
    */
   accountDetailReader?: PayswapAccountDetailReader;
+  intentEligibilityReader?: PayswapIntentEligibilityReader;
 }
 
 export interface PayswapBrokerDispatch {
@@ -132,6 +138,7 @@ export function createPayswapBrokerDispatch(
   const liveStateReader = options.liveStateReader;
   const accountOverviewReader = options.accountOverviewReader;
   const accountDetailReader = options.accountDetailReader;
+  const intentEligibilityReader = options.intentEligibilityReader;
   return {
     async resolveRequest(request, context) {
       const schema = PAYSWAP_OPERATION_PARAMS_SCHEMAS[request.op as PayswapBrokerOp];
@@ -218,6 +225,29 @@ export function createPayswapBrokerDispatch(
             body: { ok: true, seq: request.seq, data },
           };
         }
+      }
+      if (
+        code === "not_connected" &&
+        stateWasRead &&
+        request.op === "check_eligibility" &&
+        intentEligibilityReader !== undefined
+      ) {
+        let data: PayswapIntentCheckData | null;
+        try {
+          data = await intentEligibilityReader((params.data as { intentId: string }).intentId);
+        } catch {
+          return { kind: "refused", code: "internal_error", retryable: false };
+        }
+        if (data === null) {
+          return {
+            kind: "dispatched",
+            body: { ok: true, seq: request.seq, data: payswapIntentUnknown() },
+          };
+        }
+        return {
+          kind: "dispatched",
+          body: { ok: true, seq: request.seq, data },
+        };
       }
       return {
         kind: "dispatched",

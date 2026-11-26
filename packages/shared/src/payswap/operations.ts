@@ -22,6 +22,13 @@ import type { PayswapAccountOverviewDetail } from "./account-data.js";
 import type { PayswapBrokerOp } from "./envelope.js";
 import { PAYSWAP_BROKER_OPS } from "./envelope.js";
 import { PAYSWAP_RETIRED_SEQS_MAX } from "./replay.js";
+import {
+  payswapIsoDateTimeSchema,
+  payswapMoneyNonNegativeSchema,
+  payswapPaymentRailRefSchema,
+  payswapPurposeCodeSchema,
+} from "./parties.js";
+import type { PayswapEligibilityAnswer } from "./eligibility-answer.js";
 
 // ---------------------------------------------------------------------------
 // per-op params schema（§6.1(3)/§7.1 —— Wave 1 工具面 1:1）
@@ -34,6 +41,30 @@ const compileIntentParams = z
     currency: z.string().optional(),
     recipient: z.string().optional(),
     reference: z.string().optional(),
+  })
+  .strict();
+
+/**
+ * compile_intent params v2（P4 wave 4 PR(b)；doc 05 §9 版本化工具面演化 —— additive
+ * optional 字段，v1 五键不变；CONTRACT「P4 wave 4」）。kind 的闭集成员资格是语义
+ * 检查（编译器 typed `intent_kind_unknown`），wire 层不 enum-gate；rail/purpose/
+ * maxTotalCost/deadline/privacy/数值字段由 wave 3 parties.ts schema 结构性 gate
+ * （违例 = §6.1(4) request_invalid，pre-binding）。
+ */
+const compileIntentParamsV2 = compileIntentParams
+  .extend({
+    kind: z.string().optional(),
+    senderConnectionId: z.string().optional(),
+    recipientId: z.string().optional(),
+    rail: payswapPaymentRailRefSchema.optional(),
+    operation: z.string().min(1).optional(),
+    purpose: payswapPurposeCodeSchema.optional(),
+    deadline: payswapIsoDateTimeSchema.optional(),
+    maxTotalCost: payswapMoneyNonNegativeSchema.optional(),
+    privacy: z.enum(["standard", "minimize_disclosure"]).optional(),
+    allowPartial: z.boolean().optional(),
+    fxToleranceBps: z.number().int().nonnegative().optional(),
+    minimumReliability: z.number().min(0).max(1).optional(),
   })
   .strict();
 
@@ -60,7 +91,7 @@ const accountOverviewParams = z
 export const PAYSWAP_OPERATION_PARAMS_SCHEMAS: Readonly<
   Record<PayswapBrokerOp, z.ZodType>
 > = {
-  compile_intent: compileIntentParams,
+  compile_intent: compileIntentParamsV2,
   check_eligibility: intentIdParams,
   discover_routes: intentIdParams,
   request_authorization: intentIdParams,
@@ -166,3 +197,42 @@ const PAYSWAP_REFUSAL_MESSAGES = {
     "Calls from this session are refused; re-enable the plugin and start a new " +
     "session to continue.",
 } as const;
+
+// ---------------------------------------------------------------------------
+// §6.2/P4 wave 4 PR(b) —— check_eligibility 的 wire 形状单一事实源（broker 与
+// 插件共用，永不漂移）。intent_unknown 是新的 typed 业务拒绝码（TL 决定
+// 2026-11-26：intent 解析失败不复用三码连接/模式法则）。
+// ---------------------------------------------------------------------------
+
+export interface PayswapClarificationRequest {
+  readonly field: string;
+  readonly reason: string;
+}
+
+export interface PayswapIntentEligibilityData {
+  kind: "eligibility";
+  answer: PayswapEligibilityAnswer;
+}
+
+export interface PayswapIntentClarificationData {
+  kind: "clarification";
+  requests: readonly PayswapClarificationRequest[];
+}
+
+export type PayswapIntentCheckData = PayswapIntentEligibilityData | PayswapIntentClarificationData;
+
+export interface PayswapIntentUnknownData {
+  kind: "refused";
+  refusal: { code: "intent_unknown"; message: string };
+}
+
+export function payswapIntentUnknown(): PayswapIntentUnknownData {
+  return {
+    kind: "refused",
+    refusal: {
+      code: "intent_unknown",
+      message:
+        "The requested intentId does not resolve to any intent declared in this broker scope; intent resolution failure is its own typed refusal (not a connection or financial-mode state).",
+    },
+  };
+}
