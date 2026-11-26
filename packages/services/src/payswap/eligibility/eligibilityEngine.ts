@@ -43,6 +43,7 @@ export const payswapEligibilityConstraintsSchema = z
     purpose: z.string().min(1).optional(),
     product: z.string().min(1).optional(),
     entitlement: z.string().min(1).optional(),
+    chain: z.string().min(1).optional(),
   })
   .strict();
 export type PayswapEligibilityConstraints = z.infer<typeof payswapEligibilityConstraintsSchema>;
