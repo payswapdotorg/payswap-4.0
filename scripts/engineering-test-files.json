@@ -175,6 +175,7 @@
   "packages/services/test/payswap-agent-helper-forward.test.ts",
   "packages/services/test/payswap-ap2-message-face.test.ts",
   "packages/services/test/payswap-capability-registry.test.ts",
+  "packages/services/test/payswap-chain-constraints.test.ts",
   "packages/services/test/payswap-credential-security.test.ts",
   "packages/services/test/payswap-custodian-fail-closed.test.ts",
   "packages/services/test/payswap-eligibility-engine.test.ts",

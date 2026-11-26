@@ -144,7 +144,7 @@ jobs:
           packages/services/test/payswap-mpp-message-face.test.ts
           packages/desktop/test/payswap-protocol-runtime-wiring.test.ts
 
-      # PaySwap P4（wave 1-4）：能力注册表 + eligibility 引擎 + 支付参与方证据 +
+      # PaySwap P4（wave 1-5）：能力注册表 + eligibility 引擎 + 支付参与方证据 +
       # intent 编译器的法则电池 PR CI 注册（同 P2/P3 模式 —— exact PR head 上可
       # 复现的绿；清单本身不是执行证据）。2026-11-26：无 payswap-roadmap.yml
       #（W12 按实际仓库形态解析为 ci.yml 电池步 —— roadmap register 本身只在
@@ -153,6 +153,7 @@ jobs:
         run: >
           pnpm exec vitest run --project engineering
           packages/services/test/payswap-capability-registry.test.ts
+          packages/services/test/payswap-chain-constraints.test.ts
           packages/services/test/payswap-eligibility-engine.test.ts
           packages/services/test/payswap-payment-parties.test.ts
           packages/services/test/payswap-intent-compiler.test.ts
