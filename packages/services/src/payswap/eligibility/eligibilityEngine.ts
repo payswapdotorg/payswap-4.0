@@ -44,6 +44,11 @@ export const payswapEligibilityConstraintsSchema = z
     product: z.string().min(1).optional(),
     entitlement: z.string().min(1).optional(),
     chain: z.string().min(1).optional(),
+    // P4 wave 6：验收点名的区块链约束尾部。token/wallet/destination/contractOperation/
+    // finality 的值面与兄弟维度同纪律（自由字符串 —— 链专属词汇不发明，canonical
+    // 形由证据/adapter 切片承载）；feeCap = gas/fee 上限的最小单位非负整数字符串
+    //（BigInt 安全，与 amount 同形 —— 共用 min/max 界限裁决）。network 不另立维度
+    //（canonical chain id 即网络身份）—— TL 决定，见 shared CONTRACT「P4 wave 6」。
     token: z.string().min(1).optional(),
     wallet: z.string().min(1).optional(),
     destination: z.string().min(1).optional(),
