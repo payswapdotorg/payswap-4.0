@@ -100,3 +100,13 @@ The TL has delegated authority to execute and advance through the approved P1–
 This delegation never authorizes live-money activation, real provider writes, use of production credentials, weakening of security invariants, changes that conflict with the P0 addendum, irreversible production data changes, or unapproved paid/external obligations. Apply the stop-and-escalate rules in the implementation playbook only to those reserved decisions. Never bypass branch protections or claim skipped tests as passed.
 
 All PaySwap behavior changes follow the repository's existing spec-first and TDD rules. Respect `docs/testing/unit-test-quality.md`: App business unit tests and module `contract.test.ts` files are retired; use the supported engineering, CLI, integration and browser/E2E harnesses. A scaffold is not a completed milestone.
+
+## Low-capability executor mode (change sets)
+
+Some sessions are relay runs: a weak or cheap local model only executes what a technical lead (TL) authored elsewhere. Quality then depends on the executor doing none of the thinking. When a task prompt mentions a change set or `executor-mode`, follow `.agents/skills/agent-change-set/SKILL.md` exactly:
+
+1. You never author, retype, reformat, translate or "improve" file content, tests, comments, commit subjects or PR text. Content arrives as a hash-pinned change set and is applied by `node scripts/apply-change-set.mjs apply <change-set-dir>`.
+2. Run only the commands in the run sheet, in order, one command per block.
+3. Any `STOP:` line, failed gate, unexpected value or host block means stop and report the verbatim output. Never fix, never work around, never bypass a hook.
+4. Never force-push, amend, rebase, reset, stash, open pull requests or call the GitHub API unless the run sheet names that exact command.
+5. The final answer is the tool receipt plus the requested verbatim command output, nothing else.
