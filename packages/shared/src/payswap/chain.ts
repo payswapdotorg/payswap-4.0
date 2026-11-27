@@ -17,6 +17,9 @@
  * 4. **无权威外溢（§13.3/§13.5）**：无 adapter 面、无签名/广播/提交面、无路由面、
  *    无链表、无 connector 实现 —— §13.5 的 P7 authorization/reconciliation 门
  *    原样有效（结构断言由电池持有）。
+ * 5. **wallet 关联记录（wave 6）**：`{address, canonical chain id}` ↔ `{principalId,
+ *    workspaceId}` 的绑定，引用第四族控制证明 —— 关联 ≠ 授权（零权限位 / 额度 /
+ *    allowance），不是第五族证据、不充当任何一族证据（电池持有互不充当断言）。
  *
  * 纯类型 + zod schema + 纯函数：无 IO、无凭据、无 runtime（doc 06 §1.1 domain 1）。
  */
@@ -82,3 +85,40 @@ export const payswapWalletAddressControlEvidenceSchema = z
   })
   .strict();
 export type PayswapWalletAddressControlEvidence = z.infer<typeof payswapWalletAddressControlEvidenceSchema>;
+
+// ---------------------------------------------------------------------------
+// wallet 关联记录（P4 验收「wallet-address association and proof-of-control are
+// bound to the authenticated PaySwap principal and workspace」—— wave 6；§13.2
+// 「may associate a verified public address with the authenticated PaySwap
+// principal/workspace」）：把 `{address, canonical chain id}` 绑定到
+// `{principalId, workspaceId}`，并引用产生该绑定的第四族控制证明（proof 子记录
+// 同形）。关联 ≠ 授权（§13.2「connection ≠ consent」的绑定层投影）：零权限位、
+// 零额度、零 allowance —— 签名/花费权限只来自 P7 host 授权。不是第五族证据：
+// 不充当任何一族的证据，也不被任何一族充当（电池持有断言）。存储 / 查询 /
+// 生命周期随 connector / P5 切片 —— 此处只落 law 形状。
+// ---------------------------------------------------------------------------
+
+export const payswapWalletAssociationSchema = z
+  .object({
+    kind: z.literal("wallet-association"),
+    wallet: z
+      .object({
+        address: z.string().min(1),
+        chainId: payswapCanonicalChainIdSchema,
+      })
+      .strict(),
+    /** broker 已解析的会话 principal（模型陈述永不是 principal —— wave 4 法则同款）。 */
+    principalId: z.string().min(1),
+    workspaceId: z.string().min(1),
+    proof: z
+      .object({
+        evidenceRef: z.string().min(1),
+        source: z.enum(PAYSWAP_WALLET_EVIDENCE_SOURCES),
+        verifiedAt: payswapIsoDateTimeSchema,
+        challengeId: z.string().min(1),
+      })
+      .strict(),
+    freshnessBoundMs: z.number().int().positive(),
+  })
+  .strict();
+export type PayswapWalletAssociation = z.infer<typeof payswapWalletAssociationSchema>;

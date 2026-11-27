@@ -553,3 +553,75 @@ intent 注册表；无 IO、无凭据、无 provider 触达）：**
 - **无权威外溢（§13.3/§13.5）**：本 wave 不产 adapter 面、不产签名/广播/提交
   面、不产链表、不产 connector 实现 —— 它们各自随 §13.1 契约切片落地；P7
   authorization/reconciliation 门原样有效。结构断言与 wave 1–4 同款。
+
+**P4 wave 6 —— 区块链约束尾部 + wallet 关联记录（P4 验收句剩余子句的 schema 层
+投影：intent/eligibility 的 `token` / `wallet` / `destination` / `contractOperation`
+/ `feeCap` / `finality` 维度 + 同名 restriction kind + wallet 关联记录；无 IO、无
+密钥材料、无链上写面、无链表发明）：**
+
+- **约束维度尾部（验收逐字点名；addendum §13.3 grant 字段表的 eligibility 面投影）**：
+  eligibility query constraints 在 `chain`（wave 5）之后增加六个维度 —— `token` /
+  `wallet` / `destination` / `contractOperation` / `feeCap` / `finality`。值面纪律
+  与兄弟维度同款：token / wallet / destination / contractOperation / finality 是
+  自由字符串（链专属词汇不发明 —— canonical 形由证据与 adapter 切片承载）；
+  `feeCap` 是 gas/fee 上限的**最小单位非负整数**字符串（BigInt 安全，与 amount
+  同形 —— 共用 min/max 界限裁决）。闭集不变：未点名的键照旧 strict 拒绝。
+- **kind = 维度键（等值法则）**：capability restriction kinds 闭集增加**同名**六个
+  kind。引擎按 `r.kind === dimension` 匹配 —— kind 字符串必须与维度键逐字相等，
+  所以多词维度以 camelCase 入闭集（`contractOperation` / `feeCap`）；kebab 变体
+  （`contract-operation` / `fee-cap`）不是维度键，照旧拒绝。`rate-limit` 是无对应
+  维度的历史 kind，照旧合法（只能作状态 blocker 出现 —— query 无该维度）。
+- **feeCap 走界限裁决**：引擎的界限裁决分支从「仅 amount」扩为「amount 或
+  feeCap」；amount 的默认消息逐字不变（wave-2 行为不回归）；feeCap 越界的默认
+  消息为 `constraint 'feeCap=…' below/above the evidenced minimum/maximum …`，
+  命中 → ineligible + `{kind:"feeCap"}` blocker（typed）。
+- **TL 决定（gate 复核可否决 —— 否决即改本块 + 电池行）**：
+  (a) **`network` 不另立维度** —— canonical chain id（`namespace:reference`）是
+  eligibility 面的网络身份承载形；§13.3「chain ID plus independently verified
+  network identity」里的「independently verified」是证据来源属性（来自 provider /
+  connector 证据，不是声明），不是第二个约束键；链专属网络分类词汇
+  （mainnet/testnet 之类）不发明。
+  (b) **`gas` 不另立维度** —— 验收「gas/fee」与 §13.3「gas limit, maximum fee/
+  priority fee or other chain-specific fee ceiling」收敛为 `feeCap` 一个上限
+  维度（gas limit × 单价在证据/adapter 层收敛为 fee 上限）；intent 侧的用户
+  成本上限是既有 `maxTotalCost` —— 两个不同事实，不互替。
+  (c) **「stale balances/quotes」不在 P4 建模** —— 余额/报价观测记录随
+  connector / P5–P7 切片住 wallet 证据族（provenance-bearing，不并入 PSP 账户
+  注册表）；过期法则已由引擎 `eligibility_evidence_stale` + 各记录
+  `freshnessBoundMs` 覆盖（诚实边界，不是维度）。
+  (d) **intent 形状不新增 blockchain 字段** —— draft 的可选约束位会造成「省略即
+  放行」（模型/用户可略去 token 维度从而绕开 unsupported-asset 拒绝）；所以
+  blockchain rail 下 chain / token / destination 的 materiality（缺失 →
+  clarification）必须随 compile-face 切片（P5）整体落地，本 wave 不半做。
+  chain 经既有 `rail.detail`、fee 上限经既有 `maxTotalCost` 已在 intent 形状
+  上；其余维度的 law 住在 eligibility 面。
+- **typed 拒绝表达（验收尾句「unsupported assets … unsupported contract
+  operations return typed refusals」）**：不新增拒绝码 —— 记录无该类结构化证据
+  而 query 携带 → 逐类 typed `eligibility_constraint_unevidenced`（消息点名
+  维度；unknown ≠ optimistic）；provider deny / allow 未中 / 越界 → ineligible
+  + 该维度 kind 的 blocker。「wrong-chain addresses」= `chain` 维度（wave 5）
+  与 `wallet` 维度并列、各自被证据裁决（不引入跨维度逻辑 —— 每个携带维度都
+  必须被证据覆盖并通过）。proof of wallet ownership / recipient control /
+  sanctions/compliance / route eligibility 仍是各自独立的事实（本 wave 不合并
+  任何两者）。
+- **wallet 关联记录（验收「wallet-address association and proof-of-control are
+  bound to the authenticated PaySwap principal and workspace」；§13.2「may
+  associate a verified public address with the authenticated PaySwap
+  principal/workspace」）**：`payswapWalletAssociationSchema`（strict）
+  `{kind:"wallet-association", wallet:{address, chainId}, principalId, workspaceId,
+  proof:{evidenceRef, source, verifiedAt, challengeId}, freshnessBoundMs}` —— 把
+  `{address, canonical chain id}` 绑定到 `{principalId, workspaceId}`，`proof`
+  与第四族控制证明的 proof 子记录同形（引用产生该绑定的 challenge —— §13.2 的
+  challenge 含 intended address 与 chain/network context）。principal 是 broker
+  已解析的会话 principal（模型陈述永不是 principal）。**关联 ≠ 授权（§13.2
+  「A successful connection proves only control of the address for the
+  challenge」的绑定层投影）**：记录零权限位、零额度、零 allowance ——
+  spending permission / token allowance / contract-call authorization /
+  financial mandate 的任何字段位（signingPermission / spendingLimit /
+  allowance / mandate 之类，顶层或嵌套）strict 拒绝；签名/花费权限只来自 P7
+  host 授权。关联记录**不是第五族证据**、不充当任何一族的证据，也不被任何一族
+  充当（互不充当断言延伸到关联记录）。关联的存储 / 查询 / 生命周期随
+  connector / P5 切片 —— 本 wave 只落 law 形状。
+- **无权威外溢（§13.3/§13.5）**：本 wave 不产 adapter 面、不产签名/广播/提交
+  面、不产链表、不产 connector 实现、不铸 grant；P7 authorization/
+  reconciliation 门原样有效。结构断言与 wave 1–5 同款。
